@@ -393,6 +393,8 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
     return fecha.toISOString().slice(0, 10);
   };
 
+  const obtenerFechaActualInput = () => new Date().toISOString().slice(0, 10);
+
   const mapearParentesco = (codigo: string): 'CONYUGE' | 'HIJO/HIJA' | 'PADRE/MADRE' | '' => {
     const valor = (codigo || '').trim().toUpperCase();
     if (!valor) return '';
@@ -445,6 +447,18 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
       setCargandoFamiliares(false);
     }
   };
+
+  useEffect(() => {
+    if (movimientoModal.tipoAccion !== 'eliminar_dependiente' || !movimientoModal.empleadoCedula) {
+      return;
+    }
+
+    void cargarFamiliaresDisponibles(movimientoModal.empleadoCedula);
+    setMovimientoModal((prev) => ({
+      ...prev,
+      fechaSalida: prev.fechaSalida || obtenerFechaActualInput(),
+    }));
+  }, [movimientoModal.tipoAccion, movimientoModal.empleadoCedula]);
 
   const guardarEnAPIFecha = async (empleadoNombre: string, empleadoCedula: string, tipoAccion: 'retirar' | 'ingresar', fecha: string) => {
     try {
@@ -698,18 +712,6 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
           if (prev.tarifaNueva === 'T+1' || prev.tarifaNueva === 'T+FAMILIAR') {
             void cargarFamiliaresDisponibles(empleado.cedula);
           }
-
-          if (prev.tipoAccion === 'eliminar_dependiente') {
-            void cargarFamiliaresDisponibles(empleado.cedula);
-            setCargandoFechaApi(true);
-            obtenerFechaDelEmpleado(empleado.cedula, 'retirar').then(fecha => {
-              if (fecha) {
-                setMovimientoModal(m => ({ ...m, fechaSalida: fecha }));
-              }
-            }).finally(() => {
-              setCargandoFechaApi(false);
-            });
-          }
         }
       }
 
@@ -759,19 +761,8 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
         updated.tarifaNueva = '';
         updated.tipoPlan = '';
         updated.dependientes = [];
+        updated.fechaSalida = obtenerFechaActualInput();
         setFamiliaresSeleccionados((estado) => ({ ...estado, retiro_dependiente: '' }));
-
-        if (prev.empleadoCedula) {
-          void cargarFamiliaresDisponibles(prev.empleadoCedula);
-          setCargandoFechaApi(true);
-          obtenerFechaDelEmpleado(prev.empleadoCedula, 'retirar').then(fecha => {
-            if (fecha) {
-              setMovimientoModal(m => ({ ...m, fechaSalida: fecha }));
-            }
-          }).finally(() => {
-            setCargandoFechaApi(false);
-          });
-        }
       }
 
       if (campo === 'tarifaNueva') {
@@ -909,6 +900,17 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
 
     if (esEliminarDependiente && m.dependientes.length !== 1) {
       return '⚠️ Debes seleccionar el dependiente a eliminar';
+    }
+
+    if (esEliminarDependiente) {
+      const dependiente = m.dependientes[0];
+      if (!dependiente || (!dependiente.apellidos && !dependiente.nombres)) {
+        return '⚠️ Debes seleccionar el dependiente a eliminar';
+      }
+      if (!dependiente.cedula) {
+        return '⚠️ El dependiente seleccionado debe tener cédula';
+      }
+      return null;
     }
 
     if (requiereDependientes && m.dependientes.length === 0) {
@@ -1959,10 +1961,10 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
                 </div>
               </div>
 
-              {(movimientoModal.tipoAccion === 'retirar' || movimientoModal.tipoAccion === 'ingresar' || movimientoModal.tipoAccion === 'eliminar_dependiente') && (
+              {(movimientoModal.tipoAccion === 'retirar' || movimientoModal.tipoAccion === 'ingresar') && (
                 <div>
                   <label className="block text-xs font-semibold text-slate-600 mb-2">
-                    {movimientoModal.tipoAccion === 'ingresar' ? 'Fecha de Ingreso' : 'Fecha de Exclusión'}
+                    {movimientoModal.tipoAccion === 'ingresar' ? 'Fecha de Ingreso' : 'Fecha de Salida'}
                   </label>
                   <div className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-slate-50 text-slate-600 flex items-center">
                     {cargandoFechaApi
@@ -1973,27 +1975,45 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
               )}
 
               {movimientoModal.tipoAccion === 'eliminar_dependiente' && (
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-2">Dependiente a Eliminar *</label>
-                  <select
-                    value={familiaresSeleccionados.retiro_dependiente || ''}
-                    onChange={(e) => seleccionarDependienteARetirar(e.target.value)}
-                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-                    disabled={cargandoFamiliares || familiaresDisponibles.length === 0}
-                  >
-                    <option value="">
-                      {cargandoFamiliares
-                        ? 'Cargando familiares...'
-                        : familiaresDisponibles.length === 0
-                          ? 'No se encuentran familiares disponibles'
-                          : 'Seleccionar dependiente...'}
-                    </option>
-                    {familiaresDisponibles.map((familiar) => (
-                      <option key={`${familiar.nombre}-${familiar.cedula || 'sin-cedula'}`} value={familiar.nombre}>
-                        {familiar.nombre}{familiar.cedula ? ` - ${familiar.cedula}` : ''}
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-2">Dependiente a Eliminar *</label>
+                    <select
+                      value={familiaresSeleccionados.retiro_dependiente || ''}
+                      onChange={(e) => seleccionarDependienteARetirar(e.target.value)}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                      disabled={cargandoFamiliares || familiaresDisponibles.length === 0}
+                    >
+                      <option value="">
+                        {cargandoFamiliares
+                          ? 'Cargando familiares...'
+                          : familiaresDisponibles.length === 0
+                            ? 'No se encuentran familiares disponibles'
+                            : 'Seleccionar dependiente...'}
                       </option>
-                    ))}
-                  </select>
+                      {familiaresDisponibles.map((familiar) => (
+                        <option key={`${familiar.nombre}-${familiar.cedula || 'sin-cedula'}`} value={familiar.nombre}>
+                          {familiar.nombre}{familiar.cedula ? ` - ${familiar.cedula}` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-2">Cédula del Dependiente *</label>
+                    <input
+                      type="text"
+                      value={movimientoModal.dependientes[0]?.cedula || ''}
+                      onChange={(e) => {
+                        if (movimientoModal.dependientes[0]) {
+                          actualizarDependienteModal(movimientoModal.dependientes[0].id, 'cedula', e.target.value);
+                        }
+                      }}
+                      maxLength={10}
+                      placeholder="Escribe la cédula del dependiente"
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
                 </div>
               )}
 
