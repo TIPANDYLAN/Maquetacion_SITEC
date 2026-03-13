@@ -1,32 +1,28 @@
-# Módulo Nómina
+# Modulo nomina
 
-Componentes relacionados a gestión de empleados, nómina y seguros.
+Componentes para gestion de personal, descuentos y Humana.
 
-## Implementados
+## Componentes en esta carpeta
 
-- **HumanaView.tsx** - Gestión de pólizas de seguros Humana
-  - Sistema de empleados con cálculo automático de primas
-  - Filtros por Centro de Costo, Plan y Tarifa
-  - Vista de Detalle (empleados) y Centros (agregado)
-  
-- **ProveedorHumanaView.tsx** - Upload de facturas de Humana
-  - Drag & drop file upload
-  - Historial de cargas
+- `HumanaView.tsx`
+- `ProveedorHumanaView.tsx`
+- `MovimientosHumanaView.tsx`
+- `DescuentosView.tsx`
+- `GestionDescuentosTabsView.tsx`
+- `HorasApiTestView.tsx`
 
-## Pendientes
+## Estado actual
 
-- **Movilizaciones.tsx** - Asignación de subsidio de movilización
-- **Erol.tsx** - Gestión de riesgos laborales
-- **Bonos.tsx** - Asignación de bonos y gratificaciones
-- **Prestamos.tsx** - Gestión de préstamos a empleados
-- **Celular.tsx** - Control de líneas telefónicas
-- **Alimentacion.tsx** - Subsidio de alimentación
-- **Fondos.tsx** - Gestión de fondos de solidaridad
-- **Descuentos.tsx** - Control de descuentos salariales
-- **Horas.tsx** - Gestión de horas extraordinarias
+- `HumanaView`: gestion de empleados/polizas con filtros y vistas de detalle/agregado.
+- `GestionDescuentosTabsView`: flujo principal para descuentos.
+- `HorasApiTestView`: pruebas de integracion para horas.
+- `ProveedorHumanaView` y `MovimientosHumanaView`: soporte de carga/consulta de archivos y movimientos.
 
-## Estructura HumanaView
+## Relacion con el backend
 
-- **Detalle Tab**: Tabla de empleados individuales
-- **Centros Tab**: Agregación por centro de costo con cálculos totales
-- Columnas: Prima, Asistencia, Trabajador, Seguro Campesino, Total Factura, Urbapark
+- Consume servicios en `src/services/humanaApi.ts`.
+- Persiste informacion local en `src/services/humanaStorage.ts` cuando aplica.
+
+## Pendiente funcional (menu)
+
+Desde `App.tsx` existen opciones de menu que aun renderizan placeholders (movilizaciones, e-rol, bonos, prestamos, celular, alimentacion, fondos, horas).

@@ -1,15 +1,19 @@
-# Módulo Integraciones
+# Modulo integraciones
 
-Componentes para gestión de integraciones con APIs y servicios externos.
+Espacio para integraciones con APIs externas y procesos de sincronizacion.
 
-## Pendientes
+## Estado actual
 
-- **Meypar.tsx** - Sincronización con plataforma Meypar
-- **TGW.tsx** - Gateway de pagos TGW
+- No existen componentes dedicados en esta carpeta.
+- En `App.tsx` hay opciones de menu de integraciones que actualmente renderizan `Placeholder`.
 
-## Estructura esperada
+## Opciones de menu existentes
 
-- Estado de conexión a APIs
-- Logs de sincronización
-- Configuración de credenciales
-- Monitoreo de eventos
+- api_meypar
+- api_tgw
+- api_matricula_error
+- api_proceso_reverso
+
+## Siguiente paso recomendado
+
+Crear una capa de servicios por proveedor en `src/services` y luego vistas por flujo en esta carpeta.

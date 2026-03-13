@@ -1,32 +1,32 @@
-# Configuración Global
+# Config global
 
-Constantes y configuración centralizada de la aplicación.
+Constantes compartidas para evitar valores hardcodeados en componentes.
 
-## Archivos
+## Archivo principal
 
-- **index.ts** - Colores, breakpoints, menú, formatos, etc.
+- `index.ts`
 
-## Exports
+## Exportaciones habituales
 
-- **COLORS** - Paleta de colores corporativa (primary, secondary, success, etc.)
-- **BREAKPOINTS** - Breakpoints de responsive design
-- **STATUS** - Estados predefinidos (Exitoso, Advertencia, Error, Pendiente)
-- **MENU_ITEMS** - Estructura del menú principal
-- **COMPANY** - Información de la empresa
-- **FORMATS** - Formatos de fecha y moneda
-- **PARKING_LOTS** - Lista de parqueaderos
+- `COLORS`
+- `BREAKPOINTS`
+- `STATUS`
+- `MENU_ITEMS`
+- `COMPANY`
+- `FORMATS`
+- `PARKING_LOTS`
 
-## Cómo usar
+## Uso
 
-```tsx
-import { COLORS, MENU_ITEMS, COMPANY } from '@/config';
+```ts
+import { COLORS, COMPANY } from '@/config';
 
-console.log(COLORS.primary); // '#001F3F'
-console.log(COMPANY.name); // 'Urbapark'
+console.log(COLORS.primary);
+console.log(COMPANY.name);
 ```
 
-## Mejores prácticas
+## Reglas
 
-- Usar estas constantes en lugar de hardcodear valores
-- Mantener sincronizados con estilos Tailwind
-- Agregar nuevas constantes aquí cuando se necesite reutilizar valores
+- Si una constante se reutiliza en 2 o mas lugares, moverla a esta carpeta.
+- Mantener nombres claros y consistentes.
+- Evitar duplicar configuracion equivalente en `mockData.ts`.

@@ -1,21 +1,20 @@
-# Módulo Pagos y Facturación
+# Modulo pagos
 
-Componentes de transacciones financieras, pagos y facturación.
+Componentes para flujo de pagos y conciliacion.
 
-## Implementados
+## Componentes implementados
 
-- **Pagos.tsx** (pages/) - Transacciones de pago con filtros
-- **BancosView.tsx** - Conciliación de tarjetas bancarias (VISA, MASTERCARD, DINERS, AMEX, DISCOVER)
+- `PagosView.tsx`: lista y gestion de pagos.
+- `BancosView.tsx`: carga/conciliacion por franquicia y seguimiento de cargas.
 
-## Pendientes
+## Estado del menu asociado
 
-- **Boletas.tsx** - Gestión de boletas de estacionamiento
-- **Facturas.tsx** - Emisión y seguimiento de facturas
-- **Presupuestos.tsx** - Gestión de presupuestos
-- **CajasChicas.tsx** - Control de cajas menores
+Desde `App.tsx`, varias opciones de pagos y facturacion aun usan `Placeholder`:
 
-## Características BancosView
-
-- Selector de franquicia de tarjeta
-- Drag & drop file upload
-- Historial de cargas con estado (Exitoso/Advertencia)
+- boletas
+- facturas
+- niubiz
+- agora
+- izipay
+- presupuestos
+- cajas chicas

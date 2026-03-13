@@ -1,20 +1,15 @@
-# Módulo Operaciones
+# Modulo operaciones
 
-Componentes relacionados a la gestión operativa del parqueadero.
+Componentes para operacion de parqueaderos.
 
-## Implementados
+## Implementado
 
-- Tickets.tsx (pages/) - Gestión de tickets con justificación
+- `TicketsView.tsx`: gestion de tickets abiertos, justificacion e historial.
 
-## Pendientes
+## Pendiente en el menu
 
-- **Matriculas.tsx** - Registro y gestión de matrículas de vehículos
-- **Bicicletas.tsx** - Sistema de bikes compartidas
-- **Ocupacion.tsx** - Estado de ocupación en tiempo real
+Las siguientes opciones existen en el menu pero aun usan `Placeholder`:
 
-## Estructura esperada
-
-Cada componente debe tener:
-- Tabla principal con datos mock
-- Filtros básicos
-- Acciones (si aplica)
+- matriculas
+- bicicletas
+- ocupacion

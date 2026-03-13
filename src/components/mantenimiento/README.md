@@ -1,15 +1,21 @@
-# Módulo Mantenimiento
+# Modulo mantenimiento
 
-Componentes relacionados a gestión de mantenimiento, personal técnico y recursos.
+Seccion para funcionalidades de mantenimiento operativo.
 
-## Pendientes
+## Estado actual
 
-- **Plantilla.tsx** - Plantillas de órdenes de trabajo
-- **Tecnicos.tsx** - Gestión de técnicos y asignaciones
-- **Parqueaderos.tsx** - Gestión de espacios, capacidad y disponibilidad
+- No hay componentes dedicados en esta carpeta.
+- En `App.tsx` las opciones del menu de mantenimiento renderizan `Placeholder`.
 
-## Estructura esperada
+## Opciones de menu existentes
 
-- **Plantilla**: Crear, editar, eliminar plantillas de OT
-- **Técnicos**: Base de técnicos con especialidades, disponibilidad
-- **Parqueaderos**: Gestión de espacios, niveles, sectores, disponibilidad en tiempo real
+- mant_plantilla
+- mant_tecnicos
+- mant_parqueaderos
+- mant_planificacion
+
+## Alcance esperado
+
+- Gestion de plantilla/equipos
+- Gestion de tecnicos
+- Gestion y planificacion de parqueaderos y mantenimiento

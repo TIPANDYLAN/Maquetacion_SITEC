@@ -1,15 +1,15 @@
-# Módulo Contabilidad
+# Modulo contabilidad
 
-Componentes relacionados a operaciones contables y reportes financieros.
+Espacio reservado para componentes de contabilidad y finanzas.
 
-## Pendientes
+## Estado actual
 
-- **General.tsx** - Registro de asientos contables
-- **Reportes.tsx** - Generación de reportes financieros
+- No hay componentes propios implementados en esta carpeta.
+- Desde el menu contable de `App.tsx`, la opcion `bancos` usa `BancosView` (ubicada en `src/components/pagos`).
+- El resto de opciones contables renderiza `Placeholder`.
 
-## Estructura esperada
+## Propuesta minima para avanzar
 
-- Captura de transacciones contables
-- Clasificación de cuentas
-- Reportes por período (mensual, trimestral, anual)
-- Auditoría de cambios
+- Crear una vista de contabilidad general.
+- Crear una vista de reportes.
+- Definir tipos en `src/types` antes de conectar API.

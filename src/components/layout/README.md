@@ -1,12 +1,22 @@
-# Componentes de Layout
+# Layout
 
-Componentes estructurales de la aplicación que definen el layout general.
+Esta carpeta documenta la separacion futura del layout principal.
 
-## Archivos
+## Estado actual
 
-- **Sidebar.tsx** (FUTURO) - Barra lateral de navegación
-- **Header.tsx** (FUTURO) - Encabezado superior con empresa selector
+- `App.tsx` contiene la estructura completa de sidebar, header y area de contenido.
+- Aun no existen componentes separados de barra lateral y encabezado en esta carpeta.
 
-## Próximos pasos
+## Objetivo
 
-Estos componentes deben ser extraídos de `App.tsx` para mejorar la legibilidad y mantenibilidad.
+Extraer layout para:
+
+- reducir complejidad de `App.tsx`
+- facilitar pruebas unitarias
+- permitir reutilizacion de piezas de interfaz
+
+## Propuesta de extraccion
+
+1. Extraer barra lateral.
+2. Extraer encabezado.
+3. Separar area de contenido principal (opcional).

@@ -1,50 +1,24 @@
-# Data y Mock Data
+# Datos y mocks
 
-Datos centralizados para toda la aplicación, incluyendo datos mock para desarrollo/testing.
+Datos de desarrollo utilizados por vistas y componentes mientras no exista integracion completa con backend.
 
-## Archivos
+## Archivo principal
 
-- **mockData.ts** - Todos los datos mock para el desarrollo
+- `mockData.ts`
 
-## Constantes exportadas
+## Conjuntos de datos frecuentes
 
-- **INITIAL_PARKING_LOTS** - Lista de parqueaderos
-- **INITIAL_TICKETS_DATA** - Tickets de ejemplo
-- **JUSTIFICATION_GROUPS** - Grupos de justificación con estructura jerárquica
-- **EQUIPOS_LIST** - Equipos de entrada/salida
-- **PAGOS_DATA** - Transacciones de pago
-- **HUMANA_MOCK_DATA** - Empleados con pólizas
-- **PLANES** - Planes de seguro
-- **TARIFAS** - Tarifas de seguros
+- Tickets y justificaciones
+- Pagos y transacciones
+- Humana (empleados, planes, tarifas)
+- Listas auxiliares (equipos, parqueaderos)
 
-## Estructura de datos
+## Uso recomendado
 
-### Ticket
-```ts
-{
-  id: string;
-  numero: string;
-  equipoEntrada: string;
-  fecha: string;
-  matricula: string;
-  estado: string;
-}
-```
+- Importar solo la constante necesaria por componente.
+- Mantener forma de datos compatible con los tipos de `src/types`.
+- Evitar logica de negocio compleja dentro de esta carpeta.
 
-### Empleado Humana
-```ts
-{
-  id: string;
-  nombre: string;
-  cedula: string;
-  centro: string;
-  plan: string;
-  prima: number;
-}
-```
+## Siguiente etapa
 
-## Próximos pasos
-
-- Reemplazar mock data con llamadas API reales
-- Implementar store centralizado (Context, Zustand, Redux)
-- Agregar cache de datos
+Migrar progresivamente estos datos a llamadas API en `src/services`.
