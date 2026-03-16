@@ -2,7 +2,7 @@ import { useState } from 'react';
 import DescuentosView from './DescuentosView';
 import MovimientosHumanaView from './MovimientosHumanaView';
 import ProveedorHumanaView from './ProveedorHumanaView';
-import ExentosPagoSeguroView from './ExentosPagoSeguroView';
+import ExentosPagoSeguroView from './ExentosPagoSeguroView.tsx';
 
 type TabPrincipal = 'gestion_descuentos' | 'descuentos_humana';
 type TabHumana = 'movimientos_humana' | 'proveedor_humana' | 'exentos_pago_seguro';
