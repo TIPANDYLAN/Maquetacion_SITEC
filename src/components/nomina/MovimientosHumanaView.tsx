@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useCallback, useState, useEffect } from 'react';
 import { Plus, Trash2, Send, CheckCircle2, AlertCircle, Edit2, Download } from 'lucide-react';
 import ExcelJS from 'exceljs';
 import { type HumanaEmployeeData } from '../../services/humanaStorage';
@@ -94,6 +94,44 @@ const crearMovimientoVacio = (id: string): MovimientoRow => ({
   dependientes: [],
 });
 
+const normalizarPlanApi = (valorPlan: string) => {
+  const valor = String(valorPlan || '').trim().toUpperCase();
+  if (!valor) return '';
+  if (valor.includes('10')) return 'PLAN 10';
+  if (valor.includes('5')) return 'PLAN 5';
+  return valorPlan;
+};
+
+const normalizarTarifaApi = (valorTarifa: string) => {
+  const valor = String(valorTarifa || '').trim().toUpperCase();
+  if (!valor) return '';
+  if (valor === 'TS') return 'T';
+  if (valor === 'TD') return 'T+1';
+  if (valor === 'TF') return 'T+FAMILIAR';
+  if (valor.includes('FAMILIAR') || valor.includes('FAMILIA')) return 'T+FAMILIAR';
+  if (valor.includes('+1')) return 'T+1';
+  if (valor === 'T') return 'T';
+  return valorTarifa;
+};
+
+const normalizarFechaISOaInput = (iso: string) => {
+  if (!iso) return '';
+  const fecha = new Date(iso);
+  if (Number.isNaN(fecha.getTime())) return '';
+  return fecha.toISOString().slice(0, 10);
+};
+
+const obtenerFechaActualInput = () => new Date().toISOString().slice(0, 10);
+
+const mapearParentesco = (codigo: string): 'CONYUGE' | 'HIJO/HIJA' | 'PADRE/MADRE' | '' => {
+  const valor = (codigo || '').trim().toUpperCase();
+  if (!valor) return '';
+  if (valor === 'HN' || valor === 'HD') return 'HIJO/HIJA';
+  if (valor === 'E' || valor === 'ED') return 'CONYUGE';
+  if (valor === 'P') return 'PADRE/MADRE';
+  return '';
+};
+
 const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaViewProps) => {
   const [movimientos, setMovimientos] = useState<MovimientoRow[]>([]);
   const [empleadosDisponibles, setEmpleadosDisponibles] = useState<HumanaEmployeeData[]>([]);
@@ -115,27 +153,7 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
   const EMPRESA_FIJA = 'ESTACIONAMIENTOS URBANOS URBAPARK SA';
   const CONTRATO_FIJO = '384799';
 
-  const normalizarPlanApi = (valorPlan: string) => {
-    const valor = String(valorPlan || '').trim().toUpperCase();
-    if (!valor) return '';
-    if (valor.includes('10')) return 'PLAN 10';
-    if (valor.includes('5')) return 'PLAN 5';
-    return valorPlan;
-  };
-
-  const normalizarTarifaApi = (valorTarifa: string) => {
-    const valor = String(valorTarifa || '').trim().toUpperCase();
-    if (!valor) return '';
-    if (valor === 'TS') return 'T';
-    if (valor === 'TD') return 'T+1';
-    if (valor === 'TF') return 'T+FAMILIAR';
-    if (valor.includes('FAMILIAR') || valor.includes('FAMILIA')) return 'T+FAMILIAR';
-    if (valor.includes('+1')) return 'T+1';
-    if (valor === 'T') return 'T';
-    return valorTarifa;
-  };
-
-  const mapearEmpleadoDesdeApi = (item: EmpleadoNominaApiItem): HumanaEmployeeData => {
+  const mapearEmpleadoDesdeApi = useCallback((item: EmpleadoNominaApiItem): HumanaEmployeeData => {
     const json = item?.json ?? {};
     const planApi =
       String(
@@ -173,7 +191,7 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
       total: 0,
       diferencia: 0,
     };
-  };
+  }, []);
 
   // Cargar empleados desde API de nomina
   useEffect(() => {
@@ -216,7 +234,7 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
     };
 
     void cargarEmpleados();
-  }, []);
+  }, [mapearEmpleadoDesdeApi]);
 
   useEffect(() => {
     // Si cambia cualquier movimiento, se requiere volver a validar el Excel.
@@ -386,25 +404,7 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
     };
   };
 
-  const normalizarFechaISOaInput = (iso: string) => {
-    if (!iso) return '';
-    const fecha = new Date(iso);
-    if (Number.isNaN(fecha.getTime())) return '';
-    return fecha.toISOString().slice(0, 10);
-  };
-
-  const obtenerFechaActualInput = () => new Date().toISOString().slice(0, 10);
-
-  const mapearParentesco = (codigo: string): 'CONYUGE' | 'HIJO/HIJA' | 'PADRE/MADRE' | '' => {
-    const valor = (codigo || '').trim().toUpperCase();
-    if (!valor) return '';
-    if (valor === 'HN' || valor === 'HD') return 'HIJO/HIJA';
-    if (valor === 'E' || valor === 'ED') return 'CONYUGE';
-    if (valor === 'P') return 'PADRE/MADRE';
-    return '';
-  };
-
-  const cargarFamiliaresDisponibles = async (cedula: string) => {
+  const cargarFamiliaresDisponibles = useCallback(async (cedula: string) => {
     if (!cedula) {
       setFamiliaresDisponibles([]);
       return;
@@ -431,13 +431,16 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
       const data = await response.json();
       const familiares = Array.isArray(data?.familiares) ? data.familiares : [];
 
-      const normalizados: FamiliarDisponible[] = familiares.map((f: any) => ({
-        nombre: String(f?.NOMBRE_FAM || '').trim(),
-        cedula: String(f?.CEDULA_FAM || f?.CEDULA || f?.IDENTIFICACION_FAM || f?.IDENTIFICACION || '').trim(),
-        genero: (String(f?.SEXO_FAM || '').toUpperCase() === 'M' ? 'M' : String(f?.SEXO_FAM || '').toUpperCase() === 'F' ? 'F' : ''),
-        fechaNacimiento: normalizarFechaISOaInput(String(f?.NACIMIENTO_FAM || '')),
-        parentesco: mapearParentesco(String(f?.PARENTESCO || '')),
-      })).filter((f: FamiliarDisponible) => f.nombre);
+      const normalizados: FamiliarDisponible[] = familiares.map((f: unknown) => {
+        const familiar = (f ?? {}) as Record<string, unknown>;
+        return {
+          nombre: String(familiar.NOMBRE_FAM || '').trim(),
+          cedula: String(familiar.CEDULA_FAM || familiar.CEDULA || familiar.IDENTIFICACION_FAM || familiar.IDENTIFICACION || '').trim(),
+          genero: (String(familiar.SEXO_FAM || '').toUpperCase() === 'M' ? 'M' : String(familiar.SEXO_FAM || '').toUpperCase() === 'F' ? 'F' : ''),
+          fechaNacimiento: normalizarFechaISOaInput(String(familiar.NACIMIENTO_FAM || '')),
+          parentesco: mapearParentesco(String(familiar.PARENTESCO || '')),
+        };
+      }).filter((f: FamiliarDisponible) => f.nombre);
 
       setFamiliaresDisponibles(normalizados);
     } catch (error) {
@@ -446,7 +449,7 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
     } finally {
       setCargandoFamiliares(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     if (movimientoModal.tipoAccion !== 'eliminar_dependiente' || !movimientoModal.empleadoCedula) {
@@ -458,7 +461,7 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
       ...prev,
       fechaSalida: prev.fechaSalida || obtenerFechaActualInput(),
     }));
-  }, [movimientoModal.tipoAccion, movimientoModal.empleadoCedula]);
+  }, [movimientoModal.tipoAccion, movimientoModal.empleadoCedula, cargarFamiliaresDisponibles]);
 
   const guardarEnAPIFecha = async (empleadoNombre: string, empleadoCedula: string, tipoAccion: 'retirar' | 'ingresar', fecha: string) => {
     try {
@@ -687,7 +690,7 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
     return empleado?.plan || '';
   };
 
-  const actualizarMovimientoModal = (campo: keyof MovimientoRow, valor: any) => {
+  const actualizarMovimientoModal = <K extends keyof MovimientoRow>(campo: K, valor: MovimientoRow[K]) => {
     if (modalError) setModalError('');
     setMovimientoModal(prev => {
       const updated = { ...prev, [campo]: valor };
@@ -811,7 +814,7 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
     setMovimientoModal(prev => ({ ...prev, dependientes: prev.dependientes.filter(d => d.id !== dependienteId) }));
   };
 
-  const actualizarDependienteModal = (dependienteId: string, campo: keyof DependienteForm, valor: any) => {
+  const actualizarDependienteModal = <K extends keyof DependienteForm>(dependienteId: string, campo: K, valor: DependienteForm[K]) => {
     if (modalError) setModalError('');
     setMovimientoModal(prev => ({
       ...prev,
@@ -1036,7 +1039,7 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
         message: `✓ Se abrirá tu cliente de correo. Por favor adjunta el archivo ${nombreArchivo} que se descargó y envía a ${destinatario}`,
       });
 
-    } catch (error) {
+    } catch {
       setUploadStatus({
         type: 'error',
         message: 'Error al preparar el envío de movimientos a Humana',
@@ -1313,9 +1316,24 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
     }
 
     const movimientosValidos = movimientos.every(validarMovimiento);
+    const ingresosSinPlanOTarifa = movimientos.filter(
+      (m) => m.tipoAccion === 'ingresar' && (!m.tipoPlan || !m.tarifaNueva)
+    );
+
     if (!movimientosValidos) {
       setExcelValidado(false);
       setConfirmacionExcelValidado(false);
+
+      if (ingresosSinPlanOTarifa.length > 0) {
+        const ingresosSinPlan = ingresosSinPlanOTarifa.filter((m) => !m.tipoPlan).length;
+        const ingresosSinTarifa = ingresosSinPlanOTarifa.filter((m) => !m.tarifaNueva).length;
+        setUploadStatus({
+          type: 'error',
+          message: `⚠️ No se pudo generar el Excel: hay ${ingresosSinPlanOTarifa.length} ingreso(s) sin plan y/o tarifa (${ingresosSinPlan} sin plan, ${ingresosSinTarifa} sin tarifa).`,
+        });
+        return;
+      }
+
       setUploadStatus({
         type: 'error',
         message: '⚠️ Corrige los movimientos incompletos antes de exportar el Excel',
@@ -1858,6 +1876,16 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
               </table>
             </div>
 
+            {/* MENSAJE DE ERROR ARRIBA DEL EXCEL */}
+            {uploadStatus.type === 'error' && (
+              <div className={`mt-4 p-4 rounded-xl border bg-red-50 border-red-200 text-red-700`}>
+                <div className="flex items-center gap-2">
+                  <AlertCircle size={20} />
+                  <span className="font-semibold text-sm">{uploadStatus.message}</span>
+                </div>
+              </div>
+            )}
+
             {/* BOTONES DE EXPORTAR Y ENVIAR */}
             <div className="mt-6 flex flex-col items-end gap-2">
               <div className="flex items-center gap-2">
@@ -1948,7 +1976,7 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
                   <label className="block text-xs font-semibold text-slate-600 mb-2">Tipo de Movimiento *</label>
                   <select
                     value={movimientoModal.tipoAccion}
-                    onChange={(e) => actualizarMovimientoModal('tipoAccion', e.target.value as any)}
+                    onChange={(e) => actualizarMovimientoModal('tipoAccion', e.target.value as MovimientoRow['tipoAccion'])}
                     disabled={!movimientoModal.empleadoNombre}
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white disabled:bg-slate-100 disabled:cursor-not-allowed"
                   >
@@ -2197,7 +2225,7 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
                                   <label className="block text-xs font-semibold text-slate-600 mb-1">Parentesco *</label>
                                   <select
                                     value={dependiente.parentesco}
-                                    onChange={(e) => actualizarDependienteModal(dependiente.id, 'parentesco', e.target.value)}
+                                    onChange={(e) => actualizarDependienteModal(dependiente.id, 'parentesco', e.target.value as DependienteForm['parentesco'])}
                                     className="w-full px-2 py-1.5 border border-slate-200 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
                                   >
                                     <option value="">Seleccionar...</option>
@@ -2211,7 +2239,7 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
                                   <label className="block text-xs font-semibold text-slate-600 mb-1">Género *</label>
                                   <select
                                     value={dependiente.genero}
-                                    onChange={(e) => actualizarDependienteModal(dependiente.id, 'genero', e.target.value)}
+                                    onChange={(e) => actualizarDependienteModal(dependiente.id, 'genero', e.target.value as DependienteForm['genero'])}
                                     className="w-full px-2 py-1.5 border border-slate-200 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
                                   >
                                     <option value="">Seleccionar...</option>

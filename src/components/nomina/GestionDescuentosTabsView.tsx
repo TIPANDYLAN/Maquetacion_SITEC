@@ -2,9 +2,10 @@ import { useState } from 'react';
 import DescuentosView from './DescuentosView';
 import MovimientosHumanaView from './MovimientosHumanaView';
 import ProveedorHumanaView from './ProveedorHumanaView';
+import ExentosPagoSeguroView from './ExentosPagoSeguroView';
 
 type TabPrincipal = 'gestion_descuentos' | 'descuentos_humana';
-type TabHumana = 'movimientos_humana' | 'proveedor_humana';
+type TabHumana = 'movimientos_humana' | 'proveedor_humana' | 'exentos_pago_seguro';
 
 const GestionDescuentosTabsView = () => {
   const [tabPrincipal, setTabPrincipal] = useState<TabPrincipal>('gestion_descuentos');
@@ -72,9 +73,23 @@ const GestionDescuentosTabsView = () => {
           >
             Proveedor Humana
           </button>
+          <button
+            onClick={() => handleTabHumanaChange('exentos_pago_seguro')}
+            className={`px-4 py-2 rounded-xl text-sm font-semibold transition ${
+              tabHumana === 'exentos_pago_seguro'
+                ? 'bg-blue-600 text-white shadow-sm'
+                : 'text-slate-600 hover:bg-slate-100'
+            }`}
+          >
+            Exentos Pago Seguro
+          </button>
         </div>
 
-        {tabHumana === 'movimientos_humana' ? <MovimientosHumanaView onUnsavedChangesChange={setHayCambiosPendientesMovimientos} /> : <ProveedorHumanaView />}
+        {tabHumana === 'movimientos_humana' && (
+          <MovimientosHumanaView onUnsavedChangesChange={setHayCambiosPendientesMovimientos} />
+        )}
+        {tabHumana === 'proveedor_humana' && <ProveedorHumanaView />}
+        {tabHumana === 'exentos_pago_seguro' && <ExentosPagoSeguroView />}
       </div>
     );
   };

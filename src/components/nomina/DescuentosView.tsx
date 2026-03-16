@@ -182,10 +182,13 @@ const DescuentosView = () => {
             const data = await response.json();
             const centrosFormateados = Array.isArray(data)
                 ? data
-                    .map((item: any) => ({
-                        IDCENTROCOSTO: item.json?.IDCENTROCOSTO || '',
-                        CENTROCOSTO: item.json?.CENTROCOSTO || '',
-                    }))
+                    .map((item: unknown) => {
+                        const row = (item ?? {}) as { json?: { IDCENTROCOSTO?: string; CENTROCOSTO?: string } };
+                        return {
+                            IDCENTROCOSTO: row.json?.IDCENTROCOSTO || '',
+                            CENTROCOSTO: row.json?.CENTROCOSTO || '',
+                        };
+                    })
                     .filter((c: CentroCosto) => c.IDCENTROCOSTO && c.CENTROCOSTO)
                 : [];
 

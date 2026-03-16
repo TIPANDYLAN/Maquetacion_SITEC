@@ -33,7 +33,7 @@ const HorasApiTestView = () => {
     setResponseText('');
     setStatusLine('');
 
-    let parsedBody: any;
+    let parsedBody: Record<string, unknown>;
     try {
       parsedBody = JSON.parse(requestBody);
     } catch {

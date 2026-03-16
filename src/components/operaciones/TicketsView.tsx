@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ChevronDown, Ticket, Building, Filter, Calendar, MoreVertical, Car, Image as Loader2, History, LayoutList, Eye } from 'lucide-react';
 import { INITIAL_TICKETS_DATA, PARKING_LOTS as INITIAL_PARKING_LOTS, JUSTIFICATION_GROUPS } from "../../data/mockData";
 import { JustificationModal } from "../modals/JustificationModal";
@@ -31,20 +31,37 @@ const TicketsView = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [viewMode, setViewMode] = useState<'gestion' | 'historial'>('gestion');
   const [historyGroupFilter, setHistoryGroupFilter] = useState('Todos');
+  const loadingTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
-    if (searchFilters.park && searchFilters.dateFrom && searchFilters.dateTo && searchFilters.type) {
-      setIsLoading(true);
-      setTickets([]);
-      const timer = setTimeout(() => {
-        setTickets(INITIAL_TICKETS_DATA as TicketItem[]);
-        setIsLoading(false);
-      }, 800);
-      return () => clearTimeout(timer);
+    return () => {
+      if (loadingTimerRef.current !== null) {
+        window.clearTimeout(loadingTimerRef.current);
+      }
+    };
+  }, []);
+
+  const applyFilters = (nextFilters: typeof searchFilters) => {
+    setSearchFilters(nextFilters);
+
+    if (loadingTimerRef.current !== null) {
+      window.clearTimeout(loadingTimerRef.current);
     }
 
+    const areFiltersComplete = Boolean(nextFilters.park && nextFilters.dateFrom && nextFilters.dateTo && nextFilters.type);
+    if (!areFiltersComplete) {
+      setTickets([]);
+      setIsLoading(false);
+      return;
+    }
+
+    setIsLoading(true);
     setTickets([]);
-  }, [searchFilters.park, searchFilters.dateFrom, searchFilters.dateTo, searchFilters.type]);
+    loadingTimerRef.current = window.setTimeout(() => {
+      setTickets(INITIAL_TICKETS_DATA as TicketItem[]);
+      setIsLoading(false);
+    }, 800);
+  };
 
   const handleTicketUpdate = (id: string, justificationData: TicketItem['justificationData']) => {
     setTickets((currentTickets) =>
@@ -61,7 +78,7 @@ const TicketsView = () => {
   };
 
   const handleTypeChange = (type: string) => {
-    setSearchFilters({ ...searchFilters, type });
+    applyFilters({ ...searchFilters, type });
     setIsIgorMode(type === 'igor');
   };
 
@@ -110,7 +127,7 @@ const TicketsView = () => {
               <select
                 className="w-full pl-12 pr-10 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none text-slate-700 cursor-pointer"
                 value={searchFilters.park}
-                onChange={(e) => setSearchFilters({ ...searchFilters, park: e.target.value })}
+                onChange={(e) => applyFilters({ ...searchFilters, park: e.target.value })}
               >
                 <option value="">Seleccione...</option>
                 {PARKING_LOTS.map((lot, index) => (
@@ -130,7 +147,7 @@ const TicketsView = () => {
                   type="date"
                   className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none text-slate-700 cursor-pointer"
                   value={searchFilters.dateFrom}
-                  onChange={(e) => setSearchFilters({ ...searchFilters, dateFrom: e.target.value })}
+                  onChange={(e) => applyFilters({ ...searchFilters, dateFrom: e.target.value })}
                 />
               </div>
             </div>
@@ -142,7 +159,7 @@ const TicketsView = () => {
                   type="date"
                   className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none text-slate-700 cursor-pointer"
                   value={searchFilters.dateTo}
-                  onChange={(e) => setSearchFilters({ ...searchFilters, dateTo: e.target.value })}
+                  onChange={(e) => applyFilters({ ...searchFilters, dateTo: e.target.value })}
                 />
               </div>
             </div>

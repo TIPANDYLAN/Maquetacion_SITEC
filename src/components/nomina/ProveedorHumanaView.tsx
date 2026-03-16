@@ -27,6 +27,62 @@ interface ParseResult {
     personasSubidas: number;
 }
 
+interface EmpleadoCentroCostosApiResponse {
+    CEDULA?: string;
+    NOMBRES?: string;
+    APELLIDOS?: string;
+    IDCENTROCOSTO?: string;
+    CENTROCOSTO?: string;
+    INGRESO?: string;
+    SALIDA?: string;
+    FechaIngreso?: string;
+    FechaSalida?: string;
+    CentroCostos?: string;
+}
+
+interface EmpleadoCentroCostoNormalizado {
+    apellidos: string;
+    nombres: string;
+    centroCosto: string;
+    fechaIngreso: string;
+    fechaSalida: string;
+}
+
+interface ExentoPagoSeguroRegistro {
+    cedula: string;
+    porcentaje_exento: number;
+}
+
+interface ListarExentosPagoSeguroResponse {
+    ok: boolean;
+    registros?: ExentoPagoSeguroRegistro[];
+    error?: string;
+}
+
+const limpiarTextoApi = (valor: unknown): string => String(valor || '').trim();
+const CENTRO_COSTO_POR_DEFECTO = '0110001 - ADMINISTRACION-ADMINISTRACION-ADMINISTRACION';
+
+const normalizarEmpleadoCentroCostos = (payload: unknown): EmpleadoCentroCostoNormalizado => {
+    const raw = Array.isArray(payload)
+        ? ((payload[0] as { json?: EmpleadoCentroCostosApiResponse } | undefined)?.json ?? payload[0] ?? {})
+        : ((payload as { json?: EmpleadoCentroCostosApiResponse } | null | undefined)?.json ?? payload ?? {});
+
+    const data = raw as EmpleadoCentroCostosApiResponse;
+    const codigoCentroCosto = limpiarTextoApi(data.IDCENTROCOSTO);
+    const nombreCentroCosto = limpiarTextoApi(data.CENTROCOSTO || data.CentroCostos);
+    const centroCosto = codigoCentroCosto && nombreCentroCosto
+        ? `${codigoCentroCosto} - ${nombreCentroCosto}`
+        : (codigoCentroCosto || nombreCentroCosto);
+
+    return {
+        apellidos: limpiarTextoApi(data.APELLIDOS),
+        nombres: limpiarTextoApi(data.NOMBRES),
+        centroCosto,
+        fechaIngreso: limpiarTextoApi(data.INGRESO || data.FechaIngreso),
+        fechaSalida: limpiarTextoApi(data.SALIDA || data.FechaSalida) || '--',
+    };
+};
+
 const ProveedorHumanaView = () => {
     const getNombreMes = (mes: number): string => {
         const meses = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
@@ -1085,48 +1141,119 @@ const ProveedorHumanaView = () => {
                 };
             };
 
-            const fetchCentroCosto = async (cedula: string): Promise<{ centroCosto: string; fechaIngreso: string; fechaSalida: string }> => {
-                try {
-                    const response = await fetch('/api/n8n/get-with-body', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({
-                            endpoint: 'https://n8n.172.10.219.15.sslip.io/webhook/centrocostos/empleados',
-                            payload: { Cedula: cedula },
-                            apiKey: '',
-                        }),
-                    });
+            const detalleEmpleadoCache = new Map<string, Promise<EmpleadoCentroCostoNormalizado>>();
 
-                    if (!response.ok) {
+            const fetchDetalleEmpleado = async (cedula: string): Promise<EmpleadoCentroCostoNormalizado> => {
+                const cedulaLimpia = String(cedula || '').trim();
+                if (!cedulaLimpia) {
+                    return {
+                        apellidos: '',
+                        nombres: '',
+                        centroCosto: '',
+                        fechaIngreso: '',
+                        fechaSalida: '--',
+                    };
+                }
+
+                const cached = detalleEmpleadoCache.get(cedulaLimpia);
+                if (cached) {
+                    return cached;
+                }
+
+                const request = (async (): Promise<EmpleadoCentroCostoNormalizado> => {
+                    try {
+                        const response = await fetch('/api/n8n/get-with-body', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({
+                                endpoint: 'https://n8n.172.10.219.15.sslip.io/webhook/centrocostos/empleados',
+                                payload: { Cedula: cedulaLimpia },
+                                apiKey: '',
+                            }),
+                        });
+
+                        if (!response.ok) {
+                            return {
+                                apellidos: '',
+                                nombres: '',
+                                centroCosto: '',
+                                fechaIngreso: '',
+                                fechaSalida: '--',
+                            };
+                        }
+
+                        const data = await response.json();
+                        return normalizarEmpleadoCentroCostos(data);
+                    } catch {
                         return {
-                            centroCosto: 'ADMINISTRACION-ADMINISTRACION-ADMINISTRACION',
+                            apellidos: '',
+                            nombres: '',
+                            centroCosto: '',
                             fechaIngreso: '',
                             fechaSalida: '--',
                         };
                     }
+                })();
 
-                    const data = await response.json();
-                    if (data.CentroCostos) {
-                        return {
-                            centroCosto: data.CentroCostos,
-                            fechaIngreso: data.FechaIngreso || '',
-                            fechaSalida: data.FechaSalida ? data.FechaSalida : '--',
-                        };
+                detalleEmpleadoCache.set(cedulaLimpia, request);
+                return request;
+            };
+
+            const aplicarDetalleEmpleado = (empleado: HumanaEmployeeData, detalle: EmpleadoCentroCostoNormalizado) => {
+                if (detalle.apellidos) {
+                    empleado.apellidos = detalle.apellidos;
+                }
+                if (detalle.nombres) {
+                    empleado.nombres = detalle.nombres;
+                }
+                if (detalle.centroCosto) {
+                    empleado.centroCosto = detalle.centroCosto;
+                }
+                if (detalle.fechaIngreso) {
+                    empleado.fechaInclusion = detalle.fechaIngreso;
+                }
+                if (detalle.fechaSalida) {
+                    empleado.fechaExclusion = detalle.fechaSalida;
+                }
+
+                const centroCostoNormalizado = limpiarTextoApi(empleado.centroCosto).toUpperCase();
+                if (centroCostoNormalizado === '53279' || centroCostoNormalizado.startsWith('53279 -')) {
+                    empleado.centroCosto = CENTRO_COSTO_POR_DEFECTO;
+                }
+
+                if (!empleado.centroCosto || empleado.centroCosto === 'N/A') {
+                    empleado.centroCosto = CENTRO_COSTO_POR_DEFECTO;
+                }
+            };
+
+            const cargarExentosPagoSeguro = async (): Promise<Map<string, number>> => {
+                try {
+                    const response = await fetch('/api/descuentos/humana/exentos-pago-seguro', {
+                        method: 'GET',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                    });
+
+                    const data = await response.json() as ListarExentosPagoSeguroResponse;
+                    if (!response.ok || !data.ok) {
+                        console.warn('No se pudieron cargar exentos de pago seguro:', data.error || response.statusText);
+                        return new Map();
                     }
 
-                    return {
-                        centroCosto: 'ADMINISTRACION-ADMINISTRACION-ADMINISTRACION',
-                        fechaIngreso: '',
-                        fechaSalida: '--',
-                    };
-                } catch {
-                    return {
-                        centroCosto: 'ADMINISTRACION-ADMINISTRACION-ADMINISTRACION',
-                        fechaIngreso: '',
-                        fechaSalida: '--',
-                    };
+                    return new Map(
+                        (Array.isArray(data.registros) ? data.registros : [])
+                            .map((registro): [string, number] => [
+                                String(registro.cedula || '').trim(),
+                                Number(registro.porcentaje_exento || 0),
+                            ])
+                            .filter(([cedula, porcentaje]) => Boolean(cedula) && Number.isFinite(porcentaje) && porcentaje > 0)
+                    );
+                } catch (error) {
+                    console.warn('Error consultando exentos de pago seguro:', error);
+                    return new Map();
                 }
             };
 
@@ -1146,10 +1273,8 @@ const ProveedorHumanaView = () => {
 
             for (const empleado of facturaResult.empleados) {
                 if (!empleado.cedula) continue;
-                const costData = await fetchCentroCosto(empleado.cedula);
-                empleado.centroCosto = costData.centroCosto;
-                empleado.fechaInclusion = costData.fechaIngreso || empleado.fechaInclusion;
-                empleado.fechaExclusion = costData.fechaSalida;
+                const detalleEmpleado = await fetchDetalleEmpleado(empleado.cedula);
+                aplicarDetalleEmpleado(empleado, detalleEmpleado);
             }
 
             for (const empleado of facturaResult.empleados) {
@@ -1199,13 +1324,16 @@ const ProveedorHumanaView = () => {
 
             for (const empleado of empleadosFinal) {
                 if (!empleado.cedula || !movimientosResult.cedulasMovimientos.has(empleado.cedula)) continue;
-                const costData = await fetchCentroCosto(empleado.cedula);
-                empleado.centroCosto = costData.centroCosto;
+                const detalleEmpleado = await fetchDetalleEmpleado(empleado.cedula);
+                aplicarDetalleEmpleado(empleado, detalleEmpleado);
             }
+
+            const exentosPagoSeguro = await cargarExentosPagoSeguro();
 
             if (empleadosFinal.length > 0) {
                 const totalFacturaFinal = empleadosFinal.reduce((sum, emp) => sum + ((emp.prima || 0) + (emp.humanaAssist || 0)), 0);
                 const seguroCampesinoPerEmpleadoFinal = totalFacturaFinal * 0.005 / empleadosFinal.length;
+                let totalUrbaparkBasePlan5TarifaT: number | null = null;
 
                 empleadosFinal.forEach((emp) => {
                     const ajuste = emp.ajuste || 0;
@@ -1216,11 +1344,36 @@ const ProveedorHumanaView = () => {
                         emp.seguroCampesino = 0;
                         emp.totalUrbapark = ajuste - 7.5;
                     } else {
-                        emp.trabajador = calcularTrabajadorPorTarifa(emp.tarifa || '');
+                        const trabajadorBase = calcularTrabajadorPorTarifa(emp.tarifa || '');
+                        const porcentajeExento = Math.max(0, Math.min(100, exentosPagoSeguro.get(emp.cedula) || 0));
+                        const valorExento = trabajadorBase * (porcentajeExento / 100);
+                        emp.trabajador = trabajadorBase - valorExento;
                         emp.seguroCampesino = seguroCampesinoPerEmpleadoFinal;
                         emp.totalUrbapark = (emp.prima || 0) + emp.seguroCampesino + ajuste + (emp.humanaAssist || 0) - emp.trabajador;
+
+                        const planNormalizado = String(emp.plan || '').trim().toUpperCase().replace(/\s+/g, ' ');
+                        const tarifaNormalizada = String(emp.tarifa || '').trim().toUpperCase();
+                        const sinAjuste = Number(ajuste) === 0;
+                        const sinExento = porcentajeExento === 0;
+
+                        if (totalUrbaparkBasePlan5TarifaT === null && sinAjuste && sinExento && planNormalizado === 'PLAN 5' && tarifaNormalizada === 'T') {
+                            totalUrbaparkBasePlan5TarifaT = emp.totalUrbapark;
+                        }
                     }
                 });
+
+                if (totalUrbaparkBasePlan5TarifaT !== null) {
+                    empleadosFinal.forEach((emp) => {
+                        const ajuste = Number(emp.ajuste || 0);
+                        const porcentajeExento = Math.max(0, Math.min(100, exentosPagoSeguro.get(emp.cedula) || 0));
+                        const sinAjuste = ajuste === 0;
+                        const sinExento = porcentajeExento === 0;
+
+                        if (sinAjuste && sinExento) {
+                            emp.totalUrbapark = totalUrbaparkBasePlan5TarifaT as number;
+                        }
+                    });
+                }
             }
 
             // Reemplazar urbapark con totalUrbapark antes de guardar en BD

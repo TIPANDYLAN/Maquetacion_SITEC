@@ -1,7 +1,21 @@
 import { X, Eye } from 'lucide-react';
 
+interface TicketJustificationData {
+    justificationType?: string;
+    selectedGroup?: string;
+    selectedReason?: string;
+    exitEquipment?: string;
+    additionalComments?: string;
+}
+
+interface HistoryTicket {
+    id: string;
+    matricula?: string;
+    justificationData?: TicketJustificationData;
+}
+
 interface HistoryDetailModalProps {
-    ticket: any;
+    ticket: HistoryTicket;
     onClose: () => void;
 }
 

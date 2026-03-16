@@ -1,12 +1,47 @@
-import { useState } from 'react';
+import { lazy, Suspense, useState } from 'react';
 import { Menu, ChevronDown, ChevronRight, LogOut, Cpu, Wallet, Wrench, Users, BarChart3, Network, Key } from 'lucide-react';
-import TicketsView from "./components/operaciones/TicketsView";
-import PagosView from "./components/pagos/PagosView";
-import HumanaView from "./components/nomina/HumanaView";
-import GestionDescuentosTabsView from "./components/nomina/GestionDescuentosTabsView";
-import HorasApiTestView from "./components/nomina/HorasApiTestView";
-import BancosView from "./components/pagos/BancosView";
 import { Placeholder } from "./components/commons/Placeholder";
+
+const TicketsView = lazy(() => import("./components/operaciones/TicketsView"));
+const PagosView = lazy(() => import("./components/pagos/PagosView"));
+const HumanaView = lazy(() => import("./components/nomina/HumanaView"));
+const GestionDescuentosTabsView = lazy(() => import("./components/nomina/GestionDescuentosTabsView"));
+const HorasApiTestView = lazy(() => import("./components/nomina/HorasApiTestView"));
+const BancosView = lazy(() => import("./components/pagos/BancosView"));
+
+interface PlaceholderContent {
+  title: string;
+  description: string;
+}
+
+const PLACEHOLDER_TABS: Record<string, PlaceholderContent> = {
+  matriculas: { title: 'Matriculas', description: 'Gestion de matriculas de vehiculos' },
+  bicicletas: { title: 'Bicicletas', description: 'Sistema de bikes compartidas' },
+  ocupacion: { title: 'Ocupacion', description: 'Estado de ocupacion de parqueaderos' },
+  boletas: { title: 'Boletas', description: 'Gestion de boletas de estacionamiento' },
+  facturas: { title: 'Facturas', description: 'Emision y seguimiento de facturas' },
+  niubiz: { title: 'Niubiz', description: 'Integracion de pagos Niubiz' },
+  agora: { title: 'Agora', description: 'Gestion de pasarela Agora' },
+  izipay: { title: 'Izipay', description: 'Integracion de pagos Izipay' },
+  movilizaciones: { title: 'Movilizaciones', description: 'Asignacion de movilizacion a empleados' },
+  erol: { title: 'EROL', description: 'Gestion de riesgos laborales' },
+  bonos: { title: 'Bonos', description: 'Asignacion de bonos y gratificaciones' },
+  prestamos: { title: 'Prestamos', description: 'Gestion de prestamos a empleados' },
+  celular: { title: 'Celular', description: 'Control de lineas telefonicas' },
+  alimentacion: { title: 'Alimentacion', description: 'Subsidio de alimentacion' },
+  fondos: { title: 'Fondos', description: 'Gestion de fondos de solidaridad' },
+  horas: { title: 'Horas', description: 'Gestion de horas extraordinarias' },
+  contab_general: { title: 'Contabilidad General', description: 'Registro de asientos contables' },
+  contab_reportes: { title: 'Reportes Contables', description: 'Generacion de reportes financieros' },
+  api_meypar: { title: 'Integracion Meypar', description: 'Sincronizacion con plataforma Meypar' },
+  api_tgw: { title: 'Integracion TGW', description: 'Gateway de pagos TGW' },
+  api_matricula_error: { title: 'API Matricula Error', description: 'Gestion de incidencias de matricula' },
+  api_proceso_reverso: { title: 'API Proceso Reverso', description: 'Ejecucion de reversos automaticos' },
+  mant_plantilla: { title: 'Plantilla de Mantenimiento', description: 'Plantillas de ordenes de trabajo' },
+  mant_tecnicos: { title: 'Tecnicos', description: 'Gestion de tecnicos de mantenimiento' },
+  mant_parqueaderos: { title: 'Parqueaderos', description: 'Gestion de espacios de estacionamiento' },
+  mant_planificacion: { title: 'Planificacion y Gestion', description: 'Planificacion de mantenimiento' },
+};
 
 interface MenuState {
   operaciones: boolean;
@@ -19,7 +54,7 @@ interface MenuState {
 
 function App() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [activeTab, setActiveTab] = useState('descuentos');
+  const [activeTab, setActiveTab] = useState('tickets');
   const [expandedMenus, setExpandedMenus] = useState<MenuState>({
     operaciones: false,
     contabilidad: false,
@@ -35,6 +70,31 @@ function App() {
 
   const isItemActive = (id: string) => activeTab === id;
   const esTabDescuentos = activeTab === 'descuentos';
+
+  const renderActiveContent = () => {
+    switch (activeTab) {
+      case 'tickets':
+        return <TicketsView />;
+      case 'pagos':
+        return <PagosView />;
+      case 'bancos':
+        return <BancosView />;
+      case 'descuentos':
+        return <GestionDescuentosTabsView />;
+      case 'humana':
+        return <HumanaView />;
+      case 'horas_api_test':
+        return <HorasApiTestView />;
+      default: {
+        const placeholder = PLACEHOLDER_TABS[activeTab];
+        if (placeholder) {
+          return <Placeholder title={placeholder.title} description={placeholder.description} />;
+        }
+
+        return <Placeholder title="Modulo en construccion" description="Esta opcion aun no tiene una vista disponible." />;
+      }
+    }
+  };
 
   return (
     <div className="min-h-screen bg-[#F8FAFC] flex font-sans text-slate-800">
@@ -215,51 +275,15 @@ function App() {
         {/* CONTENT AREA */}
         <div className="flex-1 overflow-y-auto p-6">
           <div className="max-w-7xl mx-auto w-full">
-            {/* OPERACIONES */}
-            {activeTab === 'tickets' && <TicketsView />}
-            {activeTab === 'matriculas' && <Placeholder title="Matrículas" description="Gestión de matrículas de vehículos" />}
-            {activeTab === 'bicicletas' && <Placeholder title="Bicicletas" description="Sistema de bikes compartidas" />}
-            {activeTab === 'ocupacion' && <Placeholder title="Ocupación" description="Estado de ocupación de parqueaderos" />}
-
-            {/* PAGOS Y FACTURACION */}
-            {activeTab === 'pagos' && <PagosView />}
-            {activeTab === 'boletas' && <Placeholder title="Boletas" description="Gestión de boletas de estacionamiento" />}
-            {activeTab === 'facturas' && <Placeholder title="Facturas" description="Emisión y seguimiento de facturas" />}
-            {activeTab === 'niubiz' && <Placeholder title="Niubiz" description="Integración de pagos Niubiz" />}
-            {activeTab === 'agora' && <Placeholder title="Ágora" description="Gestión de pasarela Ágora" />}
-            {activeTab === 'izipay' && <Placeholder title="Izipay" description="Integración de pagos Izipay" />}
-            {activeTab === 'bancos' && <BancosView />}
-            {activeTab === 'presupuestos' && <Placeholder title="Presupuestos" description="Gestión de presupuestos" />}
-            {activeTab === 'cajas_chicas' && <Placeholder title="Cajas Chicas" description="Control de cajas menores" />}
-
-            {/* NOMINA */}
-            {activeTab === 'movilizaciones' && <Placeholder title="Movilizaciones" description="Asignación de movilización a empleados" />}
-            {activeTab === 'erol' && <Placeholder title="EROL" description="Gestión de riesgos laborales" />}
-            {activeTab === 'bonos' && <Placeholder title="Bonos" description="Asignación de bonos y gratificaciones" />}
-            {activeTab === 'prestamos' && <Placeholder title="Préstamos" description="Gestión de préstamos a empleados" />}
-            {activeTab === 'celular' && <Placeholder title="Celular" description="Control de líneas telefónicas" />}
-            {activeTab === 'alimentacion' && <Placeholder title="Alimentación" description="Subsidio de alimentación" />}
-            {activeTab === 'fondos' && <Placeholder title="Fondos" description="Gestión de fondos de solidaridad" />}
-            {activeTab === 'descuentos' && <GestionDescuentosTabsView />}
-            {activeTab === 'horas' && <Placeholder title="Horas" description="Gestión de horas extraordinarias" />}
-            {activeTab === 'humana' && <HumanaView />}
-            {activeTab === 'horas_api_test' && <HorasApiTestView />}
-
-            {/* CONTABILIDAD */}
-            {activeTab === 'contab_general' && <Placeholder title="Contabilidad General" description="Registro de asientos contables" />}
-            {activeTab === 'contab_reportes' && <Placeholder title="Reportes Contables" description="Generación de reportes financieros" />}
-
-            {/* INTEGRACIONES */}
-            {activeTab === 'api_meypar' && <Placeholder title="Integración Meypar" description="Sincronización con plataforma Meypar" />}
-            {activeTab === 'api_tgw' && <Placeholder title="Integración TGW" description="Gateway de pagos TGW" />}
-            {activeTab === 'api_matricula_error' && <Placeholder title="API Matrícula Error" description="Gestión de incidencias de matrícula" />}
-            {activeTab === 'api_proceso_reverso' && <Placeholder title="API Proceso Reverso" description="Ejecución de reversos automáticos" />}
-
-            {/* MANTENIMIENTO */}
-            {activeTab === 'mant_plantilla' && <Placeholder title="Plantilla de Mantenimiento" description="Plantillas de órdenes de trabajo" />}
-            {activeTab === 'mant_tecnicos' && <Placeholder title="Técnicos" description="Gestión de técnicos de mantenimiento" />}
-            {activeTab === 'mant_parqueaderos' && <Placeholder title="Parqueaderos" description="Gestión de espacios de estacionamiento" />}
-            {activeTab === 'mant_planificacion' && <Placeholder title="Planificación y Gestión" description="Planificación de mantenimiento" />}
+            <Suspense
+              fallback={(
+                <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-slate-500">
+                  Cargando modulo...
+                </div>
+              )}
+            >
+              {renderActiveContent()}
+            </Suspense>
           </div>
         </div>
       </main>

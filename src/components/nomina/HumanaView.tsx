@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useState, useEffect } from 'react';
+import { Fragment, useCallback, useMemo, useState, useEffect } from 'react';
 import { type HumanaEmployeeData } from '../../services/humanaStorage';
 import { humanaApi } from '../../services/humanaApi';
 import { Download } from 'lucide-react';
@@ -23,17 +23,28 @@ interface HumanaEmployee {
 }
 
 const HumanaView = () => {
+    const getNombreMes = (mes: number): string => {
+        const meses = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+        return meses[Math.max(0, Math.min(11, mes - 1))];
+    };
+
+    const obtenerPeriodoActual = () => {
+        const hoy = new Date();
+        return {
+            anio: hoy.getFullYear(),
+            mes: getNombreMes(hoy.getMonth() + 1),
+        };
+    };
+
+    const periodoActual = obtenerPeriodoActual();
+
     const [activeSubTab, setActiveSubTab] = useState<'detalle' | 'centros'>('detalle');
     const [expandedCentro, setExpandedCentro] = useState<string | null>(null);
-    const [anioSeleccionado, setAnioSeleccionado] = useState(2026);
-    const [mesSeleccionado, setMesSeleccionado] = useState('Febrero');
+    const [anioSeleccionado, setAnioSeleccionado] = useState(periodoActual.anio);
+    const [mesSeleccionado, setMesSeleccionado] = useState(periodoActual.mes);
     const [empleadosData, setEmpleadosData] = useState<HumanaEmployee[]>([]);
 
-    useEffect(() => {
-        void loadData();
-    }, [anioSeleccionado, mesSeleccionado]);
-
-    const loadData = async () => {
+    const loadData = useCallback(async () => {
         try {
             const data = await humanaApi.getData(anioSeleccionado, mesSeleccionado);
             const empleadosBd: HumanaEmployee[] = (data?.empleados || [])
@@ -60,7 +71,12 @@ const HumanaView = () => {
             console.error('Error cargando datos de Humana desde BD:', error);
             setEmpleadosData([]);
         }
-    };
+    }, [anioSeleccionado, mesSeleccionado]);
+
+    useEffect(() => {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        void loadData();
+    }, [loadData]);
 
     const trunc2 = (value: number) => Math.round(value * 100) / 100;
 
@@ -163,6 +179,7 @@ const HumanaView = () => {
 
     const empleadosFiltrados = useMemo(() => empleadosData, [empleadosData]);
 
+    // eslint-disable-next-line react-hooks/preserve-manual-memoization
     const empleadosOrdenados = useMemo(() => {
         const nuevos = empleadosFiltrados.filter(e => e.ajuste > 0).sort((a, b) => a.nombre.localeCompare(b.nombre));
         const excluidos = empleadosFiltrados.filter(e => e.ajuste < 0).sort((a, b) => a.nombre.localeCompare(b.nombre));

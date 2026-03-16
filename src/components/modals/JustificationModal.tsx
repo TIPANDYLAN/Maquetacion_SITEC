@@ -1,15 +1,33 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { X, FileCheck, Layers, List, Save, Video, Camera } from 'lucide-react';
 import { JUSTIFICATION_GROUPS, EQUIPOS_LIST, SYSTEM_ERRORS } from '../../data/mockData';
 import { UploadButton } from '../commons/UploadButton';
 
-interface JustificationModalProps {
-    ticket: any;
-    onClose: () => void;
-    onSave: (id: string, data: any) => void;
+type JustificationType = 'no_justificada' | 'justificado';
+
+interface JustificationPayload {
+    justificationType: JustificationType;
+    selectedGroup: string;
+    selectedReason: string;
+    exitEquipment: string;
+    additionalComments: string;
 }
 
-const TimeEquipmentFields = ({ onChangeEquipment }: any) => (
+interface JustificationTicket {
+    id: string;
+}
+
+interface JustificationModalProps {
+    ticket: JustificationTicket;
+    onClose: () => void;
+    onSave: (id: string, data: JustificationPayload) => void;
+}
+
+interface TimeEquipmentFieldsProps {
+    onChangeEquipment?: (value: string) => void;
+}
+
+const TimeEquipmentFields = ({ onChangeEquipment }: TimeEquipmentFieldsProps) => (
     <div className="grid grid-cols-2 gap-4 animate-in fade-in slide-in-from-top-2 duration-300">
         <div>
             <label className="text-sm font-bold text-slate-700 mb-1 block">Hora Salida</label>
@@ -43,7 +61,8 @@ export const JustificationModal = ({ ticket, onClose, onSave }: JustificationMod
     const [exitEquipment, setExitEquipment] = useState('');
     const [additionalComments, setAdditionalComments] = useState('');
     const [incidentRaised, setIncidentRaised] = useState(false);
-    const [uploads, setUploads] = useState({});
+    const [uploads, setUploads] = useState<Record<string, string>>({});
+    const groupsByKey: Record<string, string[]> = JUSTIFICATION_GROUPS;
 
     const handleSaveJustification = () => {
         if (!selectedGroup) {
@@ -72,6 +91,12 @@ export const JustificationModal = ({ ticket, onClose, onSave }: JustificationMod
         setTimeout(() => {
             setUploads(prev => ({ ...prev, [key]: 'done' }));
         }, 2000);
+    };
+
+    const handleGroupChange = (group: string) => {
+        setSelectedGroup(group);
+        setSelectedReason('');
+        setUploads({});
     };
 
     const getRequirements = (reason: string) => {
@@ -117,11 +142,6 @@ export const JustificationModal = ({ ticket, onClose, onSave }: JustificationMod
 
     const reqs = getRequirements(selectedReason);
 
-    useEffect(() => {
-        setSelectedReason('');
-        setUploads({});
-    }, [selectedGroup]);
-
     return (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
             <div className="absolute inset-0 bg-[#001F3F]/60 backdrop-blur-sm transition-opacity" onClick={onClose} />
@@ -142,9 +162,9 @@ export const JustificationModal = ({ ticket, onClose, onSave }: JustificationMod
                     <div className="space-y-2 animate-in fade-in slide-in-from-top-1">
                         <label className="text-sm font-bold text-slate-700 ml-1 flex items-center gap-2"><Layers size={16} />Seleccione el Grupo</label>
                         <div className="relative group">
-                            <select value={selectedGroup} onChange={(e) => setSelectedGroup(e.target.value)} className="w-full appearance-none pl-4 pr-10 py-3 rounded-xl border-2 outline-none transition-all cursor-pointer font-medium text-sm border-slate-200 focus:border-[#001F3F]">
+                            <select value={selectedGroup} onChange={(e) => handleGroupChange(e.target.value)} className="w-full appearance-none pl-4 pr-10 py-3 rounded-xl border-2 outline-none transition-all cursor-pointer font-medium text-sm border-slate-200 focus:border-[#001F3F]">
                                 <option value="">Seleccione...</option>
-                                {Object.keys(JUSTIFICATION_GROUPS).map((group) => (
+                                {Object.keys(groupsByKey).map((group) => (
                                     <option key={group} value={group}>{group}</option>
                                 ))}
                             </select>
@@ -158,7 +178,7 @@ export const JustificationModal = ({ ticket, onClose, onSave }: JustificationMod
                             <div className="relative group">
                                 <select value={selectedReason} onChange={(e) => setSelectedReason(e.target.value)} className="w-full appearance-none pl-4 pr-10 py-3 rounded-xl border-2 outline-none transition-all cursor-pointer font-medium text-sm border-slate-200 focus:border-[#001F3F]">
                                     <option value="">Seleccione...</option>
-                                    {(JUSTIFICATION_GROUPS as any)[selectedGroup]?.map((reason: string) => (
+                                    {groupsByKey[selectedGroup]?.map((reason) => (
                                         <option key={reason} value={reason}>{reason}</option>
                                     ))}
                                 </select>

@@ -94,6 +94,26 @@ const ensureDescuentosTable = async () => {
   `);
 };
 
+const ensureExentosPagoSeguroTable = async () => {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS humana_exentos_pago_seguro (
+      id BIGSERIAL PRIMARY KEY,
+      cedula TEXT NOT NULL UNIQUE,
+      nombre TEXT NOT NULL,
+      porcentaje_exento NUMERIC(5,2) NOT NULL,
+      fecha_creacion TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      fecha_actualizacion TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT chk_humana_exentos_porcentaje_rango
+        CHECK (porcentaje_exento >= 0 AND porcentaje_exento <= 100)
+    )
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_humana_exentos_pago_seguro_nombre
+      ON humana_exentos_pago_seguro (nombre)
+  `);
+};
+
 const getPeriodoActual = () => {
   const now = new Date();
   const year = now.getFullYear();
@@ -145,9 +165,38 @@ const mapDbRowToDescuento = (row) => ({
   fecha_creacion: row.fecha_creacion,
 });
 
+const mapDbRowToExentoPagoSeguro = (row) => ({
+  id: Number(row.id),
+  cedula: String(row.cedula || ''),
+  nombre: String(row.nombre || ''),
+  porcentaje_exento: Number(row.porcentaje_exento || 0),
+  fecha_creacion: row.fecha_creacion,
+  fecha_actualizacion: row.fecha_actualizacion,
+});
+
+const separarApellidosYNombres = (nombreCompleto) => {
+  const partes = String(nombreCompleto || '').trim().split(/\s+/).filter(Boolean);
+
+  if (partes.length === 0) {
+    return { apellidos: '', nombres: '' };
+  }
+
+  if (partes.length === 1) {
+    return { apellidos: partes[0], nombres: '' };
+  }
+
+  if (partes.length === 2) {
+    return { apellidos: partes[0], nombres: partes[1] };
+  }
+
+  return {
+    apellidos: partes.slice(0, 2).join(' '),
+    nombres: partes.slice(2).join(' '),
+  };
+};
+
 const mapDbRowToEmpleado = (row) => ({
-  apellidos: String(row.empleado || '').split(' ').slice(-1).join('') || '',
-  nombres: String(row.empleado || '').split(' ').slice(0, -1).join(' ') || '',
+  ...separarApellidosYNombres(row.empleado),
   cedula: '',
   centroCosto: String(row.centro || ''),
   fechaNacimiento: '',
@@ -578,9 +627,81 @@ app.patch('/api/descuentos/incidentes-caja-chica/:id/estado', async (req, res) =
   }
 });
 
+app.get('/api/descuentos/humana/exentos-pago-seguro', async (_req, res) => {
+  try {
+    await ensureExentosPagoSeguroTable();
+
+    const result = await pool.query(
+      `SELECT id, cedula, nombre, porcentaje_exento, fecha_creacion, fecha_actualizacion
+       FROM humana_exentos_pago_seguro
+       ORDER BY fecha_actualizacion DESC, id DESC`
+    );
+
+    res.status(200).json({
+      ok: true,
+      registros: result.rows.map(mapDbRowToExentoPagoSeguro),
+    });
+  } catch (error) {
+    console.error('[GET /api/descuentos/humana/exentos-pago-seguro] Error:', error instanceof Error ? error.message : String(error));
+    res.status(500).json({
+      error: 'No se pudo cargar exentos de pago seguro',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+app.post('/api/descuentos/humana/exentos-pago-seguro', async (req, res) => {
+  const cedula = String(req.body?.cedula || '').trim();
+  const nombre = String(req.body?.nombre || '').trim();
+  const porcentajeExento = parseValor(req.body?.porcentajeExento);
+
+  if (!cedula) {
+    res.status(400).json({ error: 'El campo cedula es requerido' });
+    return;
+  }
+
+  if (!nombre) {
+    res.status(400).json({ error: 'El campo nombre es requerido' });
+    return;
+  }
+
+  if (!Number.isFinite(porcentajeExento) || porcentajeExento < 0 || porcentajeExento > 100) {
+    res.status(400).json({ error: 'El campo porcentajeExento debe estar entre 0 y 100' });
+    return;
+  }
+
+  try {
+    await ensureExentosPagoSeguroTable();
+
+    const result = await pool.query(
+      `INSERT INTO humana_exentos_pago_seguro (cedula, nombre, porcentaje_exento)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (cedula)
+       DO UPDATE SET
+         nombre = EXCLUDED.nombre,
+         porcentaje_exento = EXCLUDED.porcentaje_exento,
+         fecha_actualizacion = NOW()
+       RETURNING id, cedula, nombre, porcentaje_exento, fecha_creacion, fecha_actualizacion`,
+      [cedula, nombre, porcentajeExento]
+    );
+
+    res.status(201).json({
+      ok: true,
+      registro: mapDbRowToExentoPagoSeguro(result.rows[0]),
+    });
+  } catch (error) {
+    console.error('[POST /api/descuentos/humana/exentos-pago-seguro] Error:', error instanceof Error ? error.message : String(error));
+    res.status(500).json({
+      error: 'No se pudo guardar exento de pago seguro',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
 const startServer = async () => {
   try {
     await ensureDescuentosTable();
+    await ensureExentosPagoSeguroTable();
     app.listen(PORT, () => {
       console.log(`humana-backend escuchando en http://localhost:${PORT}`);
     });
