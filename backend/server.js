@@ -114,6 +114,108 @@ const ensureExentosPagoSeguroTable = async () => {
   `);
 };
 
+const ensureValetsAdicionalesTable = async () => {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS valet_fijo_adicionales (
+      id BIGSERIAL PRIMARY KEY,
+      centro_costo_id TEXT NOT NULL,
+      centro_costo_nombre TEXT NOT NULL DEFAULT '',
+      empleado_cedula TEXT NOT NULL,
+      empleado_nombre TEXT NOT NULL DEFAULT '',
+      periodo_mes_dia_adicional TEXT NOT NULL DEFAULT '',
+      periodo_mes_domingo TEXT NOT NULL DEFAULT '',
+      habilitar_dia_adicional BOOLEAN NOT NULL DEFAULT FALSE,
+      habilitar_domingo BOOLEAN NOT NULL DEFAULT FALSE,
+      dia_adicional_semanas JSONB NOT NULL DEFAULT '[]'::jsonb,
+      domingo_semanas INTEGER[] NOT NULL DEFAULT '{}',
+      fecha_creacion TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      fecha_actualizacion TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT uq_valet_fijo_adicionales UNIQUE (centro_costo_id, empleado_cedula),
+      CONSTRAINT chk_nomina_valets_periodo_mes_dia_adicional_format
+        CHECK (periodo_mes_dia_adicional = '' OR periodo_mes_dia_adicional ~ '^[0-9]{4}-[0-9]{2}$'),
+      CONSTRAINT chk_nomina_valets_periodo_mes_domingo_format
+        CHECK (periodo_mes_domingo = '' OR periodo_mes_domingo ~ '^[0-9]{4}-[0-9]{2}$')
+    )
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_valet_fijo_adicionales_centro
+      ON valet_fijo_adicionales (centro_costo_id)
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_valet_fijo_adicionales_empleado
+      ON valet_fijo_adicionales (empleado_cedula)
+  `);
+};
+
+const ensureValetFijoEmpleadoTable = async () => {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS valet_fijo_empleado (
+      id BIGSERIAL PRIMARY KEY,
+      centro_costo_id TEXT NOT NULL,
+      centro_costo_nombre TEXT NOT NULL DEFAULT '',
+      empleado_cedula TEXT NOT NULL,
+      empleado_nombre TEXT NOT NULL DEFAULT '',
+      valor_fijo NUMERIC(18,2) NOT NULL,
+      fecha_creacion TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      fecha_actualizacion TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT uq_valet_fijo_empleado UNIQUE (centro_costo_id, empleado_cedula),
+      CONSTRAINT chk_valet_fijo_empleado_valor_fijo_positivo CHECK (valor_fijo > 0)
+    )
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_valet_fijo_empleado_centro
+      ON valet_fijo_empleado (centro_costo_id)
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_valet_fijo_empleado_cedula
+      ON valet_fijo_empleado (empleado_cedula)
+  `);
+};
+
+const ensureValetFijoHorarioTable = async () => {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS valet_fijo_horario (
+      id BIGSERIAL PRIMARY KEY,
+      centro_costo_id TEXT NOT NULL,
+      centro_costo_nombre TEXT NOT NULL DEFAULT '',
+      empleado_cedula TEXT NOT NULL,
+      empleado_nombre TEXT NOT NULL DEFAULT '',
+      valor_fijo NUMERIC(18,2) NOT NULL DEFAULT 0,
+      anio INTEGER NOT NULL,
+      mes INTEGER NOT NULL,
+      semana INTEGER NOT NULL,
+      dia TEXT NOT NULL,
+      hora_entrada TEXT NOT NULL,
+      hora_salida TEXT NOT NULL,
+      fecha_creacion TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      fecha_actualizacion TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT uq_valet_fijo_horario UNIQUE (centro_costo_id, empleado_cedula, anio, mes, semana, dia),
+      CONSTRAINT chk_valet_fijo_horario_mes_rango CHECK (mes >= 1 AND mes <= 12),
+      CONSTRAINT chk_valet_fijo_horario_semana_rango CHECK (semana >= 1 AND semana <= 5),
+      CONSTRAINT chk_valet_fijo_horario_dia_valido CHECK (dia IN ('lunes','martes','miercoles','jueves','viernes','sabado','domingo'))
+    )
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_valet_fijo_horario_periodo
+      ON valet_fijo_horario (anio DESC, mes DESC, semana ASC)
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_valet_fijo_horario_centro
+      ON valet_fijo_horario (centro_costo_id)
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_valet_fijo_horario_empleado
+      ON valet_fijo_horario (empleado_cedula)
+  `);
+};
+
 const getPeriodoActual = () => {
   const now = new Date();
   const year = now.getFullYear();
@@ -172,6 +274,69 @@ const mapDbRowToExentoPagoSeguro = (row) => ({
   porcentaje_exento: Number(row.porcentaje_exento || 0),
   fecha_creacion: row.fecha_creacion,
   fecha_actualizacion: row.fecha_actualizacion,
+});
+
+const toPeriodoMes = (anio, mes) => {
+  if (!Number.isInteger(anio) || !Number.isInteger(mes) || mes < 1 || mes > 12) {
+    return '';
+  }
+
+  return `${anio}-${String(mes).padStart(2, '0')}`;
+};
+
+const mapDbRowToValetAdicionales = (row) => {
+  const diaPeriodo = String(row.periodo_mes_dia_adicional || '');
+  const domingoPeriodo = String(row.periodo_mes_domingo || '');
+
+  const [diaAnioRaw, diaMesRaw] = diaPeriodo ? diaPeriodo.split('-') : ['', ''];
+  const [domingoAnioRaw, domingoMesRaw] = domingoPeriodo ? domingoPeriodo.split('-') : ['', ''];
+
+  return {
+    centroCostoId: String(row.centro_costo_id || ''),
+    centroCostoNombre: String(row.centro_costo_nombre || ''),
+    empleadoCedula: String(row.empleado_cedula || ''),
+    empleadoNombre: String(row.empleado_nombre || ''),
+    configuracion: {
+      habilitarDiaAdicional: Boolean(row.habilitar_dia_adicional),
+      diaAdicionalAnio: Number(diaAnioRaw || 0),
+      diaAdicionalMes: Number(diaMesRaw || 0),
+      diaAdicionalSemanas: Array.isArray(row.dia_adicional_semanas) ? row.dia_adicional_semanas : [],
+      habilitarDomingo: Boolean(row.habilitar_domingo),
+      domingoAnio: Number(domingoAnioRaw || 0),
+      domingoMes: Number(domingoMesRaw || 0),
+      domingoSemanas: Array.isArray(row.domingo_semanas) ? row.domingo_semanas.map((item) => Number(item || 0)) : [],
+    },
+    fechaCreacion: row.fecha_creacion,
+    fechaActualizacion: row.fecha_actualizacion,
+  };
+};
+
+const mapDbRowToValetFijoEmpleado = (row) => ({
+  id: `${String(row.centro_costo_id || '')}-${String(row.empleado_cedula || '')}`,
+  centroCostoId: String(row.centro_costo_id || ''),
+  centroCostoNombre: String(row.centro_costo_nombre || ''),
+  empleadoCedula: String(row.empleado_cedula || ''),
+  empleadoNombre: String(row.empleado_nombre || ''),
+  valorFijo: Number(row.valor_fijo || 0),
+  fechaCreacion: row.fecha_creacion,
+  fechaActualizacion: row.fecha_actualizacion,
+});
+
+const mapDbRowToValetFijoHorario = (row) => ({
+  id: `${String(row.centro_costo_id || '')}-${String(row.empleado_cedula || '')}-${Number(row.anio || 0)}-${Number(row.mes || 0)}-${Number(row.semana || 0)}-${String(row.dia || '')}`,
+  centroCostoId: String(row.centro_costo_id || ''),
+  centroCostoNombre: String(row.centro_costo_nombre || ''),
+  empleadoCedula: String(row.empleado_cedula || ''),
+  empleadoNombre: String(row.empleado_nombre || ''),
+  valorFijo: Number(row.valor_fijo || 0),
+  anio: Number(row.anio || 0),
+  mes: Number(row.mes || 0),
+  semana: Number(row.semana || 0),
+  dia: String(row.dia || ''),
+  horaEntrada: String(row.hora_entrada || ''),
+  horaSalida: String(row.hora_salida || ''),
+  fechaCreacion: row.fecha_creacion,
+  fechaActualizacion: row.fecha_actualizacion,
 });
 
 const separarApellidosYNombres = (nombreCompleto) => {
@@ -698,10 +863,486 @@ app.post('/api/descuentos/humana/exentos-pago-seguro', async (req, res) => {
   }
 });
 
+app.get('/api/humana/valets/adicionales', async (req, res) => {
+  const centroCostoId = String(req.query.centroCostoId || '').trim();
+  const empleadoCedula = String(req.query.empleadoCedula || '').trim();
+
+  if (!centroCostoId || !empleadoCedula) {
+    res.status(400).json({ error: 'Los parametros centroCostoId y empleadoCedula son requeridos' });
+    return;
+  }
+
+  try {
+    await ensureValetsAdicionalesTable();
+
+    const result = await pool.query(
+      `SELECT id, centro_costo_id, centro_costo_nombre, empleado_cedula, empleado_nombre,
+              periodo_mes_dia_adicional, periodo_mes_domingo,
+              habilitar_dia_adicional, habilitar_domingo,
+              dia_adicional_semanas, domingo_semanas,
+              fecha_creacion, fecha_actualizacion
+      FROM valet_fijo_adicionales
+       WHERE centro_costo_id = $1 AND empleado_cedula = $2
+       LIMIT 1`,
+      [centroCostoId, empleadoCedula]
+    );
+
+    if (result.rowCount === 0) {
+      res.status(404).json({ error: 'No existe configuracion para el empleado en ese centro de costo' });
+      return;
+    }
+
+    res.status(200).json({
+      ok: true,
+      data: mapDbRowToValetAdicionales(result.rows[0]),
+    });
+  } catch (error) {
+    console.error('[GET /api/humana/valets/adicionales] Error:', error instanceof Error ? error.message : String(error));
+    res.status(500).json({
+      error: 'No se pudo cargar configuracion de adicionales',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+app.get('/api/humana/valets/adicionales/lista', async (req, res) => {
+  const centroCostoId = String(req.query.centroCostoId || '').trim();
+
+  try {
+    await ensureValetsAdicionalesTable();
+
+    const filtros = [];
+    const params = [];
+
+    if (centroCostoId) {
+      params.push(centroCostoId);
+      filtros.push(`centro_costo_id = $${params.length}`);
+    }
+
+    const whereSql = filtros.length > 0 ? `WHERE ${filtros.join(' AND ')}` : '';
+
+    const result = await pool.query(
+      `SELECT id, centro_costo_id, centro_costo_nombre, empleado_cedula, empleado_nombre,
+              periodo_mes_dia_adicional, periodo_mes_domingo,
+              habilitar_dia_adicional, habilitar_domingo,
+              dia_adicional_semanas, domingo_semanas,
+              fecha_creacion, fecha_actualizacion
+       FROM valet_fijo_adicionales
+       ${whereSql}
+       ORDER BY centro_costo_id ASC, empleado_nombre ASC`,
+      params
+    );
+
+    res.status(200).json({
+      ok: true,
+      registros: result.rows.map(mapDbRowToValetAdicionales),
+    });
+  } catch (error) {
+    console.error('[GET /api/humana/valets/adicionales/lista] Error:', error instanceof Error ? error.message : String(error));
+    res.status(500).json({
+      error: 'No se pudo cargar lista de adicionales',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+app.post('/api/humana/valets/adicionales', async (req, res) => {
+  const centroCostoId = String(req.body?.centroCostoId || '').trim();
+  const centroCostoNombre = String(req.body?.centroCostoNombre || '').trim();
+  const empleadoCedula = String(req.body?.empleadoCedula || '').trim();
+  const empleadoNombre = String(req.body?.empleadoNombre || '').trim();
+
+  const habilitarDiaAdicional = Boolean(req.body?.habilitarDiaAdicional);
+  const diaAdicionalAnio = Number(req.body?.diaAdicionalAnio || 0);
+  const diaAdicionalMes = Number(req.body?.diaAdicionalMes || 0);
+  const diaAdicionalSemanas = Array.isArray(req.body?.diaAdicionalSemanas) ? req.body.diaAdicionalSemanas : [];
+
+  const habilitarDomingo = Boolean(req.body?.habilitarDomingo);
+  const domingoAnio = Number(req.body?.domingoAnio || 0);
+  const domingoMes = Number(req.body?.domingoMes || 0);
+  const domingoSemanasRaw = Array.isArray(req.body?.domingoSemanas) ? req.body.domingoSemanas : [];
+  const domingoSemanas = domingoSemanasRaw
+    .map((item) => Number(item || 0))
+    .filter((item) => Number.isInteger(item) && item >= 1 && item <= 5)
+    .sort((a, b) => a - b);
+
+  if (!centroCostoId || !empleadoCedula) {
+    res.status(400).json({ error: 'Los campos centroCostoId y empleadoCedula son requeridos' });
+    return;
+  }
+
+  if (!habilitarDiaAdicional && !habilitarDomingo) {
+    res.status(400).json({ error: 'Debe habilitar al menos un tipo de adicional (dia adicional o domingo)' });
+    return;
+  }
+
+  if (habilitarDiaAdicional && !toPeriodoMes(diaAdicionalAnio, diaAdicionalMes)) {
+    res.status(400).json({ error: 'Periodo de dia adicional invalido' });
+    return;
+  }
+
+  if (habilitarDomingo && !toPeriodoMes(domingoAnio, domingoMes)) {
+    res.status(400).json({ error: 'Periodo de domingo invalido' });
+    return;
+  }
+
+  if (habilitarDomingo && domingoSemanas.length === 0) {
+    res.status(400).json({ error: 'Debe enviar al menos una semana para domingos' });
+    return;
+  }
+
+  try {
+    await ensureValetsAdicionalesTable();
+
+    const periodoMesDiaAdicional = habilitarDiaAdicional ? toPeriodoMes(diaAdicionalAnio, diaAdicionalMes) : '';
+    const periodoMesDomingo = habilitarDomingo ? toPeriodoMes(domingoAnio, domingoMes) : '';
+
+    const result = await pool.query(
+      `INSERT INTO valet_fijo_adicionales (
+         centro_costo_id,
+         centro_costo_nombre,
+         empleado_cedula,
+         empleado_nombre,
+         periodo_mes_dia_adicional,
+         periodo_mes_domingo,
+         habilitar_dia_adicional,
+         habilitar_domingo,
+         dia_adicional_semanas,
+         domingo_semanas,
+         fecha_actualizacion
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::int[], NOW())
+       ON CONFLICT (centro_costo_id, empleado_cedula)
+       DO UPDATE SET
+         centro_costo_nombre = EXCLUDED.centro_costo_nombre,
+         empleado_nombre = EXCLUDED.empleado_nombre,
+         periodo_mes_dia_adicional = EXCLUDED.periodo_mes_dia_adicional,
+         periodo_mes_domingo = EXCLUDED.periodo_mes_domingo,
+         habilitar_dia_adicional = EXCLUDED.habilitar_dia_adicional,
+         habilitar_domingo = EXCLUDED.habilitar_domingo,
+         dia_adicional_semanas = EXCLUDED.dia_adicional_semanas,
+         domingo_semanas = EXCLUDED.domingo_semanas,
+         fecha_actualizacion = NOW()
+       RETURNING id, centro_costo_id, centro_costo_nombre, empleado_cedula, empleado_nombre,
+                 periodo_mes_dia_adicional, periodo_mes_domingo,
+                 habilitar_dia_adicional, habilitar_domingo,
+                 dia_adicional_semanas, domingo_semanas,
+                 fecha_creacion, fecha_actualizacion`,
+      [
+        centroCostoId,
+        centroCostoNombre,
+        empleadoCedula,
+        empleadoNombre,
+        periodoMesDiaAdicional,
+        periodoMesDomingo,
+        habilitarDiaAdicional,
+        habilitarDomingo,
+        JSON.stringify(diaAdicionalSemanas),
+        domingoSemanas,
+      ]
+    );
+
+    res.status(201).json({
+      ok: true,
+      data: mapDbRowToValetAdicionales(result.rows[0]),
+    });
+  } catch (error) {
+    console.error('[POST /api/humana/valets/adicionales] Error:', error instanceof Error ? error.message : String(error));
+    res.status(500).json({
+      error: 'No se pudo guardar configuracion de adicionales',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+app.get('/api/humana/valets/empleados', async (_req, res) => {
+  try {
+    await ensureValetFijoEmpleadoTable();
+
+    const result = await pool.query(
+      `SELECT id, centro_costo_id, centro_costo_nombre, empleado_cedula, empleado_nombre, valor_fijo,
+              fecha_creacion, fecha_actualizacion
+       FROM valet_fijo_empleado
+       ORDER BY centro_costo_id ASC, empleado_nombre ASC`
+    );
+
+    res.status(200).json({
+      ok: true,
+      registros: result.rows.map(mapDbRowToValetFijoEmpleado),
+    });
+  } catch (error) {
+    console.error('[GET /api/humana/valets/empleados] Error:', error instanceof Error ? error.message : String(error));
+    res.status(500).json({
+      error: 'No se pudo cargar empleados valet fijo',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+app.post('/api/humana/valets/empleados', async (req, res) => {
+  const centroCostoId = String(req.body?.centroCostoId || '').trim();
+  const centroCostoNombre = String(req.body?.centroCostoNombre || '').trim();
+  const empleadoCedula = String(req.body?.empleadoCedula || '').trim();
+  const empleadoNombre = String(req.body?.empleadoNombre || '').trim();
+  const valorFijo = parseValor(req.body?.valorFijo);
+
+  if (!centroCostoId || !empleadoCedula) {
+    res.status(400).json({ error: 'Los campos centroCostoId y empleadoCedula son requeridos' });
+    return;
+  }
+
+  if (!Number.isFinite(valorFijo) || valorFijo <= 0) {
+    res.status(400).json({ error: 'El campo valorFijo debe ser numerico y mayor a 0' });
+    return;
+  }
+
+  try {
+    await ensureValetFijoEmpleadoTable();
+
+    const result = await pool.query(
+      `INSERT INTO valet_fijo_empleado (
+         centro_costo_id,
+         centro_costo_nombre,
+         empleado_cedula,
+         empleado_nombre,
+         valor_fijo,
+         fecha_actualizacion
+       )
+       VALUES ($1, $2, $3, $4, $5, NOW())
+       ON CONFLICT (centro_costo_id, empleado_cedula)
+       DO UPDATE SET
+         centro_costo_nombre = EXCLUDED.centro_costo_nombre,
+         empleado_nombre = EXCLUDED.empleado_nombre,
+         valor_fijo = EXCLUDED.valor_fijo,
+         fecha_actualizacion = NOW()
+       RETURNING id, centro_costo_id, centro_costo_nombre, empleado_cedula, empleado_nombre, valor_fijo,
+                 fecha_creacion, fecha_actualizacion`,
+      [centroCostoId, centroCostoNombre, empleadoCedula, empleadoNombre, valorFijo]
+    );
+
+    res.status(201).json({
+      ok: true,
+      registro: mapDbRowToValetFijoEmpleado(result.rows[0]),
+    });
+  } catch (error) {
+    console.error('[POST /api/humana/valets/empleados] Error:', error instanceof Error ? error.message : String(error));
+    res.status(500).json({
+      error: 'No se pudo guardar empleado valet fijo',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+app.delete('/api/humana/valets/empleados', async (req, res) => {
+  const centroCostoId = String(req.query.centroCostoId || '').trim();
+  const empleadoCedula = String(req.query.empleadoCedula || '').trim();
+
+  if (!centroCostoId || !empleadoCedula) {
+    res.status(400).json({ error: 'Los parametros centroCostoId y empleadoCedula son requeridos' });
+    return;
+  }
+
+  try {
+    await ensureValetFijoEmpleadoTable();
+
+    const result = await pool.query(
+      `DELETE FROM valet_fijo_empleado
+       WHERE centro_costo_id = $1 AND empleado_cedula = $2
+       RETURNING id, centro_costo_id, centro_costo_nombre, empleado_cedula, empleado_nombre, valor_fijo,
+                 fecha_creacion, fecha_actualizacion`,
+      [centroCostoId, empleadoCedula]
+    );
+
+    if (result.rowCount === 0) {
+      res.status(404).json({ error: 'No se encontro el empleado en ese centro de costo' });
+      return;
+    }
+
+    res.status(200).json({
+      ok: true,
+      registro: mapDbRowToValetFijoEmpleado(result.rows[0]),
+    });
+  } catch (error) {
+    console.error('[DELETE /api/humana/valets/empleados] Error:', error instanceof Error ? error.message : String(error));
+    res.status(500).json({
+      error: 'No se pudo eliminar empleado valet fijo',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+app.get('/api/humana/valets/horarios', async (req, res) => {
+  const anio = Number(req.query.anio || 0);
+  const mes = Number(req.query.mes || 0);
+  const centroCostoId = String(req.query.centroCostoId || '').trim();
+  const empleadoCedula = String(req.query.empleadoCedula || '').trim();
+
+  try {
+    await ensureValetFijoHorarioTable();
+
+    const filtros = [];
+    const params = [];
+
+    if (Number.isInteger(anio) && anio > 0) {
+      params.push(anio);
+      filtros.push(`anio = $${params.length}`);
+    }
+
+    if (Number.isInteger(mes) && mes >= 1 && mes <= 12) {
+      params.push(mes);
+      filtros.push(`mes = $${params.length}`);
+    }
+
+    if (centroCostoId) {
+      params.push(centroCostoId);
+      filtros.push(`centro_costo_id = $${params.length}`);
+    }
+
+    if (empleadoCedula) {
+      params.push(empleadoCedula);
+      filtros.push(`empleado_cedula = $${params.length}`);
+    }
+
+    const whereSql = filtros.length > 0 ? `WHERE ${filtros.join(' AND ')}` : '';
+
+    const result = await pool.query(
+      `SELECT id, centro_costo_id, centro_costo_nombre, empleado_cedula, empleado_nombre,
+              valor_fijo, anio, mes, semana, dia, hora_entrada, hora_salida,
+              fecha_creacion, fecha_actualizacion
+       FROM valet_fijo_horario
+       ${whereSql}
+       ORDER BY anio DESC, mes DESC, semana ASC, empleado_nombre ASC`,
+      params
+    );
+
+    res.status(200).json({
+      ok: true,
+      registros: result.rows.map(mapDbRowToValetFijoHorario),
+    });
+  } catch (error) {
+    console.error('[GET /api/humana/valets/horarios] Error:', error instanceof Error ? error.message : String(error));
+    res.status(500).json({
+      error: 'No se pudo cargar horarios valet fijo',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+app.post('/api/humana/valets/horarios', async (req, res) => {
+  const centroCostoId = String(req.body?.centroCostoId || '').trim();
+  const centroCostoNombre = String(req.body?.centroCostoNombre || '').trim();
+  const empleadoCedula = String(req.body?.empleadoCedula || '').trim();
+  const empleadoNombre = String(req.body?.empleadoNombre || '').trim();
+  const valorFijo = parseValor(req.body?.valorFijo);
+  const anio = Number(req.body?.anio || 0);
+  const mes = Number(req.body?.mes || 0);
+  const semana = Number(req.body?.semana || 0);
+  const dia = String(req.body?.dia || '').trim().toLowerCase();
+  const horaEntrada = String(req.body?.horaEntrada || '').trim();
+  const horaSalida = String(req.body?.horaSalida || '').trim();
+
+  const diasValidos = ['lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado', 'domingo'];
+
+  if (!centroCostoId || !empleadoCedula) {
+    res.status(400).json({ error: 'Los campos centroCostoId y empleadoCedula son requeridos' });
+    return;
+  }
+
+  if (!Number.isInteger(anio) || anio < 2000) {
+    res.status(400).json({ error: 'El campo anio es invalido' });
+    return;
+  }
+
+  if (!Number.isInteger(mes) || mes < 1 || mes > 12) {
+    res.status(400).json({ error: 'El campo mes es invalido' });
+    return;
+  }
+
+  if (!Number.isInteger(semana) || semana < 1 || semana > 5) {
+    res.status(400).json({ error: 'El campo semana es invalido' });
+    return;
+  }
+
+  if (!diasValidos.includes(dia)) {
+    res.status(400).json({ error: 'El campo dia es invalido' });
+    return;
+  }
+
+  if (!horaEntrada || !horaSalida) {
+    res.status(400).json({ error: 'Los campos horaEntrada y horaSalida son requeridos' });
+    return;
+  }
+
+  if (!Number.isFinite(valorFijo) || valorFijo <= 0) {
+    res.status(400).json({ error: 'El campo valorFijo debe ser numerico y mayor a 0' });
+    return;
+  }
+
+  try {
+    await ensureValetFijoHorarioTable();
+
+    const result = await pool.query(
+      `INSERT INTO valet_fijo_horario (
+         centro_costo_id,
+         centro_costo_nombre,
+         empleado_cedula,
+         empleado_nombre,
+         valor_fijo,
+         anio,
+         mes,
+         semana,
+         dia,
+         hora_entrada,
+         hora_salida,
+         fecha_actualizacion
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
+       ON CONFLICT (centro_costo_id, empleado_cedula, anio, mes, semana, dia)
+       DO UPDATE SET
+         centro_costo_nombre = EXCLUDED.centro_costo_nombre,
+         empleado_nombre = EXCLUDED.empleado_nombre,
+         valor_fijo = EXCLUDED.valor_fijo,
+         hora_entrada = EXCLUDED.hora_entrada,
+         hora_salida = EXCLUDED.hora_salida,
+         fecha_actualizacion = NOW()
+       RETURNING id, centro_costo_id, centro_costo_nombre, empleado_cedula, empleado_nombre,
+                 valor_fijo, anio, mes, semana, dia, hora_entrada, hora_salida,
+                 fecha_creacion, fecha_actualizacion`,
+      [
+        centroCostoId,
+        centroCostoNombre,
+        empleadoCedula,
+        empleadoNombre,
+        valorFijo,
+        anio,
+        mes,
+        semana,
+        dia,
+        horaEntrada,
+        horaSalida,
+      ]
+    );
+
+    res.status(201).json({
+      ok: true,
+      registro: mapDbRowToValetFijoHorario(result.rows[0]),
+    });
+  } catch (error) {
+    console.error('[POST /api/humana/valets/horarios] Error:', error instanceof Error ? error.message : String(error));
+    res.status(500).json({
+      error: 'No se pudo guardar horario valet fijo',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
 const startServer = async () => {
   try {
     await ensureDescuentosTable();
     await ensureExentosPagoSeguroTable();
+    await ensureValetsAdicionalesTable();
+    await ensureValetFijoEmpleadoTable();
+    await ensureValetFijoHorarioTable();
     app.listen(PORT, () => {
       console.log(`humana-backend escuchando en http://localhost:${PORT}`);
     });

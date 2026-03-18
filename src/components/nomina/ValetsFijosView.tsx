@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Eye } from 'lucide-react';
 
 type SeccionValets = 'horario_fijo' | 'gestionar_valet';
 type DiaLaboralKey = 'lunes' | 'martes' | 'miercoles' | 'jueves' | 'viernes' | 'sabado' | 'domingo';
@@ -68,6 +69,36 @@ interface AdicionalesEmpleadoConfig {
   domingoSemanas: number[];
 }
 
+interface ValetAdicionalesApiResponse {
+  ok?: boolean;
+  data?: {
+    configuracion?: AdicionalesEmpleadoConfig;
+  };
+  registros?: Array<{
+    centroCostoId: string;
+    empleadoCedula: string;
+    configuracion: AdicionalesEmpleadoConfig;
+  }>;
+  error?: string;
+  details?: string;
+}
+
+interface ValetEmpleadoApiResponse {
+  ok?: boolean;
+  registros?: ValetAsignadoCentro[];
+  registro?: ValetAsignadoCentro;
+  error?: string;
+  details?: string;
+}
+
+interface ValetHorarioApiResponse {
+  ok?: boolean;
+  registros?: HorarioFijoGuardado[];
+  registro?: HorarioFijoGuardado;
+  error?: string;
+  details?: string;
+}
+
 const SEMANAS_DISPONIBLES = [1, 2, 3, 4, 5];
 
 const crearSemanasDiaAdicional = (): SemanaDiaAdicionalConfig[] => {
@@ -91,6 +122,7 @@ const DIAS_LABORALES: Array<{ key: DiaLaboralKey; label: string }> = [
 const DIAS_LABORALES_SIN_DOMINGO: Array<{ key: DiaLaboralKey; label: string }> = DIAS_LABORALES.filter(
   (dia) => dia.key !== 'domingo',
 );
+const ORDEN_DIAS_ADICIONALES = DIAS_LABORALES_SIN_DOMINGO.map((dia) => dia.key);
 
 const MESES: Array<{ value: number; label: string }> = [
   { value: 1, label: 'Enero' },
@@ -173,7 +205,9 @@ const ValetsFijosView = () => {
   const [horariosFijosGuardados, setHorariosFijosGuardados] = useState<HorarioFijoGuardado[]>([]);
   const [asignacionesCentro, setAsignacionesCentro] = useState<ValetAsignadoCentro[]>([]);
   const [modalAgregarOpen, setModalAgregarOpen] = useState(false);
+  const [modalGestionEmpleadoModo, setModalGestionEmpleadoModo] = useState<'agregar' | 'eliminar'>('agregar');
   const [modalEmpleadoInput, setModalEmpleadoInput] = useState('');
+  const [modalEmpleadoEliminarCedula, setModalEmpleadoEliminarCedula] = useState('');
   const [modalValorFijo, setModalValorFijo] = useState('');
   const [modalAdicionalesOpen, setModalAdicionalesOpen] = useState(false);
   const [empleadoAdicionalSeleccionado, setEmpleadoAdicionalSeleccionado] = useState<ValetAsignadoCentro | null>(null);
@@ -186,6 +220,7 @@ const ValetsFijosView = () => {
   const [modalDomingoAnio, setModalDomingoAnio] = useState(hoy.getFullYear());
   const [modalDomingoMes, setModalDomingoMes] = useState(hoy.getMonth() + 1);
   const [modalDomingoSemanas, setModalDomingoSemanas] = useState<number[]>([]);
+  const [empleadoDetallesAbierto, setEmpleadoDetallesAbierto] = useState<ValetAsignadoCentro | null>(null);
   const [mensaje, setMensaje] = useState<{ type: 'success' | 'error' | null; text: string }>({
     type: null,
     text: '',
@@ -194,7 +229,132 @@ const ValetsFijosView = () => {
   useEffect(() => {
     void cargarEmpleados();
     void cargarCentrosCosto();
+    void cargarAsignacionesCentro();
+    void cargarHorariosFijos();
+    void cargarAdicionalesValets();
   }, []);
+
+  const cargarAsignacionesCentro = async () => {
+    try {
+      const response = await fetch('/api/humana/valets/empleados', {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`No se pudo cargar empleados de valet fijo: ${response.statusText}`);
+      }
+
+      const payload = await response.json() as ValetEmpleadoApiResponse;
+      const registros = Array.isArray(payload?.registros) ? payload.registros : [];
+
+      setAsignacionesCentro(registros.map((item) => ({
+        id: `${item.centroCostoId}-${item.empleadoCedula}`,
+        centroCostoId: String(item.centroCostoId || '').trim(),
+        centroCostoNombre: String(item.centroCostoNombre || '').trim(),
+        empleadoCedula: String(item.empleadoCedula || '').trim(),
+        empleadoNombre: String(item.empleadoNombre || '').trim(),
+        valorFijo: Number(item.valorFijo || 0),
+      })));
+    } catch (error) {
+      console.error('Error cargando empleados de valet fijo desde backend:', error);
+      setAsignacionesCentro([]);
+      setMensaje({ type: 'error', text: 'No se pudo cargar empleados de valet fijo desde la base de datos.' });
+    }
+  };
+
+  const cargarHorariosFijos = async () => {
+    try {
+      const response = await fetch('/api/humana/valets/horarios', {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`No se pudo cargar horarios de valet fijo: ${response.statusText}`);
+      }
+
+      const payload = await response.json() as ValetHorarioApiResponse;
+      const registros = Array.isArray(payload?.registros) ? payload.registros : [];
+
+      setHorariosFijosGuardados(registros.map((item) => ({
+        id: String(item.id || `${item.centroCostoId}-${item.empleadoCedula}-${item.anio}-${item.mes}-${item.semana}-${item.dia}`),
+        empleadoCedula: String(item.empleadoCedula || '').trim(),
+        empleadoNombre: String(item.empleadoNombre || '').trim(),
+        centroCostoId: String(item.centroCostoId || '').trim(),
+        centroCostoNombre: String(item.centroCostoNombre || '').trim(),
+        valorFijo: Number(item.valorFijo || 0),
+        anio: Number(item.anio || 0),
+        mes: Number(item.mes || 0),
+        semana: Number(item.semana || 0),
+        dia: item.dia as DiaLaboralKey,
+        horaEntrada: String(item.horaEntrada || ''),
+        horaSalida: String(item.horaSalida || ''),
+      })));
+    } catch (error) {
+      console.error('Error cargando horarios de valet fijo desde backend:', error);
+      setHorariosFijosGuardados([]);
+      setMensaje({ type: 'error', text: 'No se pudo cargar horarios de valet fijo desde la base de datos.' });
+    }
+  };
+
+  const cargarAdicionalesValets = async () => {
+    try {
+      const response = await fetch('/api/humana/valets/adicionales/lista', {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`No se pudo cargar adicionales de valet: ${response.statusText}`);
+      }
+
+      const payload = await response.json() as ValetAdicionalesApiResponse;
+      const registros = Array.isArray(payload?.registros) ? payload.registros : [];
+
+      const mapa = registros.reduce<Record<string, AdicionalesEmpleadoConfig>>((acc, item) => {
+        const centroCostoId = String(item?.centroCostoId || '').trim();
+        const empleadoCedula = String(item?.empleadoCedula || '').trim();
+        if (!centroCostoId || !empleadoCedula || !item?.configuracion) {
+          return acc;
+        }
+
+        acc[`${centroCostoId}-${empleadoCedula}`] = {
+          habilitarDiaAdicional: Boolean(item.configuracion.habilitarDiaAdicional),
+          diaAdicionalAnio: Number(item.configuracion.diaAdicionalAnio || hoy.getFullYear()),
+          diaAdicionalMes: Number(item.configuracion.diaAdicionalMes || hoy.getMonth() + 1),
+          diaAdicionalSemanas: SEMANAS_DISPONIBLES.map((semana) => {
+            const guardada = item.configuracion.diaAdicionalSemanas?.find((s) => s.semana === semana);
+            return {
+              semana,
+              habilitado: Boolean(guardada?.habilitado),
+              dias: (guardada?.dias ?? []).filter((d) => d.dia !== 'domingo'),
+            };
+          }),
+          habilitarDomingo: Boolean(item.configuracion.habilitarDomingo),
+          domingoAnio: Number(item.configuracion.domingoAnio || hoy.getFullYear()),
+          domingoMes: Number(item.configuracion.domingoMes || hoy.getMonth() + 1),
+          domingoSemanas: (item.configuracion.domingoSemanas ?? [])
+            .map((semana) => Number(semana || 0))
+            .filter((semana) => SEMANAS_DISPONIBLES.includes(semana))
+            .sort((a, b) => a - b),
+        };
+        return acc;
+      }, {});
+
+      setAdicionalesPorEmpleado(mapa);
+    } catch (error) {
+      console.error('Error cargando adicionales de valet desde backend:', error);
+      setAdicionalesPorEmpleado({});
+      setMensaje({ type: 'error', text: 'No se pudo cargar adicionales de valet desde la base de datos.' });
+    }
+  };
 
   const cargarEmpleados = async () => {
     setLoadingEmpleados(true);
@@ -286,15 +446,27 @@ const ValetsFijosView = () => {
     }
   };
 
+  const centrosHorarioDisponibles = useMemo(() => {
+    const centrosConEmpleados = new Set(
+      asignacionesCentro
+        .map((item) => String(item.centroCostoId || '').trim())
+        .filter(Boolean),
+    );
+
+    return centrosCosto
+      .filter((item) => centrosConEmpleados.has(item.IDCENTROCOSTO))
+      .sort((a, b) => a.CENTROCOSTO.localeCompare(b.CENTROCOSTO, 'es', { sensitivity: 'base' }));
+  }, [centrosCosto, asignacionesCentro]);
+
   const centroHorarioSeleccionado = useMemo(() => {
     const valor = centroHorarioInput.trim();
     if (!valor) return null;
 
-    const porCodigo = centrosCosto.find((item) => item.IDCENTROCOSTO === valor);
+    const porCodigo = centrosHorarioDisponibles.find((item) => item.IDCENTROCOSTO === valor);
     if (porCodigo) return porCodigo;
 
-    return centrosCosto.find((item) => etiquetaCentro(item).toLowerCase() === valor.toLowerCase()) || null;
-  }, [centroHorarioInput, centrosCosto]);
+    return centrosHorarioDisponibles.find((item) => etiquetaCentro(item).toLowerCase() === valor.toLowerCase()) || null;
+  }, [centroHorarioInput, centrosHorarioDisponibles]);
 
   const empleadosCentroHorario = useMemo(() => {
     if (!centroHorarioSeleccionado) return [];
@@ -349,6 +521,14 @@ const ValetsFijosView = () => {
       .sort((a, b) => a.empleadoNombre.localeCompare(b.empleadoNombre, 'es', { sensitivity: 'base' }));
   }, [centroGestionSeleccionado, asignacionesCentro]);
 
+  const empleadosCentroGestion = useMemo(() => {
+    if (!centroGestionSeleccionado) return [];
+
+    return asignacionesCentro
+      .filter((item) => item.centroCostoId === centroGestionSeleccionado.IDCENTROCOSTO)
+      .sort((a, b) => a.empleadoNombre.localeCompare(b.empleadoNombre, 'es', { sensitivity: 'base' }));
+  }, [centroGestionSeleccionado, asignacionesCentro]);
+
   const diasDisponiblesIngreso = useMemo(() => {
     let dias = [...DIAS_LABORALES_SIN_DOMINGO];
 
@@ -374,36 +554,122 @@ const ValetsFijosView = () => {
     return dias;
   }, [empleadoSeleccionado, centroHorarioSeleccionado, anio, mes, semanaHorario, adicionalesPorEmpleado, asignacionesCentro]);
 
-  const abrirModalAdicionales = (empleado: ValetAsignadoCentro) => {
+  const abrirModalAdicionales = async (empleado: ValetAsignadoCentro) => {
     const configGuardada = adicionalesPorEmpleado[empleado.id];
     setEmpleadoAdicionalSeleccionado(empleado);
-    setModalHabilitarDiaAdicional(configGuardada?.habilitarDiaAdicional ?? false);
-    setModalDiaAdicionalAnio(configGuardada?.diaAdicionalAnio ?? hoy.getFullYear());
-    setModalDiaAdicionalMes(configGuardada?.diaAdicionalMes ?? hoy.getMonth() + 1);
-    setModalDiaAdicionalSemanas(
-      SEMANAS_DISPONIBLES.map((semana) => {
-        const guardada = configGuardada?.diaAdicionalSemanas?.find((item) => item.semana === semana);
-        return {
-          semana,
-          habilitado: guardada?.habilitado ?? false,
-          dias: (guardada?.dias ?? []).filter((d) => d.dia !== 'domingo'),
-        };
-      }),
-    );
-    setModalHabilitarDomingo(configGuardada?.habilitarDomingo ?? false);
-    setModalDomingoAnio(configGuardada?.domingoAnio ?? hoy.getFullYear());
-    setModalDomingoMes(configGuardada?.domingoMes ?? hoy.getMonth() + 1);
-    setModalDomingoSemanas(
-      (configGuardada?.domingoSemanas ?? [])
-        .filter((semana) => SEMANAS_DISPONIBLES.includes(semana))
-        .sort((a, b) => a - b),
-    );
+
+    const aplicarConfigAModal = (config: AdicionalesEmpleadoConfig | undefined) => {
+      setModalHabilitarDiaAdicional(config?.habilitarDiaAdicional ?? false);
+      setModalDiaAdicionalAnio(config?.diaAdicionalAnio ?? hoy.getFullYear());
+      setModalDiaAdicionalMes(config?.diaAdicionalMes ?? hoy.getMonth() + 1);
+      setModalDiaAdicionalSemanas(
+        SEMANAS_DISPONIBLES.map((semana) => {
+          const guardada = config?.diaAdicionalSemanas?.find((item) => item.semana === semana);
+          return {
+            semana,
+            habilitado: guardada?.habilitado ?? false,
+            dias: (guardada?.dias ?? []).filter((d) => d.dia !== 'domingo'),
+          };
+        }),
+      );
+      setModalHabilitarDomingo(config?.habilitarDomingo ?? false);
+      setModalDomingoAnio(config?.domingoAnio ?? hoy.getFullYear());
+      setModalDomingoMes(config?.domingoMes ?? hoy.getMonth() + 1);
+      setModalDomingoSemanas(
+        (config?.domingoSemanas ?? [])
+          .filter((semana) => SEMANAS_DISPONIBLES.includes(semana))
+          .sort((a, b) => a - b),
+      );
+    };
+
+    aplicarConfigAModal(configGuardada);
     setModalAdicionalesOpen(true);
+
+    try {
+      const response = await fetch(
+        `/api/humana/valets/adicionales?centroCostoId=${encodeURIComponent(empleado.centroCostoId)}&empleadoCedula=${encodeURIComponent(empleado.empleadoCedula)}`,
+      );
+
+      if (response.status === 404) {
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error(`No se pudo cargar adicionales guardados: ${response.statusText}`);
+      }
+
+      const payload = await response.json() as ValetAdicionalesApiResponse;
+      const configApi = payload?.data?.configuracion;
+
+      if (!configApi) {
+        return;
+      }
+
+      const configNormalizada: AdicionalesEmpleadoConfig = {
+        habilitarDiaAdicional: Boolean(configApi.habilitarDiaAdicional),
+        diaAdicionalAnio: Number(configApi.diaAdicionalAnio || hoy.getFullYear()),
+        diaAdicionalMes: Number(configApi.diaAdicionalMes || hoy.getMonth() + 1),
+        diaAdicionalSemanas: SEMANAS_DISPONIBLES.map((semana) => {
+          const semanaApi = configApi.diaAdicionalSemanas?.find((item) => item.semana === semana);
+          return {
+            semana,
+            habilitado: Boolean(semanaApi?.habilitado),
+            dias: (semanaApi?.dias ?? []).filter((d) => d.dia !== 'domingo'),
+          };
+        }),
+        habilitarDomingo: Boolean(configApi.habilitarDomingo),
+        domingoAnio: Number(configApi.domingoAnio || hoy.getFullYear()),
+        domingoMes: Number(configApi.domingoMes || hoy.getMonth() + 1),
+        domingoSemanas: (configApi.domingoSemanas ?? [])
+          .map((semana) => Number(semana || 0))
+          .filter((semana) => SEMANAS_DISPONIBLES.includes(semana))
+          .sort((a, b) => a - b),
+      };
+
+      setAdicionalesPorEmpleado((prev) => ({
+        ...prev,
+        [empleado.id]: configNormalizada,
+      }));
+      aplicarConfigAModal(configNormalizada);
+    } catch (error) {
+      console.error('Error cargando adicionales de valet desde backend:', error);
+      setMensaje({ type: 'error', text: 'No se pudo cargar adicionales guardados desde la base de datos.' });
+    }
   };
 
   const cerrarModalAdicionales = () => {
     setModalAdicionalesOpen(false);
     setEmpleadoAdicionalSeleccionado(null);
+  };
+
+  const obtenerIndiceDiaAdicional = (dia: DiaLaboralKey): number => ORDEN_DIAS_ADICIONALES.indexOf(dia);
+
+  const obtenerDiasDisponiblesPorIndice = (dias: DiaDiaAdicional[], indexDia: number): DiaLaboralKey[] => {
+    if (indexDia <= 0) {
+      return [...ORDEN_DIAS_ADICIONALES];
+    }
+
+    const diaAnterior = dias[indexDia - 1]?.dia;
+    const indiceAnterior = diaAnterior ? obtenerIndiceDiaAdicional(diaAnterior) : -1;
+    if (indiceAnterior < 0) {
+      return [...ORDEN_DIAS_ADICIONALES];
+    }
+
+    return ORDEN_DIAS_ADICIONALES.slice(indiceAnterior + 1);
+  };
+
+  const obtenerSiguienteDiaDisponible = (dias: DiaDiaAdicional[]): DiaLaboralKey | null => {
+    if (dias.length === 0) {
+      return ORDEN_DIAS_ADICIONALES[0] || null;
+    }
+
+    const ultimoDia = dias[dias.length - 1]?.dia;
+    const indiceUltimo = ultimoDia ? obtenerIndiceDiaAdicional(ultimoDia) : -1;
+    if (indiceUltimo < 0 || indiceUltimo + 1 >= ORDEN_DIAS_ADICIONALES.length) {
+      return null;
+    }
+
+    return ORDEN_DIAS_ADICIONALES[indiceUltimo + 1] || null;
   };
 
   const handleToggleDiaAdicionalSemana = (semana: number, habilitado: boolean) => {
@@ -413,11 +679,25 @@ const ValetsFijosView = () => {
   };
 
   const handleAgregarDiaAdicional = (semana: number) => {
+    const semanaConfig = modalDiaAdicionalSemanas.find((item) => item.semana === semana);
+    if (!semanaConfig) return;
+
+    if (semanaConfig.dias.length >= 5) {
+      setMensaje({ type: 'error', text: `La semana ${semana} permite maximo 5 dias adicionales.` });
+      return;
+    }
+
+    const siguienteDia = obtenerSiguienteDiaDisponible(semanaConfig.dias);
+    if (!siguienteDia) {
+      setMensaje({ type: 'error', text: `No hay mas dias disponibles para la semana ${semana}.` });
+      return;
+    }
+
     setModalDiaAdicionalSemanas((prev) => prev.map((item) => {
       if (item.semana !== semana) return item;
       return {
         ...item,
-        dias: [...item.dias, { dia: 'lunes', horaEntrada: '', horaSalida: '' }],
+        dias: [...item.dias, { dia: siguienteDia, horaEntrada: '', horaSalida: '' }],
       };
     }));
   };
@@ -440,15 +720,49 @@ const ValetsFijosView = () => {
   ) => {
     setModalDiaAdicionalSemanas((prev) => prev.map((item) => {
       if (item.semana !== semana) return item;
+
+      const diasActualizados = item.dias.map((d, idx) => {
+        if (idx !== indexDia) return d;
+        if (campo === 'dia') {
+          return { ...d, dia: valor as DiaLaboralKey };
+        }
+        return { ...d, [campo]: valor };
+      });
+
+      if (campo === 'dia') {
+        // Mantiene un orden ascendente de dias para evitar desorden entre selects.
+        const diasNormalizados = [...diasActualizados];
+        for (let idx = 1; idx < diasNormalizados.length; idx += 1) {
+          const indiceAnterior = obtenerIndiceDiaAdicional(diasNormalizados[idx - 1].dia);
+          const indiceActual = obtenerIndiceDiaAdicional(diasNormalizados[idx].dia);
+
+          if (indiceActual > indiceAnterior) {
+            continue;
+          }
+
+          const siguienteClave = ORDEN_DIAS_ADICIONALES[indiceAnterior + 1];
+          if (!siguienteClave) {
+            diasNormalizados.splice(idx);
+            break;
+          }
+
+          diasNormalizados[idx] = {
+            ...diasNormalizados[idx],
+            dia: siguienteClave,
+            horaEntrada: '',
+            horaSalida: '',
+          };
+        }
+
+        return {
+          ...item,
+          dias: diasNormalizados,
+        };
+      }
+
       return {
         ...item,
-        dias: item.dias.map((d, idx) => {
-          if (idx !== indexDia) return d;
-          if (campo === 'dia') {
-            return { ...d, dia: valor as DiaLaboralKey };
-          }
-          return { ...d, [campo]: valor };
-        }),
+        dias: diasActualizados,
       };
     }));
   };
@@ -462,7 +776,7 @@ const ValetsFijosView = () => {
     });
   };
 
-  const handleGuardarAdicionales = () => {
+  const handleGuardarAdicionales = async () => {
     if (!empleadoAdicionalSeleccionado) return;
 
     if (!modalHabilitarDiaAdicional && !modalHabilitarDomingo) {
@@ -523,9 +837,45 @@ const ValetsFijosView = () => {
       [empleadoAdicionalSeleccionado.id]: nuevaConfig,
     }));
 
+    try {
+      const response = await fetch('/api/humana/valets/adicionales', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          centroCostoId: empleadoAdicionalSeleccionado.centroCostoId,
+          centroCostoNombre: empleadoAdicionalSeleccionado.centroCostoNombre,
+          empleadoCedula: empleadoAdicionalSeleccionado.empleadoCedula,
+          empleadoNombre: empleadoAdicionalSeleccionado.empleadoNombre,
+          habilitarDiaAdicional: nuevaConfig.habilitarDiaAdicional,
+          diaAdicionalAnio: nuevaConfig.diaAdicionalAnio,
+          diaAdicionalMes: nuevaConfig.diaAdicionalMes,
+          diaAdicionalSemanas: nuevaConfig.diaAdicionalSemanas,
+          habilitarDomingo: nuevaConfig.habilitarDomingo,
+          domingoAnio: nuevaConfig.domingoAnio,
+          domingoMes: nuevaConfig.domingoMes,
+          domingoSemanas: nuevaConfig.domingoSemanas,
+        }),
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        const detalle = String(payload?.error || response.statusText || 'Error desconocido');
+        throw new Error(detalle);
+      }
+    } catch (error) {
+      console.error('Error guardando adicionales de valet en backend:', error);
+      setMensaje({
+        type: 'error',
+        text: `No se pudo guardar en base de datos: ${error instanceof Error ? error.message : 'Error desconocido'}`,
+      });
+      return;
+    }
+
     setMensaje({
       type: 'success',
-      text: `Adicionales actualizados para ${empleadoAdicionalSeleccionado.empleadoNombre}.`,
+      text: `Adicionales actualizados y guardados en base de datos para ${empleadoAdicionalSeleccionado.empleadoNombre}.`,
     });
     cerrarModalAdicionales();
   };
@@ -594,42 +944,93 @@ const ValetsFijosView = () => {
       horaSalida: horaSalidaHorario,
     };
 
-    setHorariosFijosGuardados((prev) => {
-      const sinDuplicado = prev.filter((item) => !(
-        item.empleadoCedula === nuevoHorario.empleadoCedula
-        && item.anio === nuevoHorario.anio
-        && item.mes === nuevoHorario.mes
-        && item.semana === nuevoHorario.semana
-        && item.dia === nuevoHorario.dia
-      ));
-      return [nuevoHorario, ...sinDuplicado];
-    });
+    void (async () => {
+      try {
+        const response = await fetch('/api/humana/valets/horarios', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            centroCostoId: nuevoHorario.centroCostoId,
+            centroCostoNombre: nuevoHorario.centroCostoNombre,
+            empleadoCedula: nuevoHorario.empleadoCedula,
+            empleadoNombre: nuevoHorario.empleadoNombre,
+            valorFijo: nuevoHorario.valorFijo,
+            anio: nuevoHorario.anio,
+            mes: nuevoHorario.mes,
+            semana: nuevoHorario.semana,
+            dia: nuevoHorario.dia,
+            horaEntrada: nuevoHorario.horaEntrada,
+            horaSalida: nuevoHorario.horaSalida,
+          }),
+        });
 
-    setAsignacionesCentro((prev) => {
-      const nuevaAsignacion: ValetAsignadoCentro = {
-        id: `${nuevoHorario.centroCostoId}-${nuevoHorario.empleadoCedula}`,
-        centroCostoId: nuevoHorario.centroCostoId,
-        centroCostoNombre: nuevoHorario.centroCostoNombre,
-        empleadoCedula: nuevoHorario.empleadoCedula,
-        empleadoNombre: nuevoHorario.empleadoNombre,
-        valorFijo: nuevoHorario.valorFijo,
-      };
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({}));
+          throw new Error(String(payload?.error || response.statusText || 'Error desconocido'));
+        }
 
-      const sinDuplicado = prev.filter((item) => !(
-        item.centroCostoId === nuevaAsignacion.centroCostoId
-        && item.empleadoCedula === nuevaAsignacion.empleadoCedula
-      ));
+        const payload = await response.json() as ValetHorarioApiResponse;
+        const horarioGuardado = payload?.registro || nuevoHorario;
 
-      return [nuevaAsignacion, ...sinDuplicado];
-    });
+        setHorariosFijosGuardados((prev) => {
+          const sinDuplicado = prev.filter((item) => !(
+            item.empleadoCedula === horarioGuardado.empleadoCedula
+            && item.anio === horarioGuardado.anio
+            && item.mes === horarioGuardado.mes
+            && item.semana === horarioGuardado.semana
+            && item.dia === horarioGuardado.dia
+          ));
+          return [{
+            id: String(horarioGuardado.id || `${horarioGuardado.centroCostoId}-${horarioGuardado.empleadoCedula}-${horarioGuardado.anio}-${horarioGuardado.mes}-${horarioGuardado.semana}-${horarioGuardado.dia}`),
+            empleadoCedula: horarioGuardado.empleadoCedula,
+            empleadoNombre: horarioGuardado.empleadoNombre,
+            centroCostoId: horarioGuardado.centroCostoId,
+            centroCostoNombre: horarioGuardado.centroCostoNombre,
+            valorFijo: Number(horarioGuardado.valorFijo || 0),
+            anio: Number(horarioGuardado.anio || 0),
+            mes: Number(horarioGuardado.mes || 0),
+            semana: Number(horarioGuardado.semana || 0),
+            dia: horarioGuardado.dia as DiaLaboralKey,
+            horaEntrada: horarioGuardado.horaEntrada,
+            horaSalida: horarioGuardado.horaSalida,
+          }, ...sinDuplicado];
+        });
 
-    setMensaje({
-      type: 'success',
-      text: `Horario guardado para ${empleadoSeleccionado.nombre} en semana ${semanaHorario}, ${DIAS_LABORALES.find((d) => d.key === diaHorario)?.label || diaHorario}.`,
-    });
+        setAsignacionesCentro((prev) => {
+          const nuevaAsignacion: ValetAsignadoCentro = {
+            id: `${nuevoHorario.centroCostoId}-${nuevoHorario.empleadoCedula}`,
+            centroCostoId: nuevoHorario.centroCostoId,
+            centroCostoNombre: nuevoHorario.centroCostoNombre,
+            empleadoCedula: nuevoHorario.empleadoCedula,
+            empleadoNombre: nuevoHorario.empleadoNombre,
+            valorFijo: nuevoHorario.valorFijo,
+          };
 
-    setHoraEntradaHorario('');
-    setHoraSalidaHorario('');
+          const sinDuplicado = prev.filter((item) => !(
+            item.centroCostoId === nuevaAsignacion.centroCostoId
+            && item.empleadoCedula === nuevaAsignacion.empleadoCedula
+          ));
+
+          return [nuevaAsignacion, ...sinDuplicado];
+        });
+
+        setMensaje({
+          type: 'success',
+          text: `Horario guardado en base de datos para ${empleadoSeleccionado.nombre} en semana ${semanaHorario}, ${DIAS_LABORALES.find((d) => d.key === diaHorario)?.label || diaHorario}.`,
+        });
+
+        setHoraEntradaHorario('');
+        setHoraSalidaHorario('');
+      } catch (error) {
+        console.error('Error guardando horario de valet fijo en backend:', error);
+        setMensaje({
+          type: 'error',
+          text: `No se pudo guardar horario en base de datos: ${error instanceof Error ? error.message : 'Error desconocido'}`,
+        });
+      }
+    })();
   };
 
   const handleGuardarEmpleadoCentro = () => {
@@ -658,18 +1059,109 @@ const ValetsFijosView = () => {
       valorFijo: Math.round(valorFijoNumero * 100) / 100,
     };
 
-    setAsignacionesCentro((prev) => {
-      const sinDuplicado = prev.filter((item) => !(
-        item.centroCostoId === nuevaAsignacion.centroCostoId
-        && item.empleadoCedula === nuevaAsignacion.empleadoCedula
-      ));
-      return [nuevaAsignacion, ...sinDuplicado];
-    });
+    void (async () => {
+      try {
+        const response = await fetch('/api/humana/valets/empleados', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            centroCostoId: nuevaAsignacion.centroCostoId,
+            centroCostoNombre: nuevaAsignacion.centroCostoNombre,
+            empleadoCedula: nuevaAsignacion.empleadoCedula,
+            empleadoNombre: nuevaAsignacion.empleadoNombre,
+            valorFijo: nuevaAsignacion.valorFijo,
+          }),
+        });
 
-    setModalAgregarOpen(false);
-    setModalEmpleadoInput('');
-    setModalValorFijo('');
-    setMensaje({ type: 'success', text: 'Empleado agregado correctamente al centro de costo.' });
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({}));
+          throw new Error(String(payload?.error || response.statusText || 'Error desconocido'));
+        }
+
+        setAsignacionesCentro((prev) => {
+          const sinDuplicado = prev.filter((item) => !(
+            item.centroCostoId === nuevaAsignacion.centroCostoId
+            && item.empleadoCedula === nuevaAsignacion.empleadoCedula
+          ));
+          return [nuevaAsignacion, ...sinDuplicado];
+        });
+
+        setModalAgregarOpen(false);
+        setModalEmpleadoInput('');
+        setModalEmpleadoEliminarCedula('');
+        setModalValorFijo('');
+        setMensaje({ type: 'success', text: 'Empleado guardado correctamente en la base de datos.' });
+      } catch (error) {
+        console.error('Error guardando empleado valet fijo en backend:', error);
+        setMensaje({
+          type: 'error',
+          text: `No se pudo guardar empleado en base de datos: ${error instanceof Error ? error.message : 'Error desconocido'}`,
+        });
+      }
+    })();
+  };
+
+  const handleEliminarEmpleadoCentro = () => {
+    if (!centroGestionSeleccionado) {
+      setMensaje({ type: 'error', text: 'Selecciona un centro de costo valido.' });
+      return;
+    }
+
+    const cedula = modalEmpleadoEliminarCedula.trim();
+    if (!cedula) {
+      setMensaje({ type: 'error', text: 'Selecciona un empleado existente para eliminar.' });
+      return;
+    }
+
+    const empleadoExistente = empleadosCentroGestion.find((item) => item.empleadoCedula === cedula);
+    if (!empleadoExistente) {
+      setMensaje({ type: 'error', text: 'El empleado seleccionado no pertenece a este centro de costo.' });
+      return;
+    }
+
+    void (async () => {
+      try {
+        const response = await fetch(
+          `/api/humana/valets/empleados?centroCostoId=${encodeURIComponent(centroGestionSeleccionado.IDCENTROCOSTO)}&empleadoCedula=${encodeURIComponent(cedula)}`,
+          { method: 'DELETE' },
+        );
+
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({}));
+          throw new Error(String(payload?.error || response.statusText || 'Error desconocido'));
+        }
+
+        setAsignacionesCentro((prev) => prev.filter((item) => !(
+          item.centroCostoId === centroGestionSeleccionado.IDCENTROCOSTO
+          && item.empleadoCedula === cedula
+        )));
+
+        setHorariosFijosGuardados((prev) => prev.filter((item) => !(
+          item.centroCostoId === centroGestionSeleccionado.IDCENTROCOSTO
+          && item.empleadoCedula === cedula
+        )));
+
+        setAdicionalesPorEmpleado((prev) => {
+          const next = { ...prev };
+          delete next[`${centroGestionSeleccionado.IDCENTROCOSTO}-${cedula}`];
+          return next;
+        });
+
+        setModalAgregarOpen(false);
+        setModalEmpleadoInput('');
+        setModalEmpleadoEliminarCedula('');
+        setModalValorFijo('');
+        setMensaje({ type: 'success', text: 'Empleado eliminado correctamente del centro de costo.' });
+      } catch (error) {
+        console.error('Error eliminando empleado valet fijo en backend:', error);
+        setMensaje({
+          type: 'error',
+          text: `No se pudo eliminar empleado en base de datos: ${error instanceof Error ? error.message : 'Error desconocido'}`,
+        });
+      }
+    })();
   };
 
   const horariosEmpleadoPeriodo = useMemo(() => {
@@ -726,6 +1218,11 @@ const ValetsFijosView = () => {
             <option key={empleado.cedula} value={etiquetaEmpleado(empleado)} />
           ))}
         </datalist>
+        <datalist id="valets-fijos-centros-horario">
+          {centrosHorarioDisponibles.map((centro) => (
+            <option key={`horario-${centro.IDCENTROCOSTO}-${centro.CENTROCOSTO}`} value={etiquetaCentro(centro)} />
+          ))}
+        </datalist>
         <datalist id="valets-horario-empleados-centro">
           {empleadosCentroHorario.map((empleado) => (
             <option key={`${empleado.cedula}-horario-centro`} value={etiquetaEmpleado(empleado)} />
@@ -748,7 +1245,7 @@ const ValetsFijosView = () => {
               setCentroHorarioInput(e.target.value);
               setEmpleadoInput('');
             }}
-            list="valets-fijos-centros"
+            list="valets-fijos-centros-horario"
             placeholder={loadingCentros ? 'Cargando centros de costo...' : 'Escribe para buscar centro de costo'}
             className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
@@ -951,12 +1448,14 @@ const ValetsFijosView = () => {
                     type="button"
                     onClick={() => {
                       setModalAgregarOpen(true);
+                      setModalGestionEmpleadoModo('agregar');
                       setModalEmpleadoInput('');
+                      setModalEmpleadoEliminarCedula('');
                       setModalValorFijo('');
                     }}
                     className="px-4 py-2 rounded-lg bg-[#001F3F] text-white text-sm font-semibold hover:bg-blue-900 transition-colors"
                   >
-                    Agregar empleado
+                    Gestionar empleados
                   </button>
                 </div>
 
@@ -967,12 +1466,13 @@ const ValetsFijosView = () => {
                         <th className="text-left px-4 py-3 text-xs font-bold text-slate-600">Empleado</th>
                         <th className="text-left px-4 py-3 text-xs font-bold text-slate-600">Valor fijo a pagar</th>
                         <th className="text-left px-4 py-3 text-xs font-bold text-slate-600">Gestionar adicionales</th>
+                        <th className="text-center px-4 py-3 text-xs font-bold text-slate-600">Detalles</th>
                       </tr>
                     </thead>
                     <tbody>
                       {detalleCentroSeleccionado.length === 0 && (
                         <tr>
-                          <td colSpan={3} className="px-4 py-6 text-center text-slate-500">
+                          <td colSpan={4} className="px-4 py-6 text-center text-slate-500">
                             Empleados no asignados
                           </td>
                         </tr>
@@ -992,6 +1492,16 @@ const ValetsFijosView = () => {
                               </button>
                             </div>
                           </td>
+                          <td className="px-4 py-3 text-center">
+                            <button
+                              type="button"
+                              onClick={() => setEmpleadoDetallesAbierto(item)}
+                              className="inline-flex items-center justify-center p-2 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-100 transition-colors"
+                              title="Ver detalles"
+                            >
+                              <Eye size={16} />
+                            </button>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -1008,7 +1518,7 @@ const ValetsFijosView = () => {
           <div className="w-full max-w-lg rounded-2xl bg-white border border-slate-200 shadow-xl p-6 space-y-4">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <h4 className="text-lg font-black text-slate-800">Agregar empleado</h4>
+                <h4 className="text-lg font-black text-slate-800">Gestionar empleados</h4>
                 <p className="text-xs text-slate-500 mt-1">
                   Centro: {centroGestionSeleccionado.IDCENTROCOSTO} - {centroGestionSeleccionado.CENTROCOSTO}
                 </p>
@@ -1022,29 +1532,84 @@ const ValetsFijosView = () => {
               </button>
             </div>
 
-            <div>
-              <label className="block text-xs font-semibold text-slate-600 mb-1">Buscar empleado</label>
-              <input
-                value={modalEmpleadoInput}
-                onChange={(e) => setModalEmpleadoInput(e.target.value)}
-                list="valets-fijos-empleados"
-                placeholder={loadingEmpleados ? 'Cargando empleados...' : 'Escribe para buscar empleado'}
-                className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
+            <div className="inline-flex rounded-xl border border-slate-300 p-1 bg-slate-50">
+              <button
+                type="button"
+                onClick={() => {
+                  setModalGestionEmpleadoModo('agregar');
+                  setModalEmpleadoEliminarCedula('');
+                }}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                  modalGestionEmpleadoModo === 'agregar'
+                    ? 'bg-[#001F3F] text-white'
+                    : 'text-slate-700 hover:bg-slate-100'
+                }`}
+              >
+                Agregar
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setModalGestionEmpleadoModo('eliminar');
+                  setModalEmpleadoInput('');
+                  setModalValorFijo('');
+                }}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                  modalGestionEmpleadoModo === 'eliminar'
+                    ? 'bg-[#001F3F] text-white'
+                    : 'text-slate-700 hover:bg-slate-100'
+                }`}
+              >
+                Eliminar
+              </button>
             </div>
 
-            <div>
-              <label className="block text-xs font-semibold text-slate-600 mb-1">Valor fijo a pagar</label>
-              <input
-                type="number"
-                min={0}
-                step="0.01"
-                value={modalValorFijo}
-                onChange={(e) => setModalValorFijo(e.target.value)}
-                placeholder="0.00"
-                className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
+            {modalGestionEmpleadoModo === 'agregar' ? (
+              <>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Buscar empleado</label>
+                  <input
+                    value={modalEmpleadoInput}
+                    onChange={(e) => setModalEmpleadoInput(e.target.value)}
+                    list="valets-fijos-empleados"
+                    placeholder={loadingEmpleados ? 'Cargando empleados...' : 'Escribe para buscar empleado'}
+                    className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Valor fijo a pagar</label>
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={modalValorFijo}
+                    onChange={(e) => setModalValorFijo(e.target.value)}
+                    placeholder="0.00"
+                    className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+              </>
+            ) : (
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Seleccionar empleado existente</label>
+                <select
+                  value={modalEmpleadoEliminarCedula}
+                  onChange={(e) => setModalEmpleadoEliminarCedula(e.target.value)}
+                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">Seleccionar</option>
+                  {empleadosCentroGestion.map((empleado) => (
+                    <option key={`eliminar-${empleado.centroCostoId}-${empleado.empleadoCedula}`} value={empleado.empleadoCedula}>
+                      {empleado.empleadoNombre} - {empleado.empleadoCedula}
+                    </option>
+                  ))}
+                </select>
+                {empleadosCentroGestion.length === 0 && (
+                  <p className="text-xs text-slate-500 mt-2">No hay empleados en este centro para eliminar.</p>
+                )}
+              </div>
+            )}
 
             <div className="flex justify-end gap-2">
               <button
@@ -1056,10 +1621,10 @@ const ValetsFijosView = () => {
               </button>
               <button
                 type="button"
-                onClick={handleGuardarEmpleadoCentro}
+                onClick={modalGestionEmpleadoModo === 'agregar' ? handleGuardarEmpleadoCentro : handleEliminarEmpleadoCentro}
                 className="px-4 py-2 rounded-lg bg-[#001F3F] text-white text-sm font-semibold hover:bg-blue-900 transition-colors"
               >
-                Guardar empleado
+                {modalGestionEmpleadoModo === 'agregar' ? 'Guardar empleado' : 'Eliminar empleado'}
               </button>
             </div>
           </div>
@@ -1123,7 +1688,7 @@ const ValetsFijosView = () => {
                   </div>
 
                   <div className="space-y-2">
-                    <p className="text-xs font-semibold text-slate-600">Semanas (maximo 5)</p>
+                    <p className="text-xs font-semibold text-slate-600">Semanas</p>
                     {modalDiaAdicionalSemanas.map((semanaConfig) => (
                       <div key={`dia-adicional-semana-${semanaConfig.semana}`} className="rounded-lg border border-slate-200 p-3">
                         <div className="flex items-center justify-between gap-2">
@@ -1140,7 +1705,8 @@ const ValetsFijosView = () => {
                             <button
                               type="button"
                               onClick={() => handleAgregarDiaAdicional(semanaConfig.semana)}
-                              className="px-2 py-1 text-xs rounded-lg border border-blue-300 bg-blue-50 text-blue-700 font-semibold hover:bg-blue-100 transition-colors"
+                              disabled={semanaConfig.dias.length >= 5 || !obtenerSiguienteDiaDisponible(semanaConfig.dias)}
+                              className="px-2 py-1 text-xs rounded-lg border border-blue-300 bg-blue-50 text-blue-700 font-semibold hover:bg-blue-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                             >
                               + Agregar dia
                             </button>
@@ -1161,9 +1727,11 @@ const ValetsFijosView = () => {
                                       onChange={(e) => handleActualizarDiaAdicional(semanaConfig.semana, indexDia, 'dia', e.target.value)}
                                       className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                                     >
-                                      {DIAS_LABORALES_SIN_DOMINGO.map((dia) => (
-                                        <option key={`dia-sel-${semanaConfig.semana}-${indexDia}-${dia.key}`} value={dia.key}>{dia.label}</option>
-                                      ))}
+                                      {obtenerDiasDisponiblesPorIndice(semanaConfig.dias, indexDia).map((diaKey) => {
+                                        const dia = DIAS_LABORALES_SIN_DOMINGO.find((item) => item.key === diaKey);
+                                        if (!dia) return null;
+                                        return <option key={`dia-sel-${semanaConfig.semana}-${indexDia}-${dia.key}`} value={dia.key}>{dia.label}</option>;
+                                      })}
                                     </select>
                                   </div>
 
@@ -1293,6 +1861,101 @@ const ValetsFijosView = () => {
                 Guardar adicionales
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {empleadoDetallesAbierto && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
+          <div
+            className="absolute inset-0"
+            onClick={() => setEmpleadoDetallesAbierto(null)}
+          />
+          <div className="relative w-full max-w-2xl rounded-2xl bg-white border border-slate-200 shadow-xl p-6 space-y-5 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h4 className="text-lg font-black text-slate-800">Detalles de adicionales</h4>
+                <p className="text-xs text-slate-500 mt-1">Empleado: {empleadoDetallesAbierto.empleadoNombre}</p>
+                <p className="text-xs text-slate-500">Centro: {empleadoDetallesAbierto.centroCostoId} - {empleadoDetallesAbierto.centroCostoNombre}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEmpleadoDetallesAbierto(null)}
+                className="px-3 py-1.5 rounded-lg border border-slate-300 text-slate-600 text-xs font-semibold hover:bg-slate-100"
+              >
+                Cerrar
+              </button>
+            </div>
+
+            {(() => {
+              const config = adicionalesPorEmpleado[empleadoDetallesAbierto.id];
+              const hayDias = Boolean(config?.habilitarDiaAdicional && config.diaAdicionalSemanas?.some((s) => s.habilitado));
+              const hayDomingos = Boolean(config?.habilitarDomingo && config.domingoSemanas?.length);
+
+              if (!config || (!hayDias && !hayDomingos)) {
+                return (
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                    No hay configuración activa para este empleado.
+                  </div>
+                );
+              }
+
+              return (
+                <div className="space-y-4">
+                  {hayDias && (
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-sm font-bold text-slate-800">Días adicionales</p>
+                        <p className="text-xs text-slate-500">Periodo: {config.diaAdicionalAnio}/{String(config.diaAdicionalMes).padStart(2, '0')}</p>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2">
+                        {config.diaAdicionalSemanas
+                          .filter((semana) => semana.habilitado)
+                          .map((semana) => (
+                            <div key={`detalle-dia-${config.diaAdicionalAnio}-${config.diaAdicionalMes}-${semana.semana}`} className="rounded-lg border border-slate-200 bg-white p-3 h-full">
+                              <p className="text-xs font-semibold text-slate-600 mb-2">Semana {semana.semana}</p>
+                              <div className="space-y-1.5">
+                                {semana.dias.map((dia, indexDia) => (
+                                  <div
+                                    key={`detalle-dia-item-${semana.semana}-${indexDia}`}
+                                    className="flex flex-wrap items-center justify-between gap-2 text-sm"
+                                  >
+                                    <span className="font-medium text-slate-700">
+                                      {DIAS_LABORALES_SIN_DOMINGO.find((d) => d.key === dia.dia)?.label || dia.dia}
+                                    </span>
+                                    <span className="text-slate-600">{dia.horaEntrada} - {dia.horaSalida}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {hayDomingos && (
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-sm font-bold text-slate-800">Domingos</p>
+                        <p className="text-xs text-slate-500">Periodo: {config.domingoAnio}/{String(config.domingoMes).padStart(2, '0')}</p>
+                      </div>
+
+                      <div className="flex flex-wrap gap-2">
+                        {config.domingoSemanas.map((semana) => (
+                          <span
+                            key={`detalle-domingo-${config.domingoAnio}-${config.domingoMes}-${semana}`}
+                            className="inline-flex items-center rounded-full border border-slate-300 px-3 py-1 text-xs font-semibold text-slate-700 bg-white"
+                          >
+                            Semana {semana}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
           </div>
         </div>
       )}
