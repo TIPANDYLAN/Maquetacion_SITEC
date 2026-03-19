@@ -18,10 +18,26 @@ interface EmpleadoNominaApiItem {
     PLAN_CONTRATADO?: string;
     PLAN_CONTRATADO_SALUD?: string;
     TARIFA?: string;
+    INGRESO?: string | null;
+    SALIDA?: string | null;
+    FechaIngreso?: string | null;
+    FechaSalida?: string | null;
   };
+  CEDULA?: string;
+  NOMBRES?: string;
+  APELLIDOS?: string;
+  PLAN?: string;
+  TIPO_PLAN?: string;
+  PLAN_CONTRATADO?: string;
+  PLAN_CONTRATADO_SALUD?: string;
+  TARIFA?: string;
+  INGRESO?: string | null;
+  SALIDA?: string | null;
+  FechaIngreso?: string | null;
+  FechaSalida?: string | null;
 }
 
-interface EmpleadoCentroCostosApi {
+interface EmpleadoNominaApiPayload {
   CEDULA?: string;
   NOMBRES?: string;
   APELLIDOS?: string;
@@ -35,6 +51,13 @@ interface EmpleadoCentroCostosApi {
   PLAN_CONTRATADO?: string;
   PLAN_CONTRATADO_SALUD?: string;
 }
+
+const obtenerPayloadEmpleadoNomina = (item: EmpleadoNominaApiItem): EmpleadoNominaApiPayload => {
+  if (item?.json && typeof item.json === 'object') {
+    return item.json as EmpleadoNominaApiPayload;
+  }
+  return item as EmpleadoNominaApiPayload;
+};
 
 interface DependienteForm {
   id: string;
@@ -157,7 +180,7 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
   const CONTRATO_FIJO = '384799';
 
   const mapearEmpleadoDesdeApi = useCallback((item: EmpleadoNominaApiItem): HumanaEmployeeData => {
-    const json = item?.json ?? {};
+    const json = obtenerPayloadEmpleadoNomina(item);
     const planApi =
       String(
         json.PLAN
@@ -406,12 +429,22 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
   const convertirFechaApiAInput = (fechaStr: string) => {
     const valor = String(fechaStr || '').trim();
     if (!valor) return '';
+
+    if (/^\d{4}-\d{2}-\d{2}T/.test(valor)) {
+      return valor.slice(0, 10);
+    }
+
     if (/^\d{4}-\d{2}-\d{2}$/.test(valor)) return valor;
-    const partes = valor.split('-');
-    if (partes.length !== 3) return '';
-    const [dia, mes, anio] = partes;
-    if (!dia || !mes || !anio) return '';
-    return `${anio}-${mes}-${dia}`;
+
+    if (/^\d{2}-\d{2}-\d{4}$/.test(valor)) {
+      const [dia, mes, anio] = valor.split('-');
+      if (!dia || !mes || !anio) return '';
+      return `${anio}-${mes}-${dia}`;
+    }
+
+    const fecha = new Date(valor);
+    if (Number.isNaN(fecha.getTime())) return '';
+    return fecha.toISOString().slice(0, 10);
   };
 
   const generarMovimientosDesdeApi = async () => {
@@ -420,10 +453,16 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
       const data = await getNominaEmployees<EmpleadoNominaApiItem[]>();
       const empleadosApi = (Array.isArray(data) ? data : []) as EmpleadoNominaApiItem[];
       const empleados = empleadosApi
-        .map((item) => ({
-          cedula: String(item?.json?.CEDULA || '').trim(),
-          nombre: `${String(item?.json?.APELLIDOS || '').trim()} ${String(item?.json?.NOMBRES || '').trim()}`.trim(),
-        }))
+        .map((item) => {
+          const payload = obtenerPayloadEmpleadoNomina(item);
+          return {
+            cedula: String(payload.CEDULA || '').trim(),
+            nombre: `${String(payload.APELLIDOS || '').trim()} ${String(payload.NOMBRES || '').trim()}`.trim(),
+            ingreso: String(payload.INGRESO || payload.FechaIngreso || '').trim(),
+            salida: String(payload.SALIDA || payload.FechaSalida || '').trim(),
+            tarifa: normalizarTarifaApi(String(payload.TARIFA || '')),
+          };
+        })
         .filter((emp) => emp.cedula);
 
       let siguienteId = Math.max(0, ...movimientos.map((m) => parseInt(m.id, 10) || 0)) + 1;
@@ -432,70 +471,46 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
       );
 
       const nuevos: MovimientoRow[] = [];
-      const BATCH_SIZE = 20;
+      empleados.forEach((emp) => {
+        const fechaIngresoInput = convertirFechaApiAInput(emp.ingreso);
+        const fechaSalidaInput = convertirFechaApiAInput(emp.salida);
 
-      for (let i = 0; i < empleados.length; i += BATCH_SIZE) {
-        const lote = empleados.slice(i, i + BATCH_SIZE);
-        const detallesLote = await Promise.all(
-          lote.map(async (emp) => {
-            try {
-              const detail = await n8nGetWithBody<EmpleadoCentroCostosApi>({
-                endpoint: 'https://n8n.172.10.219.15.sslip.io/webhook/centrocostos/empleados',
-                payload: { Cedula: emp.cedula },
-              });
-              return { emp, detail };
-            } catch {
-              return null;
-            }
-          })
-        );
-
-        detallesLote.forEach((item) => {
-          if (!item) return;
-          const { emp, detail } = item;
-          const nombre = `${String(detail.APELLIDOS || '').trim()} ${String(detail.NOMBRES || '').trim()}`.trim() || emp.nombre;
-          const fechaIngresoRaw = String(detail.INGRESO || '').trim();
-          const fechaSalidaRaw = String(detail.SALIDA || '').trim();
-          const fechaIngresoInput = convertirFechaApiAInput(fechaIngresoRaw);
-          const fechaSalidaInput = convertirFechaApiAInput(fechaSalidaRaw);
-
-          if (fechaIngresoInput) {
-            const claveIngreso = `${emp.cedula}|ingresar|${fechaIngresoInput}`;
-            if (!existentes.has(claveIngreso)) {
-              existentes.add(claveIngreso);
-              nuevos.push({
-                id: String(siguienteId++),
-                empleadoNombre: nombre,
-                empleadoCedula: emp.cedula,
-                tipoAccion: 'ingresar',
-                fechaSalida: fechaIngresoInput,
-                tarifaActual: normalizarTarifaApi(String(detail.TARIFA || '')),
-                tarifaNueva: '',
-                tipoPlan: '',
-                dependientes: [],
-              });
-            }
+        if (fechaIngresoInput) {
+          const claveIngreso = `${emp.cedula}|ingresar|${fechaIngresoInput}`;
+          if (!existentes.has(claveIngreso)) {
+            existentes.add(claveIngreso);
+            nuevos.push({
+              id: String(siguienteId++),
+              empleadoNombre: emp.nombre,
+              empleadoCedula: emp.cedula,
+              tipoAccion: 'ingresar',
+              fechaSalida: fechaIngresoInput,
+              tarifaActual: emp.tarifa,
+              tarifaNueva: '',
+              tipoPlan: '',
+              dependientes: [],
+            });
           }
+        }
 
-          if (fechaSalidaInput) {
-            const claveSalida = `${emp.cedula}|retirar|${fechaSalidaInput}`;
-            if (!existentes.has(claveSalida)) {
-              existentes.add(claveSalida);
-              nuevos.push({
-                id: String(siguienteId++),
-                empleadoNombre: nombre,
-                empleadoCedula: emp.cedula,
-                tipoAccion: 'retirar',
-                fechaSalida: fechaSalidaInput,
-                tarifaActual: normalizarTarifaApi(String(detail.TARIFA || '')),
-                tarifaNueva: '',
-                tipoPlan: '',
-                dependientes: [],
-              });
-            }
+        if (fechaSalidaInput) {
+          const claveSalida = `${emp.cedula}|retirar|${fechaSalidaInput}`;
+          if (!existentes.has(claveSalida)) {
+            existentes.add(claveSalida);
+            nuevos.push({
+              id: String(siguienteId++),
+              empleadoNombre: emp.nombre,
+              empleadoCedula: emp.cedula,
+              tipoAccion: 'retirar',
+              fechaSalida: fechaSalidaInput,
+              tarifaActual: emp.tarifa,
+              tarifaNueva: '',
+              tipoPlan: '',
+              dependientes: [],
+            });
           }
-        });
-      }
+        }
+      });
 
       if (nuevos.length === 0) {
         setUploadStatus({
@@ -1746,7 +1761,7 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
                                 </button>
                               </div>
                             ) : (
-                              <span className="text-xs text-slate-400">Sin acciones para esta fila consolidada</span>
+                              null
                             )
                           ) : (
                             <span className="text-xs text-slate-400">Gestionado por titular</span>
