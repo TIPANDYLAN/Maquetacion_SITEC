@@ -3,6 +3,7 @@ import { Play, CheckCircle2, AlertCircle, Upload } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import type { HumanaEmployeeData } from '../../services/humanaStorage';
 import { humanaApi } from '../../services/humanaApi';
+import { n8nGetWithBody } from '../../services/n8nApi';
 
 interface FileUploadMetrics {
     archivo: string;
@@ -1162,29 +1163,10 @@ const ProveedorHumanaView = () => {
 
                 const request = (async (): Promise<EmpleadoCentroCostoNormalizado> => {
                     try {
-                        const response = await fetch('/api/n8n/get-with-body', {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                            },
-                            body: JSON.stringify({
-                                endpoint: 'https://n8n.172.10.219.15.sslip.io/webhook/centrocostos/empleados',
-                                payload: { Cedula: cedulaLimpia },
-                                apiKey: '',
-                            }),
+                        const data = await n8nGetWithBody<unknown>({
+                            endpoint: 'https://n8n.172.10.219.15.sslip.io/webhook/centrocostos/empleados',
+                            payload: { Cedula: cedulaLimpia },
                         });
-
-                        if (!response.ok) {
-                            return {
-                                apellidos: '',
-                                nombres: '',
-                                centroCosto: '',
-                                fechaIngreso: '',
-                                fechaSalida: '--',
-                            };
-                        }
-
-                        const data = await response.json();
                         return normalizarEmpleadoCentroCostos(data);
                     } catch {
                         return {

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Plus, X } from 'lucide-react';
+import { getNominaEmployees } from '../../services/n8nApi';
 
 interface EmpleadoNominaApiItem {
   json?: {
@@ -79,18 +80,7 @@ const ExentosPagoSeguroView = () => {
   const cargarEmpleados = async () => {
     setLoadingEmpleados(true);
     try {
-      const response = await fetch('/api/n8n/webhook/lista/empleados/nomina', {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
-
-      if (!response.ok) {
-        throw new Error(`No se pudo cargar empleados: ${response.statusText}`);
-      }
-
-      const rawData = await response.json();
+      const rawData = await getNominaEmployees<EmpleadoNominaApiItem[]>();
       const empleadosApi = Array.isArray(rawData) ? rawData : [];
 
       const empleadosNormalizados = empleadosApi

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { Plus, X, AlertCircle } from 'lucide-react';
+import { Plus, X, AlertCircle, Eye } from 'lucide-react';
+import { getNominaCostCenters, getNominaEmployees } from '../../services/n8nApi';
 
 interface CentroCosto {
     IDCENTROCOSTO: string;
@@ -135,18 +136,7 @@ const DescuentosView = () => {
     const cargarEmpleados = async () => {
         setCargandoEmpleados(true);
         try {
-            const response = await fetch('/api/n8n/webhook/lista/empleados/nomina', {
-                method: 'GET',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-            });
-
-            if (!response.ok) {
-                throw new Error(`API error: ${response.statusText}`);
-            }
-
-            const data = await response.json();
+            const data = await getNominaEmployees<EmpleadoNominaApiItem[]>();
             const empleadosApi = Array.isArray(data) ? data : [];
             const empleadosNormalizados = empleadosApi
                 .map((item: EmpleadoNominaApiItem) => ({
@@ -168,40 +158,8 @@ const DescuentosView = () => {
     const cargarCentrosCosto = async () => {
         setCargandoCentros(true);
         try {
-            const response = await fetch('/api/n8n/webhook/centro/costo/nomina', {
-                method: 'GET',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-            });
-
-            if (!response.ok) {
-                throw new Error(`API error: ${response.statusText}`);
-            }
-
-            const data = await response.json();
-            const centrosFormateados = Array.isArray(data)
-                ? data
-                    .map((item: unknown) => {
-                        const row = (item ?? {}) as { json?: { IDCENTROCOSTO?: string; CENTROCOSTO?: string } };
-                        return {
-                            IDCENTROCOSTO: row.json?.IDCENTROCOSTO || '',
-                            CENTROCOSTO: row.json?.CENTROCOSTO || '',
-                        };
-                    })
-                    .filter((c: CentroCosto) => c.IDCENTROCOSTO && c.CENTROCOSTO)
-                : [];
-
-            const centrosUnicos = Array.from(
-                new Map(
-                    centrosFormateados.map((centro: CentroCosto) => [
-                        `${centro.IDCENTROCOSTO}|${centro.CENTROCOSTO}`,
-                        centro,
-                    ])
-                ).values()
-            );
-
-            setCentrosCosto(centrosUnicos);
+            const data = await getNominaCostCenters();
+            setCentrosCosto(data);
         } catch (error) {
             console.error('Error cargando centros de costo:', error);
             setCentrosCosto([]);
@@ -465,42 +423,45 @@ const DescuentosView = () => {
                     </div>
 
                     <div className="overflow-x-auto scrollbar-thin scrollbar-thumb-slate-300 scrollbar-track-slate-100">
-                        <table className="w-full text-left text-[11px]">
+                        <table className="w-full table-fixed text-left text-[11px]">
                             <thead className="bg-slate-50 text-slate-400 uppercase font-bold tracking-wider border-b border-slate-200 sticky top-0">
                                 <tr>
-                                    <th className="px-4 py-3 w-12 text-center">ID</th>
-                                    <th className="px-4 py-3 min-w-[120px]">F. Registro</th>
-                                    <th className="px-4 py-3 min-w-[180px]">Nombre</th>
-                                    <th className="px-4 py-3 min-w-[220px]">Observación</th>
-                                    <th className="px-4 py-3 min-w-[150px]">Tipo</th>
-                                    <th className="px-4 py-3 min-w-[120px]">Recurrencia</th>
-                                    <th className="px-4 py-3 min-w-[140px]">Estado</th>
-                                    <th className="px-4 py-3 min-w-[160px] text-center">Acción</th>
+                                    <th className="px-3 py-2 w-12 text-center">ID</th>
+                                    <th className="px-3 py-2 w-[120px]">F. Registro</th>
+                                    <th className="px-3 py-2 w-[190px]">Nombre</th>
+                                    <th className="px-3 py-2 w-[240px]">Observación</th>
+                                    <th className="px-3 py-2 w-[210px]">Tipo</th>
+                                    <th className="px-3 py-2 w-[95px] text-center">Recurrencia</th>
+                                    <th className="px-3 py-2 w-[130px] text-center">Estado</th>
+                                    <th className="px-3 py-2 w-[80px] text-center">Detalle</th>
+                                    <th className="px-3 py-2 w-[130px] text-center">Acción</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {cargandoDescuentos ? (
                                     <tr>
-                                        <td colSpan={8} className="px-6 py-8 text-center text-slate-400">
+                                        <td colSpan={9} className="px-6 py-8 text-center text-slate-400">
                                             Cargando descuentos...
                                         </td>
                                     </tr>
                                 ) : descuentosFiltrados.length === 0 ? (
                                     <tr>
-                                        <td colSpan={8} className="px-6 py-8 text-center text-slate-400">
+                                        <td colSpan={9} className="px-6 py-8 text-center text-slate-400">
                                             No hay descuentos registrados aún
                                         </td>
                                     </tr>
                                 ) : (
                                     descuentosFiltrados.map((item) => (
                                         <tr key={item.id} className="border-b border-slate-100 hover:bg-slate-50">
-                                            <td className="px-4 py-3 text-slate-700 text-center">{item.id}</td>
-                                            <td className="px-4 py-3 text-slate-600">{formatearFecha(item.fecha_creacion)}</td>
-                                            <td className="px-4 py-3 text-slate-700 font-medium">{item.nombre}</td>
-                                            <td className="px-4 py-3 text-slate-600">{item.observacion || '-'}</td>
-                                            <td className="px-4 py-3 text-slate-600">Incidente caja chica (${formatearValor(item.valor)})</td>
-                                            <td className="px-4 py-3 text-slate-600 text-center">{item.recurrencia}</td>
-                                            <td className="px-4 py-3">
+                                            <td className="px-3 py-2 text-slate-700 text-center">{item.id}</td>
+                                            <td className="px-3 py-2 text-slate-600 whitespace-nowrap">{formatearFecha(item.fecha_creacion)}</td>
+                                            <td className="px-3 py-2 text-slate-700 font-medium truncate" title={item.nombre}>{item.nombre}</td>
+                                            <td className="px-3 py-2 text-slate-600 truncate" title={item.observacion || '-'}>{item.observacion || '-'}</td>
+                                            <td className="px-3 py-2 text-slate-600 truncate" title={`Incidente caja chica ($${formatearValor(item.valor)})`}>
+                                                Incidente caja chica (${formatearValor(item.valor)})
+                                            </td>
+                                            <td className="px-3 py-2 text-slate-600 text-center">{item.recurrencia}</td>
+                                            <td className="px-3 py-2 text-center">
                                                 <span className={`inline-flex items-center px-2 py-1 rounded-full text-[10px] font-semibold ${
                                                     item.estado === 'certificado'
                                                         ? 'bg-emerald-100 text-emerald-700'
@@ -511,7 +472,17 @@ const DescuentosView = () => {
                                                     {formatearEstado(item.estado)}
                                                 </span>
                                             </td>
-                                            <td className="px-4 py-3 text-center">
+                                            <td className="px-3 py-2 text-center">
+                                                <button
+                                                    type="button"
+                                                    className="inline-flex items-center justify-center p-2 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 transition"
+                                                    aria-label="Ver detalle"
+                                                    title="Ver detalle"
+                                                >
+                                                    <Eye size={14} />
+                                                </button>
+                                            </td>
+                                            <td className="px-3 py-2 text-center">
                                                 <button
                                                     onClick={() => void handleAprobarDescuento(item.id)}
                                                     disabled={item.estado === 'certificado' || aprobandoDescuentoId === item.id}

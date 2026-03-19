@@ -2,6 +2,7 @@ import { useCallback, useState, useEffect } from 'react';
 import { Plus, Trash2, Send, CheckCircle2, AlertCircle, Edit2, Download } from 'lucide-react';
 import ExcelJS from 'exceljs';
 import { type HumanaEmployeeData } from '../../services/humanaStorage';
+import { getNominaEmployees, N8N_API_CATALOG, n8nGetWithBody } from '../../services/n8nApi';
 
 interface MovimientosHumanaViewProps {
   onUnsavedChangesChange: (hasUnsavedChanges: boolean) => void;
@@ -26,6 +27,8 @@ interface EmpleadoCentroCostosApi {
   APELLIDOS?: string;
   INGRESO?: string;
   SALIDA?: string;
+  FechaIngreso?: string;
+  FechaSalida?: string;
   TARIFA?: string;
   PLAN?: string;
   TIPO_PLAN?: string;
@@ -197,18 +200,7 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
   useEffect(() => {
     const cargarEmpleados = async () => {
       try {
-        const response = await fetch('/api/n8n/webhook/lista/empleados/nomina', {
-          method: 'GET',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-        });
-
-        if (!response.ok) {
-          throw new Error(`API error: ${response.statusText}`);
-        }
-
-        const data = await response.json();
+        const data = await getNominaEmployees<EmpleadoNominaApiItem[]>();
         const empleadosApi = Array.isArray(data) ? data : [];
         const empleadosNormalizados = empleadosApi
           .map(mapearEmpleadoDesdeApi)
@@ -277,23 +269,10 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
   const obtenerFechaDelEmpleado = async (cedula: string, tipoAccion: 'retirar' | 'ingresar') => {
     try {
       console.log(`Consultando API para cédula: ${cedula}`);
-      const response = await fetch('/api/n8n/get-with-body', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          endpoint: 'https://n8n.172.10.219.15.sslip.io/webhook/centrocostos/empleados',
-          payload: { Cedula: cedula },
-          apiKey: '',
-        }),
+      const data = await n8nGetWithBody<EmpleadoCentroCostosApi>({
+        endpoint: 'https://n8n.172.10.219.15.sslip.io/webhook/centrocostos/empleados',
+        payload: { Cedula: cedula },
       });
-
-      if (!response.ok) {
-        throw new Error(`API error: ${response.statusText}`);
-      }
-
-      const data = await response.json();
       console.log('Respuesta de API:', data);
 
       // Convertir fecha de formato DD-MM-YYYY a YYYY-MM-DD
@@ -319,23 +298,10 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
 
   const obtenerDatosEmpleadoCentroCostos = async (cedula: string) => {
     try {
-      const response = await fetch('/api/n8n/get-with-body', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          endpoint: 'https://n8n.172.10.219.15.sslip.io/webhook/centrocostos/empleados',
-          payload: { Cedula: cedula },
-          apiKey: '',
-        }),
+      const data = await n8nGetWithBody<Record<string, unknown>>({
+        endpoint: 'https://n8n.172.10.219.15.sslip.io/webhook/centrocostos/empleados',
+        payload: { Cedula: cedula },
       });
-
-      if (!response.ok) {
-        throw new Error(`API error: ${response.statusText}`);
-      }
-
-      const data = await response.json();
       const tarifa = normalizarTarifaApi(
         String(data?.TARIFA || data?.TARIFA_ACTUAL || data?.TIPO_TARIFA || '')
       );
@@ -412,31 +378,20 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
 
     setCargandoFamiliares(true);
     try {
-      const response = await fetch('/api/n8n/get-with-body', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          endpoint: 'https://n8n.172.10.219.15.sslip.io/webhook/datos/humana',
-          payload: { Cedula: cedula },
-          apiKey: '',
-        }),
+      const data = await n8nGetWithBody<{ familiares?: unknown[] }>({
+        endpoint: N8N_API_CATALOG.humanaDatos,
+        payload: { Cedula: cedula },
       });
-
-      if (!response.ok) {
-        throw new Error(`API error: ${response.statusText}`);
-      }
-
-      const data = await response.json();
       const familiares = Array.isArray(data?.familiares) ? data.familiares : [];
 
       const normalizados: FamiliarDisponible[] = familiares.map((f: unknown) => {
         const familiar = (f ?? {}) as Record<string, unknown>;
+        const generoRaw = String(familiar.SEXO_FAM || '').toUpperCase();
+        const genero: FamiliarDisponible['genero'] = generoRaw === 'M' ? 'M' : generoRaw === 'F' ? 'F' : '';
         return {
           nombre: String(familiar.NOMBRE_FAM || '').trim(),
           cedula: String(familiar.CEDULA_FAM || familiar.CEDULA || familiar.IDENTIFICACION_FAM || familiar.IDENTIFICACION || '').trim(),
-          genero: (String(familiar.SEXO_FAM || '').toUpperCase() === 'M' ? 'M' : String(familiar.SEXO_FAM || '').toUpperCase() === 'F' ? 'F' : ''),
+          genero,
           fechaNacimiento: normalizarFechaISOaInput(String(familiar.NACIMIENTO_FAM || '')),
           parentesco: mapearParentesco(String(familiar.PARENTESCO || '')),
         };
@@ -521,18 +476,7 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
     try {
       const { inicio, fin } = obtenerRangoMovimientosVigente();
 
-      const response = await fetch('/api/n8n/webhook/lista/empleados/nomina', {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
-
-      if (!response.ok) {
-        throw new Error(`No se pudo consultar lista de empleados (${response.status})`);
-      }
-
-      const data = await response.json();
+      const data = await getNominaEmployees<EmpleadoNominaApiItem[]>();
       const empleadosApi = (Array.isArray(data) ? data : []) as EmpleadoNominaApiItem[];
       const empleados = empleadosApi
         .map((item) => ({
@@ -554,19 +498,10 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
         const detallesLote = await Promise.all(
           lote.map(async (emp) => {
             try {
-              const detailResponse = await fetch('/api/n8n/get-with-body', {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                  endpoint: 'https://n8n.172.10.219.15.sslip.io/webhook/centrocostos/empleados',
-                  payload: { Cedula: emp.cedula },
-                  apiKey: '',
-                }),
+              const detail = await n8nGetWithBody<EmpleadoCentroCostosApi>({
+                endpoint: 'https://n8n.172.10.219.15.sslip.io/webhook/centrocostos/empleados',
+                payload: { Cedula: emp.cedula },
               });
-              if (!detailResponse.ok) return null;
-              const detail = await detailResponse.json() as EmpleadoCentroCostosApi;
               return { emp, detail };
             } catch {
               return null;

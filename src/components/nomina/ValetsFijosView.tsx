@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Eye } from 'lucide-react';
+import { getNominaCostCenters, getNominaEmployees } from '../../services/n8nApi';
 
 type SeccionValets = 'horario_fijo' | 'gestionar_valet';
 type DiaLaboralKey = 'lunes' | 'martes' | 'miercoles' | 'jueves' | 'viernes' | 'sabado' | 'domingo';
@@ -359,18 +360,7 @@ const ValetsFijosView = () => {
   const cargarEmpleados = async () => {
     setLoadingEmpleados(true);
     try {
-      const response = await fetch('/api/n8n/webhook/lista/empleados/nomina', {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
-
-      if (!response.ok) {
-        throw new Error(`No se pudo cargar empleados: ${response.statusText}`);
-      }
-
-      const rawData = await response.json();
+      const rawData = await getNominaEmployees<EmpleadoNominaApiItem[]>();
       const empleadosApi = Array.isArray(rawData) ? rawData : [];
 
       const empleadosNormalizados = empleadosApi
@@ -403,40 +393,8 @@ const ValetsFijosView = () => {
   const cargarCentrosCosto = async () => {
     setLoadingCentros(true);
     try {
-      const response = await fetch('/api/n8n/webhook/centro/costo/nomina', {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
-
-      if (!response.ok) {
-        throw new Error(`No se pudo cargar centros de costo: ${response.statusText}`);
-      }
-
-      const data = await response.json();
-      const centrosFormateados = Array.isArray(data)
-        ? data
-            .map((item: unknown) => {
-              const row = (item ?? {}) as { json?: { IDCENTROCOSTO?: string; CENTROCOSTO?: string } };
-              return {
-                IDCENTROCOSTO: String(row.json?.IDCENTROCOSTO || '').trim(),
-                CENTROCOSTO: String(row.json?.CENTROCOSTO || '').trim(),
-              };
-            })
-            .filter((c: CentroCosto) => c.IDCENTROCOSTO && c.CENTROCOSTO)
-        : [];
-
-      const unicos = Array.from(
-        new Map(
-          centrosFormateados.map((centro: CentroCosto) => [
-            `${centro.IDCENTROCOSTO}|${centro.CENTROCOSTO}`,
-            centro,
-          ]),
-        ).values(),
-      );
-
-      setCentrosCosto(unicos);
+      const data = await getNominaCostCenters();
+      setCentrosCosto(data);
     } catch (error) {
       console.error('Error cargando centros de costo para valets fijos:', error);
       setCentrosCosto([]);
