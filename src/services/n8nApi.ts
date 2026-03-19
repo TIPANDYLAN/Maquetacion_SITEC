@@ -1,9 +1,11 @@
 export const N8N_API_CATALOG = {
-  nominaEmployees: '/api/n8n/webhook/lista/empleados/nomina',
+  nominaEmployees: '/api/n8n/webhook/lista/empleados/nomina/entsal/test',
   nominaCostCenters: '/api/n8n/webhook/centro/costo/nomina',
   humanaDatos: '/api/n8n/webhook/datos/humana',
   getWithBodyProxy: '/api/n8n/get-with-body',
 } as const;
+
+const N8N_DEFAULT_API_KEY = 'u37KhX9gYj2Ns5rPAWq4EtZcLVtMoF16';
 
 interface N8nNominaCostCenterRawItem {
   json?: {
@@ -24,6 +26,13 @@ const defaultJsonHeaders = {
   'Content-Type': 'application/json',
 };
 
+const buildHeaders = (apiKey?: string): Record<string, string> => {
+  const key = String(apiKey ?? N8N_DEFAULT_API_KEY).trim();
+  return key
+    ? { ...defaultJsonHeaders, 'x-api-key': key }
+    : { ...defaultJsonHeaders };
+};
+
 const parseErrorMessage = async (response: Response): Promise<string> => {
   const fallback = response.statusText || `HTTP ${response.status}`;
   try {
@@ -37,7 +46,7 @@ const parseErrorMessage = async (response: Response): Promise<string> => {
 export const getNominaEmployees = async <T = unknown>(): Promise<T> => {
   const response = await fetch(N8N_API_CATALOG.nominaEmployees, {
     method: 'GET',
-    headers: defaultJsonHeaders,
+    headers: buildHeaders(),
   });
 
   if (!response.ok) {
@@ -50,7 +59,7 @@ export const getNominaEmployees = async <T = unknown>(): Promise<T> => {
 export const getNominaCostCentersRaw = async <T = N8nNominaCostCenterRawItem[]>(): Promise<T> => {
   const response = await fetch(N8N_API_CATALOG.nominaCostCenters, {
     method: 'GET',
-    headers: defaultJsonHeaders,
+    headers: buildHeaders(),
   });
 
   if (!response.ok) {
@@ -84,11 +93,11 @@ interface N8nGetWithBodyInput {
 export const n8nGetWithBody = async <T = unknown>(input: N8nGetWithBodyInput): Promise<T> => {
   const response = await fetch(N8N_API_CATALOG.getWithBodyProxy, {
     method: 'POST',
-    headers: defaultJsonHeaders,
+    headers: buildHeaders(input.apiKey),
     body: JSON.stringify({
       endpoint: input.endpoint,
       payload: input.payload ?? {},
-      apiKey: input.apiKey ?? '',
+      apiKey: String(input.apiKey ?? N8N_DEFAULT_API_KEY).trim(),
     }),
   });
 

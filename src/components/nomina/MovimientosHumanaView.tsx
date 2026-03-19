@@ -148,7 +148,7 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
   const [modoModal, setModoModal] = useState<'crear' | 'editar'>('crear');
   const [movimientoEditandoId, setMovimientoEditandoId] = useState<string | null>(null);
   const [movimientoModal, setMovimientoModal] = useState<MovimientoRow>(crearMovimientoVacio('1'));
-  const [cargandoFechaApi, setCargandoFechaApi] = useState(false);
+  const [cargandoFechaApi] = useState(false);
   const [familiaresDisponibles, setFamiliaresDisponibles] = useState<FamiliarDisponible[]>([]);
   const [cargandoFamiliares, setCargandoFamiliares] = useState(false);
   const [familiaresSeleccionados, setFamiliaresSeleccionados] = useState<Record<string, string>>({});
@@ -264,36 +264,6 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
       edad--;
     }
     return edad;
-  };
-
-  const obtenerFechaDelEmpleado = async (cedula: string, tipoAccion: 'retirar' | 'ingresar') => {
-    try {
-      console.log(`Consultando API para cédula: ${cedula}`);
-      const data = await n8nGetWithBody<EmpleadoCentroCostosApi>({
-        endpoint: 'https://n8n.172.10.219.15.sslip.io/webhook/centrocostos/empleados',
-        payload: { Cedula: cedula },
-      });
-      console.log('Respuesta de API:', data);
-
-      // Convertir fecha de formato DD-MM-YYYY a YYYY-MM-DD
-      const convertirFecha = (fechaStr: string) => {
-        const [dia, mes, año] = fechaStr.split('-');
-        return `${año}-${mes}-${dia}`;
-      };
-
-      const fecha = tipoAccion === 'retirar'
-        ? (data.SALIDA || data.FechaSalida)
-        : (data.INGRESO || data.FechaIngreso);
-      if (!fecha) {
-        console.warn(`No se encontró ${tipoAccion === 'retirar' ? 'SALIDA/FechaSalida' : 'INGRESO/FechaIngreso'} en la API`);
-        return null;
-      }
-
-      return convertirFecha(fecha);
-    } catch (error) {
-      console.error(`Error al obtener fecha de la API:`, error);
-      return null;
-    }
   };
 
   const obtenerDatosEmpleadoCentroCostos = async (cedula: string) => {
@@ -444,38 +414,9 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
     return `${anio}-${mes}-${dia}`;
   };
 
-  const parseFechaDdMmYyyy = (fechaStr: string) => {
-    const valor = String(fechaStr || '').trim();
-    if (!valor) return null;
-    const partes = valor.split('-');
-    if (partes.length !== 3) return null;
-    const dia = Number(partes[0]);
-    const mes = Number(partes[1]);
-    const anio = Number(partes[2]);
-    if (!dia || !mes || !anio) return null;
-    const fecha = new Date(anio, mes - 1, dia);
-    if (Number.isNaN(fecha.getTime())) return null;
-    return fecha;
-  };
-
-  const obtenerRangoMovimientosVigente = () => {
-    const hoy = new Date();
-    const inicio = new Date(hoy.getFullYear(), hoy.getMonth() - 1, 20);
-    const fin = new Date(hoy.getFullYear(), hoy.getMonth(), 20);
-    return { inicio, fin };
-  };
-
-  const estaFechaEnRango = (fecha: Date | null, inicio: Date, fin: Date) => {
-    if (!fecha) return false;
-    const valor = fecha.getTime();
-    return valor >= inicio.getTime() && valor <= fin.getTime();
-  };
-
   const generarMovimientosDesdeApi = async () => {
     setGenerandoMovimientos(true);
     try {
-      const { inicio, fin } = obtenerRangoMovimientosVigente();
-
       const data = await getNominaEmployees<EmpleadoNominaApiItem[]>();
       const empleadosApi = (Array.isArray(data) ? data : []) as EmpleadoNominaApiItem[];
       const empleados = empleadosApi
@@ -515,12 +456,10 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
           const nombre = `${String(detail.APELLIDOS || '').trim()} ${String(detail.NOMBRES || '').trim()}`.trim() || emp.nombre;
           const fechaIngresoRaw = String(detail.INGRESO || '').trim();
           const fechaSalidaRaw = String(detail.SALIDA || '').trim();
+          const fechaIngresoInput = convertirFechaApiAInput(fechaIngresoRaw);
+          const fechaSalidaInput = convertirFechaApiAInput(fechaSalidaRaw);
 
-          const fechaIngreso = parseFechaDdMmYyyy(fechaIngresoRaw);
-          const fechaSalida = parseFechaDdMmYyyy(fechaSalidaRaw);
-
-          if (estaFechaEnRango(fechaIngreso, inicio, fin)) {
-            const fechaIngresoInput = convertirFechaApiAInput(fechaIngresoRaw);
+          if (fechaIngresoInput) {
             const claveIngreso = `${emp.cedula}|ingresar|${fechaIngresoInput}`;
             if (!existentes.has(claveIngreso)) {
               existentes.add(claveIngreso);
@@ -538,8 +477,7 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
             }
           }
 
-          if (estaFechaEnRango(fechaSalida, inicio, fin)) {
-            const fechaSalidaInput = convertirFechaApiAInput(fechaSalidaRaw);
+          if (fechaSalidaInput) {
             const claveSalida = `${emp.cedula}|retirar|${fechaSalidaInput}`;
             if (!existentes.has(claveSalida)) {
               existentes.add(claveSalida);
@@ -562,7 +500,7 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
       if (nuevos.length === 0) {
         setUploadStatus({
           type: 'error',
-          message: '⚠️ No se encontraron nuevos ingresos o exclusiones para el rango 20-20.',
+          message: '⚠️ No se encontraron nuevos ingresos o exclusiones en la información de la API.',
         });
         return;
       }
@@ -619,12 +557,6 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
     setMovimientos(movimientos.filter(m => m.id !== id));
   };
 
-  const obtenerPlanEmpleadoPorCedula = (cedula: string) => {
-    if (!cedula) return '';
-    const empleado = empleadosDisponibles.find((emp) => emp.cedula === cedula);
-    return empleado?.plan || '';
-  };
-
   const actualizarMovimientoModal = <K extends keyof MovimientoRow>(campo: K, valor: MovimientoRow[K]) => {
     if (modalError) setModalError('');
     setMovimientoModal(prev => {
@@ -650,42 +582,6 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
           if (prev.tarifaNueva === 'T+1' || prev.tarifaNueva === 'T+FAMILIAR') {
             void cargarFamiliaresDisponibles(empleado.cedula);
           }
-        }
-      }
-
-      if (campo === 'tipoAccion' && valor === 'retirar') {
-        updated.tarifaNueva = '';
-        updated.tipoPlan = '';
-        updated.dependientes = [];
-
-        // Obtener fecha del empleado de la API
-        if (prev.empleadoCedula) {
-          setCargandoFechaApi(true);
-          obtenerFechaDelEmpleado(prev.empleadoCedula, 'retirar').then(fecha => {
-            if (fecha) {
-              setMovimientoModal(m => ({ ...m, fechaSalida: fecha }));
-            }
-          }).finally(() => {
-            setCargandoFechaApi(false);
-          });
-        }
-      }
-
-      if (campo === 'tipoAccion' && valor === 'ingresar') {
-        updated.tarifaNueva = '';
-        updated.tipoPlan = obtenerPlanEmpleadoPorCedula(prev.empleadoCedula);
-        updated.dependientes = [];
-
-        // Obtener fecha del empleado de la API
-        if (prev.empleadoCedula) {
-          setCargandoFechaApi(true);
-          obtenerFechaDelEmpleado(prev.empleadoCedula, 'ingresar').then(fecha => {
-            if (fecha) {
-              setMovimientoModal(m => ({ ...m, fechaSalida: fecha }));
-            }
-          }).finally(() => {
-            setCargandoFechaApi(false);
-          });
         }
       }
 
@@ -1590,89 +1486,137 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
     }
   };
 
-  const filasResumen = movimientos.flatMap(movimiento => {
-    const esIngreso = movimiento.tipoAccion === 'ingresar';
-    const esRetiro = movimiento.tipoAccion === 'retirar' || movimiento.tipoAccion === 'eliminar_dependiente';
+  const titularesAgrupados = movimientos.reduce((acc, movimiento) => {
+    const key = String(movimiento.empleadoCedula || '').trim() || String(movimiento.id);
+    const existente = acc.get(key) || {
+      key: `titular-${key}`,
+      movimientoId: movimiento.id,
+      movimientoIds: new Set<string>(),
+      nombre: movimiento.empleadoNombre || '-',
+      cedula: movimiento.empleadoCedula || '-',
+      parentesco: 'TITULAR',
+      tipoPlan: '-',
+      tarifa: '-',
+      fechaIngreso: '-',
+      fechaExclusion: '-',
+      etiquetasMovimiento: new Set<string>(),
+      esTitular: true,
+      esSalida: false,
+    };
+
+    existente.movimientoIds.add(movimiento.id);
+
+    if (movimiento.tipoAccion === 'ingresar') {
+      existente.fechaIngreso = movimiento.fechaSalida || existente.fechaIngreso;
+      existente.etiquetasMovimiento.add('Ingresar');
+    } else if (movimiento.tipoAccion === 'retirar') {
+      existente.fechaExclusion = movimiento.fechaSalida || existente.fechaExclusion;
+      existente.etiquetasMovimiento.add('Retirar');
+      existente.esSalida = true;
+    } else if (movimiento.tipoAccion === 'eliminar_dependiente') {
+      existente.fechaExclusion = movimiento.fechaSalida || existente.fechaExclusion;
+      existente.etiquetasMovimiento.add('Eliminar dependiente');
+    } else if (movimiento.tipoAccion === 'cambiar_tarifa') {
+      existente.etiquetasMovimiento.add(
+        requiereRetiroDependienteCambioTarifa(movimiento)
+          ? 'Cambiar tarifa (Retirar dependiente)'
+          : 'Cambiar tarifa'
+      );
+    }
+
+    if (movimiento.tipoPlan) {
+      existente.tipoPlan = movimiento.tipoPlan;
+    }
+
+    if (movimiento.tarifaNueva) {
+      existente.tarifa = movimiento.tarifaNueva;
+    }
+
+    acc.set(key, existente);
+    return acc;
+  }, new Map<string, {
+    key: string;
+    movimientoId: string;
+    movimientoIds: Set<string>;
+    nombre: string;
+    cedula: string;
+    parentesco: string;
+    tipoPlan: string;
+    tarifa: string;
+    fechaIngreso: string;
+    fechaExclusion: string;
+    etiquetasMovimiento: Set<string>;
+    esTitular: boolean;
+    esSalida: boolean;
+  }>());
+
+  const filasTitularesConsolidadas = Array.from(titularesAgrupados.values()).map((fila) => ({
+    key: fila.key,
+    origen: 'movimiento' as const,
+    movimientoId: fila.movimientoId,
+    nombre: fila.nombre || '-',
+    cedula: fila.cedula || '-',
+    parentesco: fila.parentesco,
+    esSalida: fila.esSalida,
+    movimiento:
+      fila.etiquetasMovimiento.has('Retirar') && fila.fechaExclusion !== '-'
+        ? 'Retirar'
+        : (Array.from(fila.etiquetasMovimiento).join(' / ') || '-'),
+    tipoPlan: fila.tipoPlan || '-',
+    tarifa: fila.tarifa || '-',
+    fechaIngreso: fila.fechaIngreso || '-',
+    fechaExclusion: fila.fechaExclusion || '-',
+    esTitular: true,
+    permiteAcciones: !fila.esSalida && fila.movimientoIds.size === 1,
+  }));
+
+  const filasDependientes = movimientos.flatMap((movimiento) => {
     const esCambioRetiroDependiente = requiereRetiroDependienteCambioTarifa(movimiento);
 
-    const filas = [
-      {
-        key: `${movimiento.id}-titular`,
-        movimientoId: movimiento.id,
-        nombre: movimiento.empleadoNombre,
-        cedula: movimiento.empleadoCedula,
-        parentesco: 'TITULAR',
-        tipoAccion: movimiento.tipoAccion,
-        tipoPlan: movimiento.tipoPlan || '-',
-        tarifa: movimiento.tarifaNueva || '-',
-        fechaIngreso: esIngreso ? (movimiento.fechaSalida || '-') : '-',
-        fechaExclusion: esRetiro ? (movimiento.fechaSalida || '-') : '-',
-        esTitular: true,
-      },
-    ];
-
     if (movimiento.tipoAccion === 'eliminar_dependiente') {
-      movimiento.dependientes.forEach((dependiente) => {
-        filas.push({
-          key: `${movimiento.id}-dep-${dependiente.id}`,
-          movimientoId: movimiento.id,
-          nombre: `${dependiente.apellidos} ${dependiente.nombres}`.trim(),
-          cedula: dependiente.cedula || '-',
-          parentesco: dependiente.parentesco || 'SIN DEFINIR',
-          tipoAccion: movimiento.tipoAccion,
-          tipoPlan: '-',
-          tarifa: '-',
-          fechaIngreso: '-',
-          fechaExclusion: movimiento.fechaSalida || '-',
-          esTitular: false,
-        });
-      });
+      return movimiento.dependientes.map((dependiente) => ({
+        key: `${movimiento.id}-dep-${dependiente.id}`,
+        origen: 'movimiento' as const,
+        movimientoId: movimiento.id,
+        nombre: `${dependiente.apellidos} ${dependiente.nombres}`.trim() || '-',
+        cedula: dependiente.cedula || '-',
+        parentesco: dependiente.parentesco || 'SIN DEFINIR',
+        esSalida: false,
+        movimiento: 'Eliminar dependiente',
+        tipoPlan: '-',
+        tarifa: '-',
+        fechaIngreso: '-',
+        fechaExclusion: movimiento.fechaSalida || '-',
+        esTitular: false,
+        permiteAcciones: false,
+      }));
     }
 
     if (movimiento.tipoAccion === 'cambiar_tarifa') {
-      movimiento.dependientes.forEach((dependiente) => {
-        filas.push({
-          key: `${movimiento.id}-dep-${dependiente.id}`,
-          movimientoId: movimiento.id,
-          nombre: `${dependiente.apellidos} ${dependiente.nombres}`.trim(),
-          cedula: dependiente.cedula || '-',
-          parentesco: dependiente.parentesco || 'SIN DEFINIR',
-          tipoAccion: movimiento.tipoAccion,
-          tipoPlan: movimiento.tipoPlan || '-',
-          tarifa: movimiento.tarifaNueva || '-',
-          fechaIngreso: '-',
-          fechaExclusion: esCambioRetiroDependiente ? (movimiento.fechaSalida || '-') : '-',
-          esTitular: false,
-        });
-      });
+      return movimiento.dependientes.map((dependiente) => ({
+        key: `${movimiento.id}-dep-${dependiente.id}`,
+        origen: 'movimiento' as const,
+        movimientoId: movimiento.id,
+        nombre: `${dependiente.apellidos} ${dependiente.nombres}`.trim() || '-',
+        cedula: dependiente.cedula || '-',
+        parentesco: dependiente.parentesco || 'SIN DEFINIR',
+        esSalida: false,
+        movimiento: esCambioRetiroDependiente ? 'Cambiar tarifa (Retirar dependiente)' : 'Cambiar tarifa',
+        tipoPlan: movimiento.tipoPlan || '-',
+        tarifa: movimiento.tarifaNueva || '-',
+        fechaIngreso: '-',
+        fechaExclusion: esCambioRetiroDependiente ? (movimiento.fechaSalida || '-') : '-',
+        esTitular: false,
+        permiteAcciones: false,
+      }));
     }
 
-    return filas;
+    return [];
   });
 
   const filasConsolidadas = [
-    ...filasResumen.map((fila) => ({
-      key: fila.key,
-      origen: 'movimiento' as const,
-      movimientoId: fila.movimientoId,
-      nombre: fila.nombre || '-',
-      cedula: fila.cedula || '-',
-      parentesco: fila.parentesco,
-      movimiento: fila.tipoAccion === 'retirar'
-        ? 'Retirar'
-        : fila.tipoAccion === 'eliminar_dependiente'
-          ? 'Eliminar dependiente'
-        : fila.tipoAccion === 'ingresar'
-          ? 'Ingresar'
-          : fila.fechaExclusion !== '-'
-            ? 'Cambiar tarifa (Retirar dependiente)'
-            : 'Cambiar tarifa',
-      tipoPlan: fila.tipoPlan,
-      tarifa: fila.tarifa,
-      fechaIngreso: fila.fechaIngreso,
-      fechaExclusion: fila.fechaExclusion,
-      esTitular: fila.esTitular,
-    })),
+    ...filasTitularesConsolidadas,
+    ...filasDependientes,
   ];
 
   const opcionesTarifaNueva = [
@@ -1738,7 +1682,7 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
                   className="flex items-center gap-2 px-3 py-2 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors font-semibold text-sm"
                 >
                   <Plus size={16} />
-                  Nueva persona
+                  Cambiar Tarifa
                 </button>
               </div>
             </div>
@@ -1784,22 +1728,26 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
                         </td>
                         <td className="px-4 py-3">
                           {fila.esTitular ? (
-                            <div className="flex gap-2">
-                              <button
-                                onClick={() => abrirModalEdicion(fila.movimientoId)}
-                                className="p-2 text-blue-500 hover:bg-blue-50 rounded-lg transition-colors"
-                                title="Editar"
-                              >
-                                <Edit2 size={16} />
-                              </button>
-                              <button
-                                onClick={() => eliminarMovimiento(fila.movimientoId)}
-                                className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                                title="Eliminar"
-                              >
-                                <Trash2 size={16} />
-                              </button>
-                            </div>
+                            fila.permiteAcciones ? (
+                              <div className="flex gap-2">
+                                <button
+                                  onClick={() => abrirModalEdicion(fila.movimientoId)}
+                                  className="p-2 text-blue-500 hover:bg-blue-50 rounded-lg transition-colors"
+                                  title="Editar"
+                                >
+                                  <Edit2 size={16} />
+                                </button>
+                                <button
+                                  onClick={() => eliminarMovimiento(fila.movimientoId)}
+                                  className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                                  title="Eliminar"
+                                >
+                                  <Trash2 size={16} />
+                                </button>
+                              </div>
+                            ) : (
+                              <span className="text-xs text-slate-400">Sin acciones para esta fila consolidada</span>
+                            )
                           ) : (
                             <span className="text-xs text-slate-400">Gestionado por titular</span>
                           )}
@@ -1916,26 +1864,11 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white disabled:bg-slate-100 disabled:cursor-not-allowed"
                   >
                     <option value="">Seleccionar...</option>
-                    <option value="ingresar">Ingresar Empleado</option>
-                    <option value="retirar">Retirar Empleado</option>
                     <option value="eliminar_dependiente">Eliminar Dependiente</option>
                     <option value="cambiar_tarifa">Cambiar Tarifa</option>
                   </select>
                 </div>
               </div>
-
-              {(movimientoModal.tipoAccion === 'retirar' || movimientoModal.tipoAccion === 'ingresar') && (
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-2">
-                    {movimientoModal.tipoAccion === 'ingresar' ? 'Fecha de Ingreso' : 'Fecha de Salida'}
-                  </label>
-                  <div className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-slate-50 text-slate-600 flex items-center">
-                    {cargandoFechaApi
-                      ? 'Cargando fecha...'
-                      : (movimientoModal.fechaSalida || 'Sin fecha')}
-                  </div>
-                </div>
-              )}
 
               {movimientoModal.tipoAccion === 'eliminar_dependiente' && (
                 <div className="space-y-4">
@@ -1980,7 +1913,7 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
                 </div>
               )}
 
-              {(movimientoModal.tipoAccion === 'ingresar' || movimientoModal.tipoAccion === 'cambiar_tarifa') && (
+              {movimientoModal.tipoAccion === 'cambiar_tarifa' && (
                 <div className="space-y-4">
                   <div>
                     <label className="block text-xs font-semibold text-slate-600 mb-2">Tipo de Plan *</label>
