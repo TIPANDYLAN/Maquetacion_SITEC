@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Plus, X, AlertCircle, Eye } from 'lucide-react';
+import { Plus, X, AlertCircle, Eye, Download } from 'lucide-react';
 import { getNominaCostCenters, getNominaEmployeesActive } from '../../services/n8nApi';
 import { dbApi } from '../../services/dbApi';
 import type {
@@ -57,6 +57,8 @@ const DescuentosView = () => {
     const [cargandoCentros, setCargandoCentros] = useState(false);
     const [guardandoDescuento, setGuardandoDescuento] = useState(false);
     const [aprobandoDescuentoId, setAprobandoDescuentoId] = useState<number | null>(null);
+    const [detalleModalAbierto, setDetalleModalAbierto] = useState(false);
+    const [descuentoSeleccionado, setDescuentoSeleccionado] = useState<DescuentoRow | null>(null);
     const [formulario, setFormulario] = useState<FormularioDescuento>({
         tipoDescuento: '',
         usuario: '',
@@ -308,6 +310,19 @@ const DescuentosView = () => {
         return fecha.toLocaleDateString('es-EC');
     };
 
+    const formatearFechaHora = (fechaIso: string) => {
+        if (!fechaIso) return '-';
+        const fecha = new Date(fechaIso);
+        if (Number.isNaN(fecha.getTime())) return '-';
+        return fecha.toLocaleString('es-EC', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+        });
+    };
+
     const formatearValor = (valor: number) => {
         return new Intl.NumberFormat('es-EC', {
             minimumFractionDigits: 2,
@@ -319,6 +334,19 @@ const DescuentosView = () => {
         const valor = estado.trim().toLowerCase();
         if (valor === 'certificado') return 'aprobado';
         return estado;
+    };
+
+    const abrirDetalleDescuento = (descuento: DescuentoRow) => {
+        if (descuento.estado !== 'certificado') {
+            return;
+        }
+        setDescuentoSeleccionado(descuento);
+        setDetalleModalAbierto(true);
+    };
+
+    const cerrarDetalleDescuento = () => {
+        setDetalleModalAbierto(false);
+        setDescuentoSeleccionado(null);
     };
 
     return (
@@ -424,9 +452,15 @@ const DescuentosView = () => {
                                             <td className="px-3 py-2 text-center">
                                                 <button
                                                     type="button"
-                                                    className="inline-flex items-center justify-center p-2 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 transition"
+                                                    onClick={() => abrirDetalleDescuento(item)}
+                                                    disabled={item.estado !== 'certificado'}
+                                                    className={`inline-flex items-center justify-center p-2 rounded-lg border transition ${
+                                                        item.estado === 'certificado'
+                                                            ? 'border-slate-200 text-slate-600 hover:bg-slate-100'
+                                                            : 'border-slate-100 text-slate-300 bg-slate-50 cursor-not-allowed'
+                                                    }`}
                                                     aria-label="Ver detalle"
-                                                    title="Ver detalle"
+                                                    title={item.estado === 'certificado' ? 'Ver detalle' : 'Disponible solo cuando está aprobado'}
                                                 >
                                                     <Eye size={14} />
                                                 </button>
@@ -503,6 +537,69 @@ const DescuentosView = () => {
                                 className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold transition"
                             >
                                 Continuar
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {detalleModalAbierto && descuentoSeleccionado && (
+                <div className="fixed inset-0 z-50 bg-slate-900/45 flex items-center justify-center p-4">
+                    <div className="w-full max-w-2xl bg-white rounded-2xl border border-slate-200 shadow-xl p-6 max-h-[90vh] overflow-y-auto">
+                        <div className="flex justify-between items-start mb-5">
+                            <div>
+                                <h3 className="text-lg font-bold text-slate-800">Detalle de descuento</h3>
+                                <p className="text-sm text-slate-500">Información completa del registro seleccionado</p>
+                            </div>
+                            <button
+                                onClick={cerrarDetalleDescuento}
+                                className="text-slate-400 hover:text-slate-600 transition"
+                                aria-label="Cerrar detalle"
+                            >
+                                <X size={24} />
+                            </button>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-[auto_1fr] gap-4 items-start">
+                            <div className="sm:justify-self-start">
+                                <div className="pr-4 border-r border-slate-200 space-y-1 w-fit">
+                                <p className="text-[10px] uppercase tracking-wide text-slate-500">Periodo</p>
+                                <p className="text-xs font-medium text-slate-700">{descuentoSeleccionado.periodo || '-'}</p>
+                                <p className="text-[10px] uppercase tracking-wide text-slate-500 pt-1">Fecha de registro</p>
+                                <p className="text-xs font-medium text-slate-700">{formatearFechaHora(descuentoSeleccionado.fecha_creacion)}</p>
+                                <p className="text-[10px] uppercase tracking-wide text-slate-500 pt-1">Recurrencia</p>
+                                <p className="text-xs font-medium text-slate-700">{descuentoSeleccionado.recurrencia}</p>
+                                </div>
+                            </div>
+
+                            <div className="p-1 space-y-2 text-left">
+                                <p className="text-[11px] uppercase tracking-wide text-slate-500">Nombre</p>
+                                <p className="text-base font-semibold text-slate-800">{descuentoSeleccionado.nombre || '-'}</p>
+                                <p className="text-[11px] uppercase tracking-wide text-slate-500 pt-1">Valor</p>
+                                <p className="text-base font-semibold text-slate-800">${formatearValor(descuentoSeleccionado.valor)}</p>
+                                <p className="text-[11px] uppercase tracking-wide text-slate-500 pt-1">Centro de costo</p>
+                                <p className="text-base font-semibold text-slate-800">{descuentoSeleccionado.centro_costo || '-'}</p>
+                            </div>
+                        </div>
+
+                        <div className="mt-4 p-1">
+                            <p className="text-xs uppercase tracking-wide text-slate-500 mb-2">Observación</p>
+                            <p className="text-lg font-semibold text-slate-800 whitespace-pre-wrap">{descuentoSeleccionado.observacion || '-'}</p>
+                        </div>
+
+                        <div className="flex justify-end gap-3 mt-6">
+                            <button
+                                onClick={cerrarDetalleDescuento}
+                                className="px-5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-sm font-semibold transition"
+                            >
+                                Cerrar
+                            </button>
+                            <button
+                                type="button"
+                                className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold transition inline-flex items-center gap-2"
+                            >
+                                <Download size={16} />
+                                Descargar archivo
                             </button>
                         </div>
                     </div>

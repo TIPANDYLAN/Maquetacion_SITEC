@@ -7,6 +7,10 @@ Seccion para funcionalidades de mantenimiento operativo.
 - No hay componentes dedicados en esta carpeta.
 - En `App.tsx` las opciones del menu de mantenimiento renderizan `Placeholder`.
 
+## Nota
+
+- El modulo sigue reservado para implementacion futura; no tiene integraciones activas a backend por ahora.
+
 ## Opciones de menu existentes
 
 - mant_plantilla

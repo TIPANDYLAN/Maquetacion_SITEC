@@ -3,7 +3,9 @@
 Servicio API para:
 
 - Consultas y carga de periodos Humana.
-- Soporte de incidencias/descuentos de nomina.
+- Gestion de descuentos de nomina.
+- Gestion de exentos de pago de seguro.
+- Gestion de valets (empleados, horarios y adicionales).
 
 ## Requisitos
 
@@ -39,9 +41,10 @@ Scripts utiles en `backend/sql/`:
 
 - `create_humana_period_data.sql`
 - `create_descuentos_nomina_table.sql`
+- `create_humana_exentos_pago_seguro_table.sql`
 - `alter_medic_secure_humana_to_8_decimals.sql`
 
-El backend tambien valida/crea estructura necesaria al iniciar para la tabla de incidencias de descuentos.
+El backend valida/crea estructura necesaria al iniciar para tablas de descuentos, exentos y valets.
 
 ## Endpoints principales
 
@@ -49,9 +52,21 @@ El backend tambien valida/crea estructura necesaria al iniciar para la tabla de 
 - `GET /api/humana/periods`
 - `GET /api/humana/periods/:anio/:mes`
 - `GET /api/humana/employee-latest?empleado=...`
-- Endpoints de descuentos de nomina (ver implementacion en `server.js`)
+- `GET /api/descuentos/incidentes-caja-chica`
+- `POST /api/descuentos/incidentes-caja-chica`
+- `PATCH /api/descuentos/incidentes-caja-chica/:id/estado`
+- `GET /api/descuentos/exentos-pago-seguro`
+- `POST /api/descuentos/exentos-pago-seguro`
+- `GET /api/valets/empleados`
+- `POST /api/valets/empleados`
+- `DELETE /api/valets/empleados`
+- `GET /api/valets/horarios`
+- `POST /api/valets/horarios`
+- `GET /api/valets/adicionales`
+- `GET /api/valets/adicionales/lista`
+- `POST /api/valets/adicionales`
 
 ## Notas de integracion
 
-- El frontend consume este backend para operaciones de Humana y gestion de descuentos.
-- Si no hay backend disponible, partes del frontend operan con datos mock.
+- El frontend consume este backend mediante `src/services/dbApi.ts`.
+- En desarrollo se recomienda usar el proxy de Vite para rutas `/api/humana`, `/api/descuentos` y `/api/valets`.

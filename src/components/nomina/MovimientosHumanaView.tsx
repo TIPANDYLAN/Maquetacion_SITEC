@@ -4,7 +4,7 @@ import ExcelJS from 'exceljs';
 import type { HumanaEmployeeData } from '../../types/humana';
 import type { EmpleadoNominaApiItem, EmpleadoNominaApiPayload } from '../../types/nomina';
 import { dbApi } from '../../services/dbApi';
-import { getNominaEmployees, getNominaEmployeesActive, N8N_API_CATALOG, n8nGetWithBody, n8nPostDirect } from '../../services/n8nApi';
+import { getNominaEmployees, getNominaEmployeesActive, N8N_API_CATALOG, n8nPostDirect } from '../../services/n8nApi';
 
 interface MovimientosHumanaViewProps {
   onUnsavedChangesChange: (hasUnsavedChanges: boolean) => void;
@@ -37,6 +37,7 @@ interface MovimientoRow {
   empleadoNombre: string;
   empleadoCedula: string;
   tipoAccion: 'retirar' | 'ingresar' | 'cambiar_tarifa' | 'eliminar_dependiente' | '';
+  fechaIngreso?: string;
   fechaSalida: string;
   tarifaActual: string;
   tarifaNueva: string;
@@ -51,6 +52,28 @@ interface FamiliarDisponible {
   fechaNacimiento: string;
   parentesco: 'CONYUGE' | 'HIJO/HIJA' | 'PADRE/MADRE' | '';
 }
+
+interface DatosExcelEmpleado {
+  tarifa: string;
+  plan: string;
+  fechaNacimiento: string;
+  genero: string;
+  estadoCivil: string;
+  banco: string;
+  numeroCuenta: string;
+  correo: string;
+}
+
+const DATOS_EXCEL_EMPLEADO_VACIO: DatosExcelEmpleado = {
+  tarifa: '',
+  plan: '',
+  fechaNacimiento: '',
+  genero: '',
+  estadoCivil: '',
+  banco: '',
+  numeroCuenta: '',
+  correo: '',
+};
 
 const crearDependienteVacio = (id: string): DependienteForm => ({
   id,
@@ -71,6 +94,7 @@ const crearMovimientoVacio = (id: string): MovimientoRow => ({
   empleadoNombre: '',
   empleadoCedula: '',
   tipoAccion: '',
+  fechaIngreso: '',
   fechaSalida: '',
   tarifaActual: '',
   tarifaNueva: '',
@@ -129,6 +153,7 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
   const [modoModal, setModoModal] = useState<'crear' | 'editar'>('crear');
   const [movimientoEditandoId, setMovimientoEditandoId] = useState<string | null>(null);
   const [movimientoModal, setMovimientoModal] = useState<MovimientoRow>(crearMovimientoVacio('1'));
+  const [datosActivosPorCedula, setDatosActivosPorCedula] = useState<Record<string, DatosExcelEmpleado>>({});
   const [cargandoFechaApi] = useState(false);
   const [familiaresDisponibles, setFamiliaresDisponibles] = useState<FamiliarDisponible[]>([]);
   const [cargandoFamiliares, setCargandoFamiliares] = useState(false);
@@ -183,8 +208,29 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
       try {
         const data = await getNominaEmployeesActive<EmpleadoNominaApiItem[]>();
         const empleadosApi = Array.isArray(data) ? data : [];
+        const datosPorCedula: Record<string, DatosExcelEmpleado> = {};
         const empleadosNormalizados = empleadosApi
-          .map(mapearEmpleadoDesdeApi)
+          .map((item: EmpleadoNominaApiItem) => {
+            const payload = obtenerPayloadEmpleadoNomina(item);
+            const raw = (item?.json ?? item ?? {}) as Record<string, unknown>;
+            const cedula = String(payload.CEDULA || '').trim();
+
+            if (cedula) {
+              const actual = datosPorCedula[cedula] || DATOS_EXCEL_EMPLEADO_VACIO;
+              datosPorCedula[cedula] = {
+                tarifa: actual.tarifa || normalizarTarifaApi(String(payload.TARIFA || raw.TARIFA_ACTUAL || raw.TIPO_TARIFA || '')),
+                plan: actual.plan || normalizarPlanApi(String(payload.PLAN || payload.TIPO_PLAN || payload.PLAN_CONTRATADO || payload.PLAN_CONTRATADO_SALUD || '')),
+                fechaNacimiento: actual.fechaNacimiento || String(raw.FEC_NAC || raw.FECHA_NACIMIENTO || '').trim(),
+                genero: actual.genero || String(raw.SEXO || '').trim().toUpperCase(),
+                estadoCivil: actual.estadoCivil || String(raw.EST_CIVIL || raw.ESTADO_CIVIL || '').trim().toUpperCase(),
+                banco: actual.banco || String(raw.BANCO || '').trim(),
+                numeroCuenta: actual.numeroCuenta || String(raw.CUENTA_BNCO || raw.NUMERO_CUENTA || '').trim(),
+                correo: actual.correo || String(raw.CORREO || '').trim(),
+              };
+            }
+
+            return mapearEmpleadoDesdeApi(item);
+          })
           .filter((emp: HumanaEmployeeData) => emp.cedula && (emp.apellidos || emp.nombres));
 
         // Deduplicar por cédula para evitar que el mismo empleado aparezca varias veces en el selector
@@ -200,9 +246,11 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
           );
 
         setEmpleadosDisponibles(empleadosSinDuplicados);
+        setDatosActivosPorCedula(datosPorCedula);
       } catch (error) {
         console.error('Error cargando empleados desde API de nomina:', error);
         setEmpleadosDisponibles([]);
+        setDatosActivosPorCedula({});
       }
     };
 
@@ -245,44 +293,6 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
       edad--;
     }
     return edad;
-  };
-
-  const obtenerDatosEmpleadoCentroCostos = async (cedula: string) => {
-    try {
-      const data = await n8nGetWithBody<Record<string, unknown>>({
-        endpoint: N8N_API_CATALOG.detalleEmpleadoCentroCostos,
-        payload: { Cedula: cedula },
-      });
-      const tarifa = normalizarTarifaApi(
-        String(data?.TARIFA || data?.TARIFA_ACTUAL || data?.TIPO_TARIFA || '')
-      );
-      const plan = normalizarPlanApi(
-        String(data?.PLAN || data?.TIPO_PLAN || data?.PLAN_CONTRATADO || data?.PLAN_CONTRATADO_SALUD || '')
-      );
-
-      return {
-        tarifa,
-        plan,
-        fechaNacimiento: String(data?.FEC_NAC || data?.FECHA_NACIMIENTO || '').trim(),
-        genero: String(data?.SEXO || '').trim().toUpperCase(),
-        estadoCivil: String(data?.EST_CIVIL || data?.ESTADO_CIVIL || '').trim().toUpperCase(),
-        banco: String(data?.BANCO || '').trim(),
-        numeroCuenta: String(data?.CUENTA_BNCO || data?.NUMERO_CUENTA || '').trim(),
-        correo: String(data?.CORREO || '').trim(),
-      };
-    } catch (error) {
-      console.error('Error obteniendo datos del empleado desde centrocostos:', error);
-      return {
-        tarifa: '',
-        plan: '',
-        fechaNacimiento: '',
-        genero: '',
-        estadoCivil: '',
-        banco: '',
-        numeroCuenta: '',
-        correo: '',
-      };
-    }
   };
 
   const obtenerPlanTarifaActualDesdeBd = async (empleadoNombre: string) => {
@@ -428,24 +438,6 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
         const fechaIngresoInput = convertirFechaApiAInput(emp.ingreso);
         const fechaSalidaInput = convertirFechaApiAInput(emp.salida);
 
-        if (fechaIngresoInput) {
-          const claveIngreso = `${emp.cedula}|ingresar|${fechaIngresoInput}`;
-          if (!existentes.has(claveIngreso)) {
-            existentes.add(claveIngreso);
-            nuevos.push({
-              id: String(siguienteId++),
-              empleadoNombre: emp.nombre,
-              empleadoCedula: emp.cedula,
-              tipoAccion: 'ingresar',
-              fechaSalida: fechaIngresoInput,
-              tarifaActual: emp.tarifa,
-              tarifaNueva: '',
-              tipoPlan: '',
-              dependientes: [],
-            });
-          }
-        }
-
         if (fechaSalidaInput) {
           const claveSalida = `${emp.cedula}|retirar|${fechaSalidaInput}`;
           if (!existentes.has(claveSalida)) {
@@ -455,7 +447,28 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
               empleadoNombre: emp.nombre,
               empleadoCedula: emp.cedula,
               tipoAccion: 'retirar',
+              fechaIngreso: fechaIngresoInput,
               fechaSalida: fechaSalidaInput,
+              tarifaActual: emp.tarifa,
+              tarifaNueva: '',
+              tipoPlan: '',
+              dependientes: [],
+            });
+          }
+          return;
+        }
+
+        if (fechaIngresoInput) {
+          const claveIngreso = `${emp.cedula}|ingresar|${fechaIngresoInput}`;
+          if (!existentes.has(claveIngreso)) {
+            existentes.add(claveIngreso);
+            nuevos.push({
+              id: String(siguienteId++),
+              empleadoNombre: emp.nombre,
+              empleadoCedula: emp.cedula,
+              tipoAccion: 'ingresar',
+              fechaIngreso: fechaIngresoInput,
+              fechaSalida: fechaIngresoInput,
               tarifaActual: emp.tarifa,
               tarifaNueva: '',
               tipoPlan: '',
@@ -1165,35 +1178,20 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
         (m) => m.tipoAccion === 'cambiar_tarifa' && requiereRetiroDependienteCambioTarifa(m)
       );
 
-      const cacheDatosExcelEmpleado = new Map<string, Awaited<ReturnType<typeof obtenerDatosEmpleadoCentroCostos>>>();
-      const obtenerDatosExcelEmpleado = async (cedula: string) => {
+      const obtenerDatosExcelEmpleado = (cedula: string): DatosExcelEmpleado => {
         const key = String(cedula || '').trim();
         if (!key) {
-          return {
-            tarifa: '',
-            plan: '',
-            fechaNacimiento: '',
-            genero: '',
-            estadoCivil: '',
-            banco: '',
-            numeroCuenta: '',
-            correo: '',
-          };
+          return DATOS_EXCEL_EMPLEADO_VACIO;
         }
 
-        const cached = cacheDatosExcelEmpleado.get(key);
-        if (cached) return cached;
-
-        const datos = await obtenerDatosEmpleadoCentroCostos(key);
-        cacheDatosExcelEmpleado.set(key, datos);
-        return datos;
+        return datosActivosPorCedula[key] || DATOS_EXCEL_EMPLEADO_VACIO;
       };
 
       for (const movimiento of inclusionesCambios) {
         const tarifa = obtenerTarifaArchivo(movimiento);
         const nombreTitular = separarDosApellidosDosNombres(movimiento.empleadoNombre);
         const esCambioRetiroDependiente = requiereRetiroDependienteCambioTarifa(movimiento);
-        const datosExcelTitular = await obtenerDatosExcelEmpleado(movimiento.empleadoCedula);
+        const datosExcelTitular = obtenerDatosExcelEmpleado(movimiento.empleadoCedula);
         const generoTitular = datosExcelTitular.genero === 'M' || datosExcelTitular.genero === 'F' ? datosExcelTitular.genero : '';
 
         agregarFilaConBordes(hojaInclusiones, [
@@ -1465,7 +1463,7 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
       parentesco: 'TITULAR',
       tipoPlan: '-',
       tarifa: '-',
-      fechaIngreso: '-',
+      fechaIngreso: '',
       fechaExclusion: '-',
       etiquetasMovimiento: new Set<string>(),
       esTitular: true,
@@ -1478,6 +1476,9 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
       existente.fechaIngreso = movimiento.fechaSalida || existente.fechaIngreso;
       existente.etiquetasMovimiento.add('Ingresar');
     } else if (movimiento.tipoAccion === 'retirar') {
+      if (!existente.fechaIngreso && movimiento.fechaIngreso) {
+        existente.fechaIngreso = movimiento.fechaIngreso;
+      }
       existente.fechaExclusion = movimiento.fechaSalida || existente.fechaExclusion;
       existente.etiquetasMovimiento.add('Retirar');
       existente.esSalida = true;

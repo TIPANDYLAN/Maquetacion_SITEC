@@ -17,3 +17,7 @@ Espacio para integraciones con APIs externas y procesos de sincronizacion.
 ## Siguiente paso recomendado
 
 Crear una capa de servicios por proveedor en `src/services` y luego vistas por flujo en esta carpeta.
+
+## Nota
+
+- La integracion n8n usada por nomina se concentra en `src/services/n8nApi.ts`.

@@ -7,6 +7,10 @@ Esta carpeta documenta la separacion futura del layout principal.
 - `App.tsx` contiene la estructura completa de sidebar, header y area de contenido.
 - Aun no existen componentes separados de barra lateral y encabezado en esta carpeta.
 
+## Cambios recientes
+
+- Se simplifico el menu de nomina removiendo la vista de prueba `HorasApiTestView`.
+
 ## Objetivo
 
 Extraer layout para:

@@ -4,7 +4,6 @@ export const N8N_API_CATALOG = {
   listaCentroCosto: '/api/n8n/webhook/centrocostos/empleados/test',
   detalleEmpleadoCentroCostos: '/api/n8n/webhook/centrocostos/empleados',
   familiaresEmpleados: '/api/n8n/webhook/detalle/familiares/nomina/test',
-  getWithBodyProxy: '/api/n8n/get-with-body',
 } as const;
 
 const N8N_DEFAULT_API_KEY = 'u37KhX9gYj2Ns5rPAWq4EtZcLVtMoF16';
@@ -103,53 +102,11 @@ export const getNominaCostCenters = async (): Promise<NominaCostCenter[]> => {
     .filter((item) => item.IDCENTROCOSTO || item.CENTROCOSTO);
 };
 
-interface N8nGetWithBodyInput {
-  endpoint: string;
-  payload?: unknown;
-  apiKey?: string;
-}
-
 interface N8nDirectPostInput {
   url: string;
   payload?: unknown;
   apiKey?: string;
 }
-
-export const n8nGetWithBody = async <T = unknown>(input: N8nGetWithBodyInput): Promise<T> => {
-  const endpoint = String(input.endpoint || '').trim();
-  const endpointToProxy = (() => {
-    if (!endpoint) {
-      return '';
-    }
-
-    // The Vite middleware expects an absolute URL for URL parsing.
-    if (/^https?:\/\//i.test(endpoint)) {
-      return endpoint;
-    }
-
-    if (typeof window !== 'undefined') {
-      return new URL(endpoint, window.location.origin).toString();
-    }
-
-    return endpoint;
-  })();
-
-  const response = await fetch(N8N_API_CATALOG.getWithBodyProxy, {
-    method: 'POST',
-    headers: buildHeaders(input.apiKey),
-    body: JSON.stringify({
-      endpoint: endpointToProxy,
-      payload: input.payload ?? {},
-      apiKey: String(input.apiKey ?? N8N_DEFAULT_API_KEY).trim(),
-    }),
-  });
-
-  if (!response.ok) {
-    throw new Error(await parseErrorMessage(response));
-  }
-
-  return await response.json() as T;
-};
 
 export const n8nPostDirect = async <T = unknown>(input: N8nDirectPostInput): Promise<T> => {
   const response = await fetch(input.url, {

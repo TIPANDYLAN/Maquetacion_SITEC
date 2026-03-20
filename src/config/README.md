@@ -30,3 +30,8 @@ console.log(COMPANY.name);
 - Si una constante se reutiliza en 2 o mas lugares, moverla a esta carpeta.
 - Mantener nombres claros y consistentes.
 - Evitar duplicar configuracion equivalente en `mockData.ts`.
+
+## Estado actual
+
+- La mayor parte de integraciones API fue centralizada en `src/services`.
+- Este directorio se mantiene para configuraciones de UI y constantes transversales.

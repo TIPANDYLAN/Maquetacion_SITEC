@@ -1,10 +1,6 @@
 # Portal SITEC
 
-Sistema interno para gestion de operaciones de parqueaderos, pagos, nomina, mantenimiento e integraciones.
-
-## Objetivo
-
-Centralizar en una sola interfaz web los procesos operativos y administrativos de Urbapark, con modulos en distintos niveles de madurez (implementado, parcial o placeholder).
+Sistema interno de Urbapark para operaciones, pagos, nomina y procesos administrativos.
 
 ## Stack
 
@@ -20,34 +16,26 @@ npm install
 npm run dev
 ```
 
-Frontend local:
+Frontend: http://localhost:5173
 
-```txt
-http://localhost:5173
-```
-
-Backend local (opcional, para endpoints de Humana y descuentos):
+Backend (para Humana, descuentos, valets y exentos):
 
 ```bash
 npm run dev:backend
 ```
 
-Backend local:
+Backend: http://localhost:4000
 
-```txt
-http://localhost:4000
-```
+## Scripts
 
-## Scripts disponibles
+- `npm run dev`
+- `npm run build`
+- `npm run preview`
+- `npm run lint`
+- `npm run dev:backend`
+- `npm run start:backend`
 
-- `npm run dev`: levanta frontend en modo desarrollo
-- `npm run build`: compila TypeScript y genera build de Vite
-- `npm run preview`: previsualiza build local
-- `npm run lint`: ejecuta ESLint
-- `npm run dev:backend`: levanta backend Express
-- `npm run start:backend`: levanta backend Express
-
-## Estado funcional por modulo
+## Estado funcional actual
 
 - Operaciones:
   - Implementado: `TicketsView`
@@ -55,33 +43,48 @@ http://localhost:4000
 - Pagos y facturacion:
   - Implementado: `PagosView`, `BancosView`
   - Placeholder: boletas, facturas, niubiz, agora, izipay, presupuestos, cajas chicas
-- Nomina / gestion de personal:
-  - Implementado: `HumanaView`, `GestionDescuentosTabsView`, `HorasApiTestView`
-  - Soporte adicional: `ProveedorHumanaView`, `MovimientosHumanaView`, `DescuentosView`
+- Nomina:
+  - Implementado: `HumanaView`, `GestionDescuentosTabsView`
+  - Subvistas activas: `ProveedorHumanaView`, `MovimientosHumanaView`, `DescuentosView`, `ExentosPagoSeguroView`, `ValetsFijosView`
+  - Eliminado: `HorasApiTestView` (vista de prueba retirada)
   - Placeholder: movilizaciones, e-rol, bonos, prestamos, celular, alimentacion, fondos, horas
-- Contabilidad e integraciones:
-  - Vista disponible: `BancosView` dentro del menu contable
-  - Placeholder: resto de opciones
-- Mantenimiento:
-  - Placeholder en todas sus opciones actuales
+- Contabilidad:
+  - Vista disponible en menu: `BancosView`
+  - Resto en placeholder
+- Integraciones y mantenimiento:
+  - Opciones de menu en placeholder
 
-## Estructura del proyecto
+## Cambios estructurales recientes
+
+- APIs separadas por dominio:
+  - `src/services/n8nApi.ts` para n8n
+  - `src/services/dbApi.ts` para backend propio
+- Limpieza de servicios obsoletos:
+  - eliminado `src/services/humanaApi.ts`
+  - eliminado `src/services/humanaStorage.ts`
+- Tipos compartidos movidos a:
+  - `src/types/humana.ts`
+  - `src/types/nomina.ts`
+- Rutas backend estandarizadas:
+  - valets en `/api/valets/*`
+  - exentos en `/api/descuentos/exentos-pago-seguro`
+- Retiro del proxy `get-with-body` y su middleware en Vite
+
+## Estructura
 
 ```txt
-backend/                 API Express + SQL de soporte
+backend/                 API Express + SQL
 public/                  activos estaticos
 src/
-  components/            modulos y componentes UI
+  components/            vistas y componentes UI
   config/                constantes globales
-  data/                  mock data
-  services/              llamadas API y storage local
+  data/                  datos de soporte y mocks
+  services/              integraciones API
   styles/                estilos compartidos
-  types/                 tipos TypeScript
+  types/                 tipos TypeScript compartidos
 ```
 
-Referencia extendida de estructura:
-
-- `src/PROJECT_STRUCTURE.md`
+Detalle: `src/PROJECT_STRUCTURE.md`
 
 ## Documentacion por carpeta
 
@@ -97,15 +100,6 @@ Referencia extendida de estructura:
 - `src/data/README.md`
 - `src/types/README.md`
 
-## Convenciones
+## Nota
 
-- Componentes: PascalCase
-- Funciones y variables: camelCase
-- Carpetas de modulos: minusculas
-- Tipos compartidos: centralizados en `src/types/index.ts`
-- Constantes compartidas: centralizadas en `src/config/index.ts`
-
-## Notas
-
-- Este README reemplaza al README base de Vite y pasa a ser la documentacion general del proyecto.
-- `README_PROYECTO.md` se mantiene sincronizado como copia de referencia.
+`README_PROYECTO.md` se mantiene sincronizado con este documento.

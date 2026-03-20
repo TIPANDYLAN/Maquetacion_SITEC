@@ -22,3 +22,8 @@ Datos de desarrollo utilizados por vistas y componentes mientras no exista integ
 ## Siguiente etapa
 
 Migrar progresivamente estos datos a llamadas API en `src/services`.
+
+## Nota de estado
+
+- Nomina y descuentos ya consumen mayormente APIs reales (`dbApi` y `n8nApi`).
+- Este directorio sigue siendo util para escenarios sin backend o prototipos de nuevas vistas.

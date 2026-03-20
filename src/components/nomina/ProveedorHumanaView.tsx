@@ -4,7 +4,6 @@ import * as XLSX from 'xlsx';
 import type { HumanaEmployeeData } from '../../types/humana';
 import type { NominaApiListResponse } from '../../types/nomina';
 import { dbApi, humanaApi } from '../../services/dbApi';
-import { N8N_API_CATALOG, n8nGetWithBody } from '../../services/n8nApi';
 
 interface FileUploadMetrics {
     archivo: string;
@@ -29,27 +28,6 @@ interface ParseResult {
     personasSubidas: number;
 }
 
-interface EmpleadoCentroCostosApiResponse {
-    CEDULA?: string;
-    NOMBRES?: string;
-    APELLIDOS?: string;
-    IDCENTROCOSTO?: string;
-    CENTROCOSTO?: string;
-    INGRESO?: string;
-    SALIDA?: string;
-    FechaIngreso?: string;
-    FechaSalida?: string;
-    CentroCostos?: string;
-}
-
-interface EmpleadoCentroCostoNormalizado {
-    apellidos: string;
-    nombres: string;
-    centroCosto: string;
-    fechaIngreso: string;
-    fechaSalida: string;
-}
-
 interface ExentoPagoSeguroRegistro {
     cedula: string;
     porcentaje_exento: number;
@@ -57,32 +35,18 @@ interface ExentoPagoSeguroRegistro {
 
 type ListarExentosPagoSeguroResponse = NominaApiListResponse<ExentoPagoSeguroRegistro>;
 
-const limpiarTextoApi = (valor: unknown): string => String(valor || '').trim();
 const CENTRO_COSTO_POR_DEFECTO = '0110001 - ADMINISTRACION-ADMINISTRACION-ADMINISTRACION';
-const esFechaInformada = (valor: string): boolean => {
-    const limpio = String(valor || '').trim();
-    return Boolean(limpio) && limpio !== '--' && limpio !== '---';
-};
 
-const normalizarEmpleadoCentroCostos = (payload: unknown): EmpleadoCentroCostoNormalizado => {
-    const raw = Array.isArray(payload)
-        ? ((payload[0] as { json?: EmpleadoCentroCostosApiResponse } | undefined)?.json ?? payload[0] ?? {})
-        : ((payload as { json?: EmpleadoCentroCostosApiResponse } | null | undefined)?.json ?? payload ?? {});
+const normalizarCentroCostoEmpleado = (empleado: HumanaEmployeeData) => {
+    const centroCostoNormalizado = String(empleado.centroCosto || '').trim().toUpperCase();
+    if (centroCostoNormalizado === '53279' || centroCostoNormalizado.startsWith('53279 -')) {
+        empleado.centroCosto = CENTRO_COSTO_POR_DEFECTO;
+        return;
+    }
 
-    const data = raw as EmpleadoCentroCostosApiResponse;
-    const codigoCentroCosto = limpiarTextoApi(data.IDCENTROCOSTO);
-    const nombreCentroCosto = limpiarTextoApi(data.CENTROCOSTO || data.CentroCostos);
-    const centroCosto = codigoCentroCosto && nombreCentroCosto
-        ? `${codigoCentroCosto} - ${nombreCentroCosto}`
-        : (codigoCentroCosto || nombreCentroCosto);
-
-    return {
-        apellidos: limpiarTextoApi(data.APELLIDOS),
-        nombres: limpiarTextoApi(data.NOMBRES),
-        centroCosto,
-        fechaIngreso: limpiarTextoApi(data.INGRESO || data.FechaIngreso),
-        fechaSalida: limpiarTextoApi(data.SALIDA || data.FechaSalida),
-    };
+    if (!centroCostoNormalizado || centroCostoNormalizado === 'N/A') {
+        empleado.centroCosto = CENTRO_COSTO_POR_DEFECTO;
+    }
 };
 
 const ProveedorHumanaView = () => {
@@ -684,7 +648,7 @@ const ProveedorHumanaView = () => {
                             genero,
                             fechaSolicitud: '',
                             fechaInclusion: fechaIngreso,
-                            fechaExclusion: '---',
+                            fechaExclusion: '',
                             plan,
                             cobertura: 0,
                             prima: primaNeta,
@@ -1025,7 +989,7 @@ const ProveedorHumanaView = () => {
                                 genero: String(row[sexoColIdx] || ''),
                                 fechaSolicitud: '',
                                 fechaInclusion: fechaInclusion || '',
-                                fechaExclusion: fechaExclusion || '---',
+                                fechaExclusion: fechaExclusion || '',
                                 plan,
                                 cobertura: 0,
                                 prima: 0,
@@ -1058,7 +1022,7 @@ const ProveedorHumanaView = () => {
                             genero: String(row[sexoColIdx] || ''),
                             fechaSolicitud: '',
                             fechaInclusion: fechaInclusion || '',
-                            fechaExclusion: fechaExclusion || '---',
+                            fechaExclusion: fechaExclusion || '',
                             plan,
                             cobertura: 0,
                             prima: 0,
@@ -1111,7 +1075,7 @@ const ProveedorHumanaView = () => {
                             genero: String(rowData[8] || ''),
                             fechaSolicitud: String(rowData[9] || ''),
                             fechaInclusion: String(rowData[10] || ''),
-                            fechaExclusion: String(rowData[11] || '---'),
+                            fechaExclusion: String(rowData[11] || ''),
                             plan: String(rowData[12] || ''),
                             cobertura: parseFloat(String(rowData[13] || '0').replace(/,/g, '')) || 0,
                             prima: primaNeta,
@@ -1141,74 +1105,6 @@ const ProveedorHumanaView = () => {
                     totalTitularesExcel,
                     personasSubidas,
                 };
-            };
-
-            const detalleEmpleadoCache = new Map<string, Promise<EmpleadoCentroCostoNormalizado>>();
-
-            const fetchDetalleEmpleado = async (cedula: string): Promise<EmpleadoCentroCostoNormalizado> => {
-                const cedulaLimpia = String(cedula || '').trim();
-                if (!cedulaLimpia) {
-                    return {
-                        apellidos: '',
-                        nombres: '',
-                        centroCosto: '',
-                        fechaIngreso: '',
-                        fechaSalida: '',
-                    };
-                }
-
-                const cached = detalleEmpleadoCache.get(cedulaLimpia);
-                if (cached) {
-                    return cached;
-                }
-
-                const request = (async (): Promise<EmpleadoCentroCostoNormalizado> => {
-                    try {
-                        const data = await n8nGetWithBody<unknown>({
-                            endpoint: N8N_API_CATALOG.detalleEmpleadoCentroCostos,
-                            payload: { Cedula: cedulaLimpia },
-                        });
-                        return normalizarEmpleadoCentroCostos(data);
-                    } catch {
-                        return {
-                            apellidos: '',
-                            nombres: '',
-                            centroCosto: '',
-                            fechaIngreso: '',
-                            fechaSalida: '',
-                        };
-                    }
-                })();
-
-                detalleEmpleadoCache.set(cedulaLimpia, request);
-                return request;
-            };
-
-            const aplicarDetalleEmpleado = (empleado: HumanaEmployeeData, detalle: EmpleadoCentroCostoNormalizado) => {
-                if (detalle.apellidos) {
-                    empleado.apellidos = detalle.apellidos;
-                }
-                if (detalle.nombres) {
-                    empleado.nombres = detalle.nombres;
-                }
-                if (detalle.centroCosto) {
-                    empleado.centroCosto = detalle.centroCosto;
-                }
-                if (detalle.fechaIngreso) {
-                    empleado.fechaInclusion = detalle.fechaIngreso;
-                }
-                if (esFechaInformada(detalle.fechaSalida)) {
-                    empleado.fechaExclusion = detalle.fechaSalida;
-                }
-
-                const centroCostoNormalizado = limpiarTextoApi(empleado.centroCosto).toUpperCase();
-                if (centroCostoNormalizado === '53279' || centroCostoNormalizado.startsWith('53279 -')) {
-                    empleado.centroCosto = CENTRO_COSTO_POR_DEFECTO;
-                }
-
-                if (!empleado.centroCosto || empleado.centroCosto === 'N/A') {
-                    empleado.centroCosto = CENTRO_COSTO_POR_DEFECTO;
-                }
             };
 
             const cargarExentosPagoSeguro = async (): Promise<Map<string, number>> => {
@@ -1248,9 +1144,7 @@ const ProveedorHumanaView = () => {
             );
 
             for (const empleado of facturaResult.empleados) {
-                if (!empleado.cedula) continue;
-                const detalleEmpleado = await fetchDetalleEmpleado(empleado.cedula);
-                aplicarDetalleEmpleado(empleado, detalleEmpleado);
+                normalizarCentroCostoEmpleado(empleado);
             }
 
             for (const empleado of facturaResult.empleados) {
@@ -1299,9 +1193,7 @@ const ProveedorHumanaView = () => {
             console.log(`   mapa.size (empleados finales): ${empleadosFinal.length}`);
 
             for (const empleado of empleadosFinal) {
-                if (!empleado.cedula || !movimientosResult.cedulasMovimientos.has(empleado.cedula)) continue;
-                const detalleEmpleado = await fetchDetalleEmpleado(empleado.cedula);
-                aplicarDetalleEmpleado(empleado, detalleEmpleado);
+                normalizarCentroCostoEmpleado(empleado);
             }
 
             const exentosPagoSeguro = await cargarExentosPagoSeguro();

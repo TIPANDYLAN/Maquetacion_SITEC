@@ -6,7 +6,6 @@ const TicketsView = lazy(() => import("./components/operaciones/TicketsView"));
 const PagosView = lazy(() => import("./components/pagos/PagosView"));
 const HumanaView = lazy(() => import("./components/nomina/HumanaView"));
 const GestionDescuentosTabsView = lazy(() => import("./components/nomina/GestionDescuentosTabsView"));
-const HorasApiTestView = lazy(() => import("./components/nomina/HorasApiTestView"));
 const BancosView = lazy(() => import("./components/pagos/BancosView"));
 
 interface PlaceholderContent {
@@ -83,8 +82,6 @@ function App() {
         return <GestionDescuentosTabsView />;
       case 'humana':
         return <HumanaView />;
-      case 'horas_api_test':
-        return <HorasApiTestView />;
       default: {
         const placeholder = PLACEHOLDER_TABS[activeTab];
         if (placeholder) {
@@ -194,7 +191,6 @@ function App() {
                 <button onClick={() => setActiveTab('descuentos')} className={`block w-full text-left px-3 py-2 rounded-lg text-sm transition-all ${isItemActive('descuentos') ? 'bg-blue-50 text-blue-600 font-bold' : 'text-slate-600 hover:bg-slate-50'}`}>Gestión de descuentos</button>
                 <button onClick={() => setActiveTab('horas')} className={`block w-full text-left px-3 py-2 rounded-lg text-sm transition-all ${isItemActive('horas') ? 'bg-blue-50 text-blue-600 font-bold' : 'text-slate-600 hover:bg-slate-50'}`}>Registro de horas</button>
                 <button onClick={() => setActiveTab('humana')} className={`block w-full text-left px-3 py-2 rounded-lg text-sm transition-all ${isItemActive('humana') ? 'bg-blue-50 text-blue-600 font-bold' : 'text-slate-600 hover:bg-slate-50'}`}>Humana</button>
-                <button onClick={() => setActiveTab('horas_api_test')} className={`block w-full text-left px-3 py-2 rounded-lg text-sm transition-all ${isItemActive('horas_api_test') ? 'bg-blue-50 text-blue-600 font-bold' : 'text-slate-600 hover:bg-slate-50'}`}>Prueba API Horas</button>
               </div>
             )}
           </div>
