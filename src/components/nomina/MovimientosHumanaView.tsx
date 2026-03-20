@@ -25,6 +25,7 @@ interface DependienteForm {
   fechaNacimiento: string;
   parentesco: 'CONYUGE' | 'HIJO/HIJA' | 'PADRE/MADRE' | '';
   genero: 'M' | 'F' | '';
+  estadoCivil: string;
   // Datos bancarios (solo si es mayor de edad)
   banco: string;
   tipoCuenta: string;
@@ -51,6 +52,7 @@ interface FamiliarDisponible {
   genero: 'M' | 'F' | '';
   fechaNacimiento: string;
   parentesco: 'CONYUGE' | 'HIJO/HIJA' | 'PADRE/MADRE' | '';
+  estadoCivil: string;
 }
 
 interface DatosExcelEmpleado {
@@ -85,6 +87,7 @@ const crearDependienteVacio = (id: string): DependienteForm => ({
   fechaNacimiento: '',
   parentesco: '',
   genero: '',
+  estadoCivil: '',
   banco: '',
   tipoCuenta: '',
   numeroCuenta: '',
@@ -353,6 +356,7 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
           genero,
           fechaNacimiento: normalizarFechaISOaInput(String(familiar.NACIMIENTO_FAM || '')),
           parentesco: mapearParentesco(String(familiar.PARENTESCO || '')),
+          estadoCivil: String(familiar.EST_CIVIL || familiar.ESTADO_CIVIL || '').trim().toUpperCase(),
         };
       }).filter((f: FamiliarDisponible) => f.nombre);
 
@@ -655,6 +659,7 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
             genero: familiar.genero,
             fechaNacimiento: familiar.fechaNacimiento,
             parentesco: familiar.parentesco,
+            estadoCivil: familiar.estadoCivil,
           }
         : d),
     }));
@@ -679,6 +684,7 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
       genero: familiar.genero,
       fechaNacimiento: familiar.fechaNacimiento,
       parentesco: familiar.parentesco,
+      estadoCivil: familiar.estadoCivil,
     };
 
     setMovimientoModal((prev) => ({ ...prev, dependientes: [dependiente] }));
@@ -1239,7 +1245,7 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
             mapearParentescoReporte(dependiente.parentesco, false),
             dependiente.genero,
             '',
-            '',
+            dependiente.estadoCivil,
             fechaAplicacion,
             'PH-5000',
             tarifa,
