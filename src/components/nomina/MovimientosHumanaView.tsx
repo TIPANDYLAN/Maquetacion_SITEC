@@ -56,6 +56,7 @@ interface FamiliarDisponible {
 interface DatosExcelEmpleado {
   tarifa: string;
   plan: string;
+  fechaIngreso: string;
   fechaNacimiento: string;
   genero: string;
   estadoCivil: string;
@@ -67,6 +68,7 @@ interface DatosExcelEmpleado {
 const DATOS_EXCEL_EMPLEADO_VACIO: DatosExcelEmpleado = {
   tarifa: '',
   plan: '',
+  fechaIngreso: '',
   fechaNacimiento: '',
   genero: '',
   estadoCivil: '',
@@ -220,6 +222,7 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
               datosPorCedula[cedula] = {
                 tarifa: actual.tarifa || normalizarTarifaApi(String(payload.TARIFA || raw.TARIFA_ACTUAL || raw.TIPO_TARIFA || '')),
                 plan: actual.plan || normalizarPlanApi(String(payload.PLAN || payload.TIPO_PLAN || payload.PLAN_CONTRATADO || payload.PLAN_CONTRATADO_SALUD || '')),
+                fechaIngreso: actual.fechaIngreso || String(payload.INGRESO || payload.FechaIngreso || raw.INGRESO || raw.FechaIngreso || '').trim(),
                 fechaNacimiento: actual.fechaNacimiento || String(raw.FEC_NAC || raw.FECHA_NACIMIENTO || '').trim(),
                 genero: actual.genero || String(raw.SEXO || '').trim().toUpperCase(),
                 estadoCivil: actual.estadoCivil || String(raw.EST_CIVIL || raw.ESTADO_CIVIL || '').trim().toUpperCase(),
@@ -1486,6 +1489,10 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
       existente.fechaExclusion = movimiento.fechaSalida || existente.fechaExclusion;
       existente.etiquetasMovimiento.add('Eliminar dependiente');
     } else if (movimiento.tipoAccion === 'cambiar_tarifa') {
+      if (!existente.fechaIngreso) {
+        const fechaIngresoActivo = String(datosActivosPorCedula[movimiento.empleadoCedula]?.fechaIngreso || '').trim();
+        existente.fechaIngreso = convertirFechaApiAInput(fechaIngresoActivo) || existente.fechaIngreso;
+      }
       existente.etiquetasMovimiento.add(
         requiereRetiroDependienteCambioTarifa(movimiento)
           ? 'Cambiar tarifa (Retirar dependiente)'
@@ -1539,54 +1546,7 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
     permiteAcciones: !fila.esSalida && fila.movimientoIds.size === 1,
   }));
 
-  const filasDependientes = movimientos.flatMap((movimiento) => {
-    const esCambioRetiroDependiente = requiereRetiroDependienteCambioTarifa(movimiento);
-
-    if (movimiento.tipoAccion === 'eliminar_dependiente') {
-      return movimiento.dependientes.map((dependiente) => ({
-        key: `${movimiento.id}-dep-${dependiente.id}`,
-        origen: 'movimiento' as const,
-        movimientoId: movimiento.id,
-        nombre: `${dependiente.apellidos} ${dependiente.nombres}`.trim() || '-',
-        cedula: dependiente.cedula || '-',
-        parentesco: dependiente.parentesco || 'SIN DEFINIR',
-        esSalida: false,
-        movimiento: 'Eliminar dependiente',
-        tipoPlan: '-',
-        tarifa: '-',
-        fechaIngreso: '-',
-        fechaExclusion: movimiento.fechaSalida || '-',
-        esTitular: false,
-        permiteAcciones: false,
-      }));
-    }
-
-    if (movimiento.tipoAccion === 'cambiar_tarifa') {
-      return movimiento.dependientes.map((dependiente) => ({
-        key: `${movimiento.id}-dep-${dependiente.id}`,
-        origen: 'movimiento' as const,
-        movimientoId: movimiento.id,
-        nombre: `${dependiente.apellidos} ${dependiente.nombres}`.trim() || '-',
-        cedula: dependiente.cedula || '-',
-        parentesco: dependiente.parentesco || 'SIN DEFINIR',
-        esSalida: false,
-        movimiento: esCambioRetiroDependiente ? 'Cambiar tarifa (Retirar dependiente)' : 'Cambiar tarifa',
-        tipoPlan: movimiento.tipoPlan || '-',
-        tarifa: movimiento.tarifaNueva || '-',
-        fechaIngreso: '-',
-        fechaExclusion: esCambioRetiroDependiente ? (movimiento.fechaSalida || '-') : '-',
-        esTitular: false,
-        permiteAcciones: false,
-      }));
-    }
-
-    return [];
-  });
-
-  const filasConsolidadas = [
-    ...filasTitularesConsolidadas,
-    ...filasDependientes,
-  ];
+  const filasConsolidadas = [...filasTitularesConsolidadas];
 
   const opcionesTarifaNueva = [
     { value: 'T', label: 'T - Titular Solo' },
