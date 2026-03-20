@@ -20,8 +20,7 @@ Componentes para gestion de personal, descuentos y Humana.
 
 ## Relacion con el backend
 
-- Consume servicios en `src/services/humanaApi.ts`.
-- Persiste informacion local en `src/services/humanaStorage.ts` cuando aplica.
+- Consume servicios en `src/services/dbApi.ts`.
 
 ## Pendiente funcional (menu)
 

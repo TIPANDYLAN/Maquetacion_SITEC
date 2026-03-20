@@ -792,7 +792,7 @@ app.patch('/api/descuentos/incidentes-caja-chica/:id/estado', async (req, res) =
   }
 });
 
-app.get('/api/descuentos/humana/exentos-pago-seguro', async (_req, res) => {
+app.get('/api/descuentos/exentos-pago-seguro', async (_req, res) => {
   try {
     await ensureExentosPagoSeguroTable();
 
@@ -807,7 +807,7 @@ app.get('/api/descuentos/humana/exentos-pago-seguro', async (_req, res) => {
       registros: result.rows.map(mapDbRowToExentoPagoSeguro),
     });
   } catch (error) {
-    console.error('[GET /api/descuentos/humana/exentos-pago-seguro] Error:', error instanceof Error ? error.message : String(error));
+    console.error('[GET /api/descuentos/exentos-pago-seguro] Error:', error instanceof Error ? error.message : String(error));
     res.status(500).json({
       error: 'No se pudo cargar exentos de pago seguro',
       details: error instanceof Error ? error.message : 'Unknown error',
@@ -815,7 +815,7 @@ app.get('/api/descuentos/humana/exentos-pago-seguro', async (_req, res) => {
   }
 });
 
-app.post('/api/descuentos/humana/exentos-pago-seguro', async (req, res) => {
+app.post('/api/descuentos/exentos-pago-seguro', async (req, res) => {
   const cedula = String(req.body?.cedula || '').trim();
   const nombre = String(req.body?.nombre || '').trim();
   const porcentajeExento = parseValor(req.body?.porcentajeExento);
@@ -855,7 +855,7 @@ app.post('/api/descuentos/humana/exentos-pago-seguro', async (req, res) => {
       registro: mapDbRowToExentoPagoSeguro(result.rows[0]),
     });
   } catch (error) {
-    console.error('[POST /api/descuentos/humana/exentos-pago-seguro] Error:', error instanceof Error ? error.message : String(error));
+    console.error('[POST /api/descuentos/exentos-pago-seguro] Error:', error instanceof Error ? error.message : String(error));
     res.status(500).json({
       error: 'No se pudo guardar exento de pago seguro',
       details: error instanceof Error ? error.message : 'Unknown error',
@@ -863,7 +863,7 @@ app.post('/api/descuentos/humana/exentos-pago-seguro', async (req, res) => {
   }
 });
 
-app.get('/api/humana/valets/adicionales', async (req, res) => {
+app.get('/api/valets/adicionales', async (req, res) => {
   const centroCostoId = String(req.query.centroCostoId || '').trim();
   const empleadoCedula = String(req.query.empleadoCedula || '').trim();
 
@@ -897,7 +897,7 @@ app.get('/api/humana/valets/adicionales', async (req, res) => {
       data: mapDbRowToValetAdicionales(result.rows[0]),
     });
   } catch (error) {
-    console.error('[GET /api/humana/valets/adicionales] Error:', error instanceof Error ? error.message : String(error));
+    console.error('[GET /api/valets/adicionales] Error:', error instanceof Error ? error.message : String(error));
     res.status(500).json({
       error: 'No se pudo cargar configuracion de adicionales',
       details: error instanceof Error ? error.message : 'Unknown error',
@@ -905,7 +905,7 @@ app.get('/api/humana/valets/adicionales', async (req, res) => {
   }
 });
 
-app.get('/api/humana/valets/adicionales/lista', async (req, res) => {
+app.get('/api/valets/adicionales/lista', async (req, res) => {
   const centroCostoId = String(req.query.centroCostoId || '').trim();
 
   try {
@@ -938,7 +938,7 @@ app.get('/api/humana/valets/adicionales/lista', async (req, res) => {
       registros: result.rows.map(mapDbRowToValetAdicionales),
     });
   } catch (error) {
-    console.error('[GET /api/humana/valets/adicionales/lista] Error:', error instanceof Error ? error.message : String(error));
+    console.error('[GET /api/valets/adicionales/lista] Error:', error instanceof Error ? error.message : String(error));
     res.status(500).json({
       error: 'No se pudo cargar lista de adicionales',
       details: error instanceof Error ? error.message : 'Unknown error',
@@ -946,7 +946,7 @@ app.get('/api/humana/valets/adicionales/lista', async (req, res) => {
   }
 });
 
-app.post('/api/humana/valets/adicionales', async (req, res) => {
+app.post('/api/valets/adicionales', async (req, res) => {
   const centroCostoId = String(req.body?.centroCostoId || '').trim();
   const centroCostoNombre = String(req.body?.centroCostoNombre || '').trim();
   const empleadoCedula = String(req.body?.empleadoCedula || '').trim();
@@ -1047,7 +1047,7 @@ app.post('/api/humana/valets/adicionales', async (req, res) => {
       data: mapDbRowToValetAdicionales(result.rows[0]),
     });
   } catch (error) {
-    console.error('[POST /api/humana/valets/adicionales] Error:', error instanceof Error ? error.message : String(error));
+    console.error('[POST /api/valets/adicionales] Error:', error instanceof Error ? error.message : String(error));
     res.status(500).json({
       error: 'No se pudo guardar configuracion de adicionales',
       details: error instanceof Error ? error.message : 'Unknown error',
@@ -1055,7 +1055,7 @@ app.post('/api/humana/valets/adicionales', async (req, res) => {
   }
 });
 
-app.get('/api/humana/valets/empleados', async (_req, res) => {
+app.get('/api/valets/empleados', async (_req, res) => {
   try {
     await ensureValetFijoEmpleadoTable();
 
@@ -1071,7 +1071,7 @@ app.get('/api/humana/valets/empleados', async (_req, res) => {
       registros: result.rows.map(mapDbRowToValetFijoEmpleado),
     });
   } catch (error) {
-    console.error('[GET /api/humana/valets/empleados] Error:', error instanceof Error ? error.message : String(error));
+    console.error('[GET /api/valets/empleados] Error:', error instanceof Error ? error.message : String(error));
     res.status(500).json({
       error: 'No se pudo cargar empleados valet fijo',
       details: error instanceof Error ? error.message : 'Unknown error',
@@ -1079,7 +1079,7 @@ app.get('/api/humana/valets/empleados', async (_req, res) => {
   }
 });
 
-app.post('/api/humana/valets/empleados', async (req, res) => {
+app.post('/api/valets/empleados', async (req, res) => {
   const centroCostoId = String(req.body?.centroCostoId || '').trim();
   const centroCostoNombre = String(req.body?.centroCostoNombre || '').trim();
   const empleadoCedula = String(req.body?.empleadoCedula || '').trim();
@@ -1125,7 +1125,7 @@ app.post('/api/humana/valets/empleados', async (req, res) => {
       registro: mapDbRowToValetFijoEmpleado(result.rows[0]),
     });
   } catch (error) {
-    console.error('[POST /api/humana/valets/empleados] Error:', error instanceof Error ? error.message : String(error));
+    console.error('[POST /api/valets/empleados] Error:', error instanceof Error ? error.message : String(error));
     res.status(500).json({
       error: 'No se pudo guardar empleado valet fijo',
       details: error instanceof Error ? error.message : 'Unknown error',
@@ -1133,7 +1133,7 @@ app.post('/api/humana/valets/empleados', async (req, res) => {
   }
 });
 
-app.delete('/api/humana/valets/empleados', async (req, res) => {
+app.delete('/api/valets/empleados', async (req, res) => {
   const centroCostoId = String(req.query.centroCostoId || '').trim();
   const empleadoCedula = String(req.query.empleadoCedula || '').trim();
 
@@ -1163,7 +1163,7 @@ app.delete('/api/humana/valets/empleados', async (req, res) => {
       registro: mapDbRowToValetFijoEmpleado(result.rows[0]),
     });
   } catch (error) {
-    console.error('[DELETE /api/humana/valets/empleados] Error:', error instanceof Error ? error.message : String(error));
+    console.error('[DELETE /api/valets/empleados] Error:', error instanceof Error ? error.message : String(error));
     res.status(500).json({
       error: 'No se pudo eliminar empleado valet fijo',
       details: error instanceof Error ? error.message : 'Unknown error',
@@ -1171,7 +1171,7 @@ app.delete('/api/humana/valets/empleados', async (req, res) => {
   }
 });
 
-app.get('/api/humana/valets/horarios', async (req, res) => {
+app.get('/api/valets/horarios', async (req, res) => {
   const anio = Number(req.query.anio || 0);
   const mes = Number(req.query.mes || 0);
   const centroCostoId = String(req.query.centroCostoId || '').trim();
@@ -1220,7 +1220,7 @@ app.get('/api/humana/valets/horarios', async (req, res) => {
       registros: result.rows.map(mapDbRowToValetFijoHorario),
     });
   } catch (error) {
-    console.error('[GET /api/humana/valets/horarios] Error:', error instanceof Error ? error.message : String(error));
+    console.error('[GET /api/valets/horarios] Error:', error instanceof Error ? error.message : String(error));
     res.status(500).json({
       error: 'No se pudo cargar horarios valet fijo',
       details: error instanceof Error ? error.message : 'Unknown error',
@@ -1228,7 +1228,7 @@ app.get('/api/humana/valets/horarios', async (req, res) => {
   }
 });
 
-app.post('/api/humana/valets/horarios', async (req, res) => {
+app.post('/api/valets/horarios', async (req, res) => {
   const centroCostoId = String(req.body?.centroCostoId || '').trim();
   const centroCostoNombre = String(req.body?.centroCostoNombre || '').trim();
   const empleadoCedula = String(req.body?.empleadoCedula || '').trim();
@@ -1328,7 +1328,7 @@ app.post('/api/humana/valets/horarios', async (req, res) => {
       registro: mapDbRowToValetFijoHorario(result.rows[0]),
     });
   } catch (error) {
-    console.error('[POST /api/humana/valets/horarios] Error:', error instanceof Error ? error.message : String(error));
+    console.error('[POST /api/valets/horarios] Error:', error instanceof Error ? error.message : String(error));
     res.status(500).json({
       error: 'No se pudo guardar horario valet fijo',
       details: error instanceof Error ? error.message : 'Unknown error',

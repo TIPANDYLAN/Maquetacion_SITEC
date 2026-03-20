@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
 import { Play, CheckCircle2, AlertCircle, Upload } from 'lucide-react';
 import * as XLSX from 'xlsx';
-import type { HumanaEmployeeData } from '../../services/humanaStorage';
-import { humanaApi } from '../../services/humanaApi';
-import { n8nGetWithBody } from '../../services/n8nApi';
+import type { HumanaEmployeeData } from '../../types/humana';
+import type { NominaApiListResponse } from '../../types/nomina';
+import { dbApi, humanaApi } from '../../services/dbApi';
+import { N8N_API_CATALOG, n8nGetWithBody } from '../../services/n8nApi';
 
 interface FileUploadMetrics {
     archivo: string;
@@ -54,14 +55,14 @@ interface ExentoPagoSeguroRegistro {
     porcentaje_exento: number;
 }
 
-interface ListarExentosPagoSeguroResponse {
-    ok: boolean;
-    registros?: ExentoPagoSeguroRegistro[];
-    error?: string;
-}
+type ListarExentosPagoSeguroResponse = NominaApiListResponse<ExentoPagoSeguroRegistro>;
 
 const limpiarTextoApi = (valor: unknown): string => String(valor || '').trim();
 const CENTRO_COSTO_POR_DEFECTO = '0110001 - ADMINISTRACION-ADMINISTRACION-ADMINISTRACION';
+const esFechaInformada = (valor: string): boolean => {
+    const limpio = String(valor || '').trim();
+    return Boolean(limpio) && limpio !== '--' && limpio !== '---';
+};
 
 const normalizarEmpleadoCentroCostos = (payload: unknown): EmpleadoCentroCostoNormalizado => {
     const raw = Array.isArray(payload)
@@ -80,7 +81,7 @@ const normalizarEmpleadoCentroCostos = (payload: unknown): EmpleadoCentroCostoNo
         nombres: limpiarTextoApi(data.NOMBRES),
         centroCosto,
         fechaIngreso: limpiarTextoApi(data.INGRESO || data.FechaIngreso),
-        fechaSalida: limpiarTextoApi(data.SALIDA || data.FechaSalida) || '--',
+        fechaSalida: limpiarTextoApi(data.SALIDA || data.FechaSalida),
     };
 };
 
@@ -1152,7 +1153,7 @@ const ProveedorHumanaView = () => {
                         nombres: '',
                         centroCosto: '',
                         fechaIngreso: '',
-                        fechaSalida: '--',
+                        fechaSalida: '',
                     };
                 }
 
@@ -1164,7 +1165,7 @@ const ProveedorHumanaView = () => {
                 const request = (async (): Promise<EmpleadoCentroCostoNormalizado> => {
                     try {
                         const data = await n8nGetWithBody<unknown>({
-                            endpoint: 'https://n8n.172.10.219.15.sslip.io/webhook/centrocostos/empleados',
+                            endpoint: N8N_API_CATALOG.detalleEmpleadoCentroCostos,
                             payload: { Cedula: cedulaLimpia },
                         });
                         return normalizarEmpleadoCentroCostos(data);
@@ -1174,7 +1175,7 @@ const ProveedorHumanaView = () => {
                             nombres: '',
                             centroCosto: '',
                             fechaIngreso: '',
-                            fechaSalida: '--',
+                            fechaSalida: '',
                         };
                     }
                 })();
@@ -1196,7 +1197,7 @@ const ProveedorHumanaView = () => {
                 if (detalle.fechaIngreso) {
                     empleado.fechaInclusion = detalle.fechaIngreso;
                 }
-                if (detalle.fechaSalida) {
+                if (esFechaInformada(detalle.fechaSalida)) {
                     empleado.fechaExclusion = detalle.fechaSalida;
                 }
 
@@ -1212,16 +1213,9 @@ const ProveedorHumanaView = () => {
 
             const cargarExentosPagoSeguro = async (): Promise<Map<string, number>> => {
                 try {
-                    const response = await fetch('/api/descuentos/humana/exentos-pago-seguro', {
-                        method: 'GET',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                    });
-
-                    const data = await response.json() as ListarExentosPagoSeguroResponse;
-                    if (!response.ok || !data.ok) {
-                        console.warn('No se pudieron cargar exentos de pago seguro:', data.error || response.statusText);
+                    const data = await dbApi.exentosPagoSeguro.list<ListarExentosPagoSeguroResponse>();
+                    if (!data.ok) {
+                        console.warn('No se pudieron cargar exentos de pago seguro:', data.error || 'Error desconocido');
                         return new Map();
                     }
 

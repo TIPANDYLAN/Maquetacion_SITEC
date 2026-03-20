@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useMemo, useState, useEffect } from 'react';
-import { type HumanaEmployeeData } from '../../services/humanaStorage';
-import { humanaApi } from '../../services/humanaApi';
+import type { HumanaEmployeeData } from '../../types/humana';
+import { humanaApi } from '../../services/dbApi';
 import { Download } from 'lucide-react';
 import ExcelJS from 'exceljs';
 

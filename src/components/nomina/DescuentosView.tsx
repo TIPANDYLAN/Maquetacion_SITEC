@@ -1,24 +1,18 @@
 import { useState, useEffect } from 'react';
 import { Plus, X, AlertCircle, Eye } from 'lucide-react';
-import { getNominaCostCenters, getNominaEmployees } from '../../services/n8nApi';
-
-interface CentroCosto {
-    IDCENTROCOSTO: string;
-    CENTROCOSTO: string;
-}
+import { getNominaCostCenters, getNominaEmployeesActive } from '../../services/n8nApi';
+import { dbApi } from '../../services/dbApi';
+import type {
+    EmpleadoNominaApiItem,
+    NominaApiListResponse,
+    NominaApiRecordResponse,
+    NominaCentroCosto,
+} from '../../types/nomina';
 
 interface EmpleadoNomina {
     cedula: string;
     nombres: string;
     apellidos: string;
-}
-
-interface EmpleadoNominaApiItem {
-    json?: {
-        CEDULA?: string;
-        NOMBRES?: string;
-        APELLIDOS?: string;
-    };
 }
 
 interface FormularioDescuento {
@@ -27,24 +21,6 @@ interface FormularioDescuento {
     valorTotal: string;
     centroCosto: string;
     observacion: string;
-}
-
-interface GuardarDescuentoResponse {
-    ok: boolean;
-    descuento?: {
-        id: number;
-        periodo: string;
-        nombre: string;
-        valor: string | number;
-        codigo_centro_costo: string;
-        centro_costo: string;
-        observacion: string;
-        estado: string;
-        recurrencia: number;
-        fecha_creacion: string;
-    };
-    error?: string;
-    details?: string;
 }
 
 interface DescuentoRow {
@@ -60,19 +36,11 @@ interface DescuentoRow {
     fecha_creacion: string;
 }
 
-interface ListarDescuentosResponse {
-    ok: boolean;
-    descuentos?: DescuentoRow[];
-    error?: string;
-    details?: string;
-}
+type GuardarDescuentoResponse = NominaApiRecordResponse<DescuentoRow, 'descuento'>;
 
-interface ActualizarEstadoDescuentoResponse {
-    ok: boolean;
-    descuento?: DescuentoRow;
-    error?: string;
-    details?: string;
-}
+type ListarDescuentosResponse = NominaApiListResponse<DescuentoRow, 'descuentos'>;
+
+type ActualizarEstadoDescuentoResponse = NominaApiRecordResponse<DescuentoRow, 'descuento'>;
 
 const DescuentosView = () => {
     const [searchDescuentos, setSearchDescuentos] = useState('');
@@ -83,7 +51,7 @@ const DescuentosView = () => {
     const [mostrarFormulario, setMostrarFormulario] = useState(false);
     const [descuentos, setDescuentos] = useState<DescuentoRow[]>([]);
     const [cargandoDescuentos, setCargandoDescuentos] = useState(false);
-    const [centrosCosto, setCentrosCosto] = useState<CentroCosto[]>([]);
+    const [centrosCosto, setCentrosCosto] = useState<NominaCentroCosto[]>([]);
     const [empleadosDisponibles, setEmpleadosDisponibles] = useState<EmpleadoNomina[]>([]);
     const [cargandoEmpleados, setCargandoEmpleados] = useState(false);
     const [cargandoCentros, setCargandoCentros] = useState(false);
@@ -112,15 +80,8 @@ const DescuentosView = () => {
     const cargarDescuentos = async () => {
         setCargandoDescuentos(true);
         try {
-            const response = await fetch('/api/descuentos/incidentes-caja-chica', {
-                method: 'GET',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-            });
-
-            const data = await response.json() as ListarDescuentosResponse;
-            if (!response.ok || !data.ok) {
+            const data = await dbApi.descuentos.incidentesCajaChica.list<ListarDescuentosResponse>();
+            if (!data.ok) {
                 throw new Error(data.error || 'No se pudo cargar descuentos');
             }
 
@@ -136,15 +97,21 @@ const DescuentosView = () => {
     const cargarEmpleados = async () => {
         setCargandoEmpleados(true);
         try {
-            const data = await getNominaEmployees<EmpleadoNominaApiItem[]>();
+            const data = await getNominaEmployeesActive<EmpleadoNominaApiItem[]>();
             const empleadosApi = Array.isArray(data) ? data : [];
             const empleadosNormalizados = empleadosApi
-                .map((item: EmpleadoNominaApiItem) => ({
-                    cedula: String(item?.json?.CEDULA || '').trim(),
-                    nombres: String(item?.json?.NOMBRES || '').trim(),
-                    apellidos: String(item?.json?.APELLIDOS || '').trim(),
-                }))
-                .filter((emp: EmpleadoNomina) => emp.cedula && (emp.nombres || emp.apellidos));
+                .map((item: EmpleadoNominaApiItem) => {
+                  const payload = (item?.json ?? item ?? {}) as Record<string, unknown>;
+                  return {
+                    cedula: String(payload?.CEDULA || '').trim(),
+                    nombres: String(payload?.NOMBRES || '').trim(),
+                    apellidos: String(payload?.APELLIDOS || '').trim(),
+                  };
+                })
+                .filter((emp: EmpleadoNomina) => emp.cedula && (emp.nombres || emp.apellidos))
+                .sort((a: EmpleadoNomina, b: EmpleadoNomina) => 
+                  `${a.apellidos} ${a.nombres}`.localeCompare(`${b.apellidos} ${b.nombres}`, 'es', { sensitivity: 'base' })
+                );
 
             setEmpleadosDisponibles(empleadosNormalizados);
         } catch (error) {
@@ -190,23 +157,21 @@ const DescuentosView = () => {
     const obtenerEmpleadosPorNombre = (termino: string): EmpleadoNomina[] => {
         const busqueda = termino.trim().toLowerCase();
         if (!busqueda) {
-            return empleadosDisponibles.slice(0, 50);
+            return empleadosDisponibles;
         }
 
         return empleadosDisponibles
-            .filter((emp) => `${emp.apellidos} ${emp.nombres}`.toLowerCase().includes(busqueda))
-            .slice(0, 50);
+            .filter((emp) => `${emp.apellidos} ${emp.nombres}`.toLowerCase().includes(busqueda));
     };
 
-    const obtenerCentrosPorNombre = (termino: string): CentroCosto[] => {
+    const obtenerCentrosPorNombre = (termino: string): NominaCentroCosto[] => {
         const busqueda = termino.trim().toLowerCase();
         if (!busqueda) {
-            return centrosCosto.slice(0, 50);
+            return centrosCosto;
         }
 
         return centrosCosto
-            .filter((centro) => `${centro.IDCENTROCOSTO} ${centro.CENTROCOSTO}`.toLowerCase().includes(busqueda))
-            .slice(0, 50);
+            .filter((centro) => `${centro.IDCENTROCOSTO} ${centro.CENTROCOSTO}`.toLowerCase().includes(busqueda));
     };
 
     const handleEnviarFormulario = async () => {
@@ -242,22 +207,14 @@ const DescuentosView = () => {
         try {
             setGuardandoDescuento(true);
 
-            const response = await fetch('/api/descuentos/incidentes-caja-chica', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    nombre: formulario.usuario,
-                    valor: formulario.valorTotal,
-                    centroCosto: formulario.centroCosto,
-                    observacion: formulario.observacion,
-                }),
+            const data = await dbApi.descuentos.incidentesCajaChica.save<GuardarDescuentoResponse>({
+                nombre: formulario.usuario,
+                valor: formulario.valorTotal,
+                centroCosto: formulario.centroCosto,
+                observacion: formulario.observacion,
             });
 
-            const data = await response.json() as GuardarDescuentoResponse;
-
-            if (!response.ok || !data.ok) {
+            if (!data.ok) {
                 throw new Error(data.error || 'No se pudo guardar el descuento');
             }
 
@@ -302,16 +259,8 @@ const DescuentosView = () => {
         try {
             setAprobandoDescuentoId(id);
 
-            const response = await fetch(`/api/descuentos/incidentes-caja-chica/${id}/estado`, {
-                method: 'PATCH',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ estado: 'certificado' }),
-            });
-
-            const data = await response.json() as ActualizarEstadoDescuentoResponse;
-            if (!response.ok || !data.ok || !data.descuento) {
+            const data = await dbApi.descuentos.incidentesCajaChica.approve<ActualizarEstadoDescuentoResponse>(id);
+            if (!data.ok || !data.descuento) {
                 throw new Error(data.error || 'No se pudo aprobar el descuento');
             }
 

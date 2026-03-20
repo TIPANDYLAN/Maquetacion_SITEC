@@ -1,26 +1,20 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Eye } from 'lucide-react';
-import { getNominaCostCenters, getNominaEmployees } from '../../services/n8nApi';
+import { getNominaCostCenters, getNominaEmployeesActive } from '../../services/n8nApi';
+import { dbApi } from '../../services/dbApi';
+import type {
+  EmpleadoNominaApiItem,
+  NominaApiRecordAndListResponse,
+  NominaApiResponseBase,
+  NominaCentroCosto,
+} from '../../types/nomina';
 
 type SeccionValets = 'horario_fijo' | 'gestionar_valet';
 type DiaLaboralKey = 'lunes' | 'martes' | 'miercoles' | 'jueves' | 'viernes' | 'sabado' | 'domingo';
 
-interface EmpleadoNominaApiItem {
-  json?: {
-    CEDULA?: string;
-    NOMBRES?: string;
-    APELLIDOS?: string;
-  };
-}
-
 interface EmpleadoOption {
   cedula: string;
   nombre: string;
-}
-
-interface CentroCosto {
-  IDCENTROCOSTO: string;
-  CENTROCOSTO: string;
 }
 
 interface HorarioFijoGuardado {
@@ -70,8 +64,7 @@ interface AdicionalesEmpleadoConfig {
   domingoSemanas: number[];
 }
 
-interface ValetAdicionalesApiResponse {
-  ok?: boolean;
+interface ValetAdicionalesApiResponse extends NominaApiResponseBase {
   data?: {
     configuracion?: AdicionalesEmpleadoConfig;
   };
@@ -80,25 +73,11 @@ interface ValetAdicionalesApiResponse {
     empleadoCedula: string;
     configuracion: AdicionalesEmpleadoConfig;
   }>;
-  error?: string;
-  details?: string;
 }
 
-interface ValetEmpleadoApiResponse {
-  ok?: boolean;
-  registros?: ValetAsignadoCentro[];
-  registro?: ValetAsignadoCentro;
-  error?: string;
-  details?: string;
-}
+type ValetEmpleadoApiResponse = NominaApiRecordAndListResponse<ValetAsignadoCentro>;
 
-interface ValetHorarioApiResponse {
-  ok?: boolean;
-  registros?: HorarioFijoGuardado[];
-  registro?: HorarioFijoGuardado;
-  error?: string;
-  details?: string;
-}
+type ValetHorarioApiResponse = NominaApiRecordAndListResponse<HorarioFijoGuardado>;
 
 const SEMANAS_DISPONIBLES = [1, 2, 3, 4, 5];
 
@@ -147,7 +126,7 @@ const OPCIONES_HORA_MEDIA = Array.from({ length: 48 }, (_, index) => {
 });
 
 const etiquetaEmpleado = (empleado: EmpleadoOption): string => `${empleado.nombre} - ${empleado.cedula}`;
-const etiquetaCentro = (centro: CentroCosto): string => `${centro.IDCENTROCOSTO} - ${centro.CENTROCOSTO}`;
+const etiquetaCentro = (centro: NominaCentroCosto): string => `${centro.IDCENTROCOSTO} - ${centro.CENTROCOSTO}`;
 
 const formatearMoneda = (valor: number) => {
   return new Intl.NumberFormat('es-EC', {
@@ -188,7 +167,7 @@ const esMediaHoraValida = (hora: string): boolean => {
 const ValetsFijosView = () => {
   const hoy = new Date();
   const [empleados, setEmpleados] = useState<EmpleadoOption[]>([]);
-  const [centrosCosto, setCentrosCosto] = useState<CentroCosto[]>([]);
+  const [centrosCosto, setCentrosCosto] = useState<NominaCentroCosto[]>([]);
   const [loadingEmpleados, setLoadingEmpleados] = useState(false);
   const [loadingCentros, setLoadingCentros] = useState(false);
 
@@ -237,18 +216,7 @@ const ValetsFijosView = () => {
 
   const cargarAsignacionesCentro = async () => {
     try {
-      const response = await fetch('/api/humana/valets/empleados', {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
-
-      if (!response.ok) {
-        throw new Error(`No se pudo cargar empleados de valet fijo: ${response.statusText}`);
-      }
-
-      const payload = await response.json() as ValetEmpleadoApiResponse;
+      const payload = await dbApi.valets.empleados.list<ValetEmpleadoApiResponse>();
       const registros = Array.isArray(payload?.registros) ? payload.registros : [];
 
       setAsignacionesCentro(registros.map((item) => ({
@@ -268,18 +236,7 @@ const ValetsFijosView = () => {
 
   const cargarHorariosFijos = async () => {
     try {
-      const response = await fetch('/api/humana/valets/horarios', {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
-
-      if (!response.ok) {
-        throw new Error(`No se pudo cargar horarios de valet fijo: ${response.statusText}`);
-      }
-
-      const payload = await response.json() as ValetHorarioApiResponse;
+      const payload = await dbApi.valets.horarios.list<ValetHorarioApiResponse>();
       const registros = Array.isArray(payload?.registros) ? payload.registros : [];
 
       setHorariosFijosGuardados(registros.map((item) => ({
@@ -305,18 +262,7 @@ const ValetsFijosView = () => {
 
   const cargarAdicionalesValets = async () => {
     try {
-      const response = await fetch('/api/humana/valets/adicionales/lista', {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
-
-      if (!response.ok) {
-        throw new Error(`No se pudo cargar adicionales de valet: ${response.statusText}`);
-      }
-
-      const payload = await response.json() as ValetAdicionalesApiResponse;
+      const payload = await dbApi.valets.adicionales.list<ValetAdicionalesApiResponse>();
       const registros = Array.isArray(payload?.registros) ? payload.registros : [];
 
       const mapa = registros.reduce<Record<string, AdicionalesEmpleadoConfig>>((acc, item) => {
@@ -360,14 +306,15 @@ const ValetsFijosView = () => {
   const cargarEmpleados = async () => {
     setLoadingEmpleados(true);
     try {
-      const rawData = await getNominaEmployees<EmpleadoNominaApiItem[]>();
+      const rawData = await getNominaEmployeesActive<EmpleadoNominaApiItem[]>();
       const empleadosApi = Array.isArray(rawData) ? rawData : [];
 
       const empleadosNormalizados = empleadosApi
         .map((item: EmpleadoNominaApiItem) => {
-          const cedula = String(item?.json?.CEDULA || '').trim();
-          const nombres = String(item?.json?.NOMBRES || '').trim();
-          const apellidos = String(item?.json?.APELLIDOS || '').trim();
+          const payload = (item?.json ?? item ?? {}) as Record<string, unknown>;
+          const cedula = String(payload?.CEDULA || '').trim();
+          const nombres = String(payload?.NOMBRES || '').trim();
+          const apellidos = String(payload?.APELLIDOS || '').trim();
           const nombre = `${apellidos} ${nombres}`.trim();
           return { cedula, nombre };
         })
@@ -376,11 +323,7 @@ const ValetsFijosView = () => {
           a.nombre.localeCompare(b.nombre, 'es', { sensitivity: 'base' }),
         );
 
-      const unicos = Array.from(
-        new Map(empleadosNormalizados.map((item: EmpleadoOption) => [item.cedula, item])).values(),
-      );
-
-      setEmpleados(unicos);
+      setEmpleados(empleadosNormalizados);
     } catch (error) {
       console.error('Error cargando empleados para valets fijos:', error);
       setEmpleados([]);
@@ -544,19 +487,14 @@ const ValetsFijosView = () => {
     setModalAdicionalesOpen(true);
 
     try {
-      const response = await fetch(
-        `/api/humana/valets/adicionales?centroCostoId=${encodeURIComponent(empleado.centroCostoId)}&empleadoCedula=${encodeURIComponent(empleado.empleadoCedula)}`,
+      const payload = await dbApi.valets.adicionales.get<ValetAdicionalesApiResponse>(
+        empleado.centroCostoId,
+        empleado.empleadoCedula,
       );
 
-      if (response.status === 404) {
+      if (!payload) {
         return;
       }
-
-      if (!response.ok) {
-        throw new Error(`No se pudo cargar adicionales guardados: ${response.statusText}`);
-      }
-
-      const payload = await response.json() as ValetAdicionalesApiResponse;
       const configApi = payload?.data?.configuracion;
 
       if (!configApi) {
@@ -796,32 +734,20 @@ const ValetsFijosView = () => {
     }));
 
     try {
-      const response = await fetch('/api/humana/valets/adicionales', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          centroCostoId: empleadoAdicionalSeleccionado.centroCostoId,
-          centroCostoNombre: empleadoAdicionalSeleccionado.centroCostoNombre,
-          empleadoCedula: empleadoAdicionalSeleccionado.empleadoCedula,
-          empleadoNombre: empleadoAdicionalSeleccionado.empleadoNombre,
-          habilitarDiaAdicional: nuevaConfig.habilitarDiaAdicional,
-          diaAdicionalAnio: nuevaConfig.diaAdicionalAnio,
-          diaAdicionalMes: nuevaConfig.diaAdicionalMes,
-          diaAdicionalSemanas: nuevaConfig.diaAdicionalSemanas,
-          habilitarDomingo: nuevaConfig.habilitarDomingo,
-          domingoAnio: nuevaConfig.domingoAnio,
-          domingoMes: nuevaConfig.domingoMes,
-          domingoSemanas: nuevaConfig.domingoSemanas,
-        }),
+      await dbApi.valets.adicionales.save({
+        centroCostoId: empleadoAdicionalSeleccionado.centroCostoId,
+        centroCostoNombre: empleadoAdicionalSeleccionado.centroCostoNombre,
+        empleadoCedula: empleadoAdicionalSeleccionado.empleadoCedula,
+        empleadoNombre: empleadoAdicionalSeleccionado.empleadoNombre,
+        habilitarDiaAdicional: nuevaConfig.habilitarDiaAdicional,
+        diaAdicionalAnio: nuevaConfig.diaAdicionalAnio,
+        diaAdicionalMes: nuevaConfig.diaAdicionalMes,
+        diaAdicionalSemanas: nuevaConfig.diaAdicionalSemanas,
+        habilitarDomingo: nuevaConfig.habilitarDomingo,
+        domingoAnio: nuevaConfig.domingoAnio,
+        domingoMes: nuevaConfig.domingoMes,
+        domingoSemanas: nuevaConfig.domingoSemanas,
       });
-
-      if (!response.ok) {
-        const payload = await response.json().catch(() => ({}));
-        const detalle = String(payload?.error || response.statusText || 'Error desconocido');
-        throw new Error(detalle);
-      }
     } catch (error) {
       console.error('Error guardando adicionales de valet en backend:', error);
       setMensaje({
@@ -904,32 +830,19 @@ const ValetsFijosView = () => {
 
     void (async () => {
       try {
-        const response = await fetch('/api/humana/valets/horarios', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            centroCostoId: nuevoHorario.centroCostoId,
-            centroCostoNombre: nuevoHorario.centroCostoNombre,
-            empleadoCedula: nuevoHorario.empleadoCedula,
-            empleadoNombre: nuevoHorario.empleadoNombre,
-            valorFijo: nuevoHorario.valorFijo,
-            anio: nuevoHorario.anio,
-            mes: nuevoHorario.mes,
-            semana: nuevoHorario.semana,
-            dia: nuevoHorario.dia,
-            horaEntrada: nuevoHorario.horaEntrada,
-            horaSalida: nuevoHorario.horaSalida,
-          }),
+        const payload = await dbApi.valets.horarios.save<ValetHorarioApiResponse>({
+          centroCostoId: nuevoHorario.centroCostoId,
+          centroCostoNombre: nuevoHorario.centroCostoNombre,
+          empleadoCedula: nuevoHorario.empleadoCedula,
+          empleadoNombre: nuevoHorario.empleadoNombre,
+          valorFijo: nuevoHorario.valorFijo,
+          anio: nuevoHorario.anio,
+          mes: nuevoHorario.mes,
+          semana: nuevoHorario.semana,
+          dia: nuevoHorario.dia,
+          horaEntrada: nuevoHorario.horaEntrada,
+          horaSalida: nuevoHorario.horaSalida,
         });
-
-        if (!response.ok) {
-          const payload = await response.json().catch(() => ({}));
-          throw new Error(String(payload?.error || response.statusText || 'Error desconocido'));
-        }
-
-        const payload = await response.json() as ValetHorarioApiResponse;
         const horarioGuardado = payload?.registro || nuevoHorario;
 
         setHorariosFijosGuardados((prev) => {
@@ -1019,24 +932,13 @@ const ValetsFijosView = () => {
 
     void (async () => {
       try {
-        const response = await fetch('/api/humana/valets/empleados', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            centroCostoId: nuevaAsignacion.centroCostoId,
-            centroCostoNombre: nuevaAsignacion.centroCostoNombre,
-            empleadoCedula: nuevaAsignacion.empleadoCedula,
-            empleadoNombre: nuevaAsignacion.empleadoNombre,
-            valorFijo: nuevaAsignacion.valorFijo,
-          }),
+        await dbApi.valets.empleados.save({
+          centroCostoId: nuevaAsignacion.centroCostoId,
+          centroCostoNombre: nuevaAsignacion.centroCostoNombre,
+          empleadoCedula: nuevaAsignacion.empleadoCedula,
+          empleadoNombre: nuevaAsignacion.empleadoNombre,
+          valorFijo: nuevaAsignacion.valorFijo,
         });
-
-        if (!response.ok) {
-          const payload = await response.json().catch(() => ({}));
-          throw new Error(String(payload?.error || response.statusText || 'Error desconocido'));
-        }
 
         setAsignacionesCentro((prev) => {
           const sinDuplicado = prev.filter((item) => !(
@@ -1081,15 +983,10 @@ const ValetsFijosView = () => {
 
     void (async () => {
       try {
-        const response = await fetch(
-          `/api/humana/valets/empleados?centroCostoId=${encodeURIComponent(centroGestionSeleccionado.IDCENTROCOSTO)}&empleadoCedula=${encodeURIComponent(cedula)}`,
-          { method: 'DELETE' },
+        await dbApi.valets.empleados.delete(
+          centroGestionSeleccionado.IDCENTROCOSTO,
+          cedula,
         );
-
-        if (!response.ok) {
-          const payload = await response.json().catch(() => ({}));
-          throw new Error(String(payload?.error || response.statusText || 'Error desconocido'));
-        }
 
         setAsignacionesCentro((prev) => prev.filter((item) => !(
           item.centroCostoId === centroGestionSeleccionado.IDCENTROCOSTO

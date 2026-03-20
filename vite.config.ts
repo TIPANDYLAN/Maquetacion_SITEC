@@ -116,6 +116,18 @@ export default defineConfig({
           })
         },
       },
+      '/api/valets': {
+        target: 'http://localhost:4000',
+        changeOrigin: true,
+        configure: (proxy) => {
+          proxy.on('error', (_error, _req, res) => {
+            responderProxyNoDisponible(res, {
+              error: 'Backend de valets no disponible',
+              details: 'Inicia el backend con npm run dev:backend',
+            })
+          })
+        },
+      },
       '/api/descuentos': {
         target: 'http://localhost:4000',
         changeOrigin: true,

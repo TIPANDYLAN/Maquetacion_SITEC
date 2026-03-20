@@ -1,14 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Plus, X } from 'lucide-react';
-import { getNominaEmployees } from '../../services/n8nApi';
-
-interface EmpleadoNominaApiItem {
-  json?: {
-    CEDULA?: string;
-    NOMBRES?: string;
-    APELLIDOS?: string;
-  };
-}
+import { getNominaEmployeesActive } from '../../services/n8nApi';
+import { dbApi } from '../../services/dbApi';
+import type { EmpleadoNominaApiItem, NominaApiListResponse, NominaApiRecordResponse } from '../../types/nomina';
 
 interface EmpleadoOption {
   cedula: string;
@@ -24,19 +18,9 @@ interface ExentoPagoSeguroRow {
   fecha_actualizacion: string;
 }
 
-interface ListarExentosResponse {
-  ok: boolean;
-  registros?: ExentoPagoSeguroRow[];
-  error?: string;
-  details?: string;
-}
+type ListarExentosResponse = NominaApiListResponse<ExentoPagoSeguroRow>;
 
-interface GuardarExentoResponse {
-  ok: boolean;
-  registro?: ExentoPagoSeguroRow;
-  error?: string;
-  details?: string;
-}
+type GuardarExentoResponse = NominaApiRecordResponse<ExentoPagoSeguroRow>;
 
 const ExentosPagoSeguroView = () => {
   const [registros, setRegistros] = useState<ExentoPagoSeguroRow[]>([]);
@@ -56,15 +40,8 @@ const ExentosPagoSeguroView = () => {
   const cargarRegistros = async () => {
     setLoadingRegistros(true);
     try {
-      const response = await fetch('/api/descuentos/humana/exentos-pago-seguro', {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
-
-      const data = await response.json() as ListarExentosResponse;
-      if (!response.ok || !data.ok) {
+      const data = await dbApi.exentosPagoSeguro.list<ListarExentosResponse>();
+      if (!data.ok) {
         throw new Error(data.error || 'No se pudo cargar exentos pago seguro');
       }
 
@@ -80,25 +57,22 @@ const ExentosPagoSeguroView = () => {
   const cargarEmpleados = async () => {
     setLoadingEmpleados(true);
     try {
-      const rawData = await getNominaEmployees<EmpleadoNominaApiItem[]>();
+      const rawData = await getNominaEmployeesActive<EmpleadoNominaApiItem[]>();
       const empleadosApi = Array.isArray(rawData) ? rawData : [];
 
       const empleadosNormalizados = empleadosApi
         .map((item: EmpleadoNominaApiItem) => {
-          const cedula = String(item?.json?.CEDULA || '').trim();
-          const nombres = String(item?.json?.NOMBRES || '').trim();
-          const apellidos = String(item?.json?.APELLIDOS || '').trim();
+          const payload = (item?.json ?? item ?? {}) as Record<string, unknown>;
+          const cedula = String(payload?.CEDULA || '').trim();
+          const nombres = String(payload?.NOMBRES || '').trim();
+          const apellidos = String(payload?.APELLIDOS || '').trim();
           const nombre = `${apellidos} ${nombres}`.trim();
           return { cedula, nombre };
         })
         .filter((item: EmpleadoOption) => item.cedula && item.nombre)
         .sort((a: EmpleadoOption, b: EmpleadoOption) => a.nombre.localeCompare(b.nombre, 'es', { sensitivity: 'base' }));
 
-      const unicos = Array.from(
-        new Map(empleadosNormalizados.map((item: EmpleadoOption) => [item.cedula, item])).values()
-      );
-
-      setEmpleados(unicos);
+      setEmpleados(empleadosNormalizados);
     } catch (error) {
       console.error('Error cargando empleados para exentos:', error);
       setEmpleados([]);
@@ -158,20 +132,13 @@ const ExentosPagoSeguroView = () => {
 
     try {
       setSaving(true);
-      const response = await fetch('/api/descuentos/humana/exentos-pago-seguro', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          cedula: empleadoSeleccionado.cedula,
-          nombre: empleadoSeleccionado.nombre,
-          porcentajeExento: valorPorcentaje,
-        }),
+      const data = await dbApi.exentosPagoSeguro.save<GuardarExentoResponse>({
+        cedula: empleadoSeleccionado.cedula,
+        nombre: empleadoSeleccionado.nombre,
+        porcentajeExento: valorPorcentaje,
       });
 
-      const data = await response.json() as GuardarExentoResponse;
-      if (!response.ok || !data.ok || !data.registro) {
+      if (!data.ok || !data.registro) {
         throw new Error(data.error || 'No se pudo guardar el exento de pago seguro');
       }
 

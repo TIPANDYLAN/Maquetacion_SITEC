@@ -1,25 +1,30 @@
 export const N8N_API_CATALOG = {
-  nominaEmployees: '/api/n8n/webhook/lista/empleados/nomina/entsal/test',
-  nominaCostCenters: '/api/n8n/webhook/centro/costo/nomina',
-  humanaDatos: '/api/n8n/webhook/datos/humana',
+  movimientosHumanaEmpleados: '/api/n8n/webhook/lista/empleados/nomina/entsal/test',
+  empleadosActivos: '/api/n8n/webhook/empleados/activos/test',
+  listaCentroCosto: '/api/n8n/webhook/centrocostos/empleados/test',
+  detalleEmpleadoCentroCostos: '/api/n8n/webhook/centrocostos/empleados',
+  familiaresEmpleados: '/api/n8n/webhook/detalle/familiares/nomina/test',
   getWithBodyProxy: '/api/n8n/get-with-body',
 } as const;
 
 const N8N_DEFAULT_API_KEY = 'u37KhX9gYj2Ns5rPAWq4EtZcLVtMoF16';
 
-interface N8nNominaCostCenterRawItem {
-  json?: {
-    IDCENTROCOSTO?: string;
-    CENTROCOSTO?: string;
-  };
-  IDCENTROCOSTO?: string;
-  CENTROCOSTO?: string;
-  pairedItem?: unknown;
+interface N8nCostCenterRawItem {
+  COD_CCOSTO?: string;
+  NOMBRE?: string;
+  estado?: string;
+  Acuerdo_Horas?: string;
+  Acuerdo_Movilizacion?: string;
+  Tipo?: string;
 }
 
 export interface NominaCostCenter {
   IDCENTROCOSTO: string;
   CENTROCOSTO: string;
+  estado?: string;
+  Acuerdo_Horas?: string;
+  Acuerdo_Movilizacion?: string;
+  Tipo?: string;
 }
 
 const defaultJsonHeaders = {
@@ -44,7 +49,7 @@ const parseErrorMessage = async (response: Response): Promise<string> => {
 };
 
 export const getNominaEmployees = async <T = unknown>(): Promise<T> => {
-  const response = await fetch(N8N_API_CATALOG.nominaEmployees, {
+  const response = await fetch(N8N_API_CATALOG.movimientosHumanaEmpleados, {
     method: 'GET',
     headers: buildHeaders(),
   });
@@ -56,8 +61,21 @@ export const getNominaEmployees = async <T = unknown>(): Promise<T> => {
   return await response.json() as T;
 };
 
-export const getNominaCostCentersRaw = async <T = N8nNominaCostCenterRawItem[]>(): Promise<T> => {
-  const response = await fetch(N8N_API_CATALOG.nominaCostCenters, {
+export const getNominaEmployeesActive = async <T = unknown>(): Promise<T> => {
+  const response = await fetch(N8N_API_CATALOG.empleadosActivos, {
+    method: 'GET',
+    headers: buildHeaders(),
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseErrorMessage(response));
+  }
+
+  return await response.json() as T;
+};
+
+export const getNominaCostCentersRaw = async <T = N8nCostCenterRawItem[]>(): Promise<T> => {
+  const response = await fetch(N8N_API_CATALOG.listaCentroCosto, {
     method: 'GET',
     headers: buildHeaders(),
   });
@@ -70,17 +88,18 @@ export const getNominaCostCentersRaw = async <T = N8nNominaCostCenterRawItem[]>(
 };
 
 export const getNominaCostCenters = async (): Promise<NominaCostCenter[]> => {
-  const data = await getNominaCostCentersRaw<N8nNominaCostCenterRawItem[]>();
+  const data = await getNominaCostCentersRaw<N8nCostCenterRawItem[]>();
   const rows = Array.isArray(data) ? data : [];
 
   return rows
-    .map((item) => {
-      const source = (item?.json ?? item ?? {}) as { IDCENTROCOSTO?: string; CENTROCOSTO?: string };
-      return {
-        IDCENTROCOSTO: String(source.IDCENTROCOSTO || '').trim(),
-        CENTROCOSTO: String(source.CENTROCOSTO || '').trim(),
-      };
-    })
+    .map((item) => ({
+      IDCENTROCOSTO: String(item?.COD_CCOSTO || '').trim(),
+      CENTROCOSTO: String(item?.NOMBRE || '').trim(),
+      estado: String(item?.estado || '').trim(),
+      Acuerdo_Horas: String(item?.Acuerdo_Horas || '').trim(),
+      Acuerdo_Movilizacion: String(item?.Acuerdo_Movilizacion || '').trim(),
+      Tipo: String(item?.Tipo || '').trim(),
+    }))
     .filter((item) => item.IDCENTROCOSTO || item.CENTROCOSTO);
 };
 
@@ -90,15 +109,53 @@ interface N8nGetWithBodyInput {
   apiKey?: string;
 }
 
+interface N8nDirectPostInput {
+  url: string;
+  payload?: unknown;
+  apiKey?: string;
+}
+
 export const n8nGetWithBody = async <T = unknown>(input: N8nGetWithBodyInput): Promise<T> => {
+  const endpoint = String(input.endpoint || '').trim();
+  const endpointToProxy = (() => {
+    if (!endpoint) {
+      return '';
+    }
+
+    // The Vite middleware expects an absolute URL for URL parsing.
+    if (/^https?:\/\//i.test(endpoint)) {
+      return endpoint;
+    }
+
+    if (typeof window !== 'undefined') {
+      return new URL(endpoint, window.location.origin).toString();
+    }
+
+    return endpoint;
+  })();
+
   const response = await fetch(N8N_API_CATALOG.getWithBodyProxy, {
     method: 'POST',
     headers: buildHeaders(input.apiKey),
     body: JSON.stringify({
-      endpoint: input.endpoint,
+      endpoint: endpointToProxy,
       payload: input.payload ?? {},
       apiKey: String(input.apiKey ?? N8N_DEFAULT_API_KEY).trim(),
     }),
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseErrorMessage(response));
+  }
+
+  return await response.json() as T;
+};
+
+export const n8nPostDirect = async <T = unknown>(input: N8nDirectPostInput): Promise<T> => {
+  const response = await fetch(input.url, {
+    method: 'POST',
+    headers: buildHeaders(input.apiKey),
+    body: JSON.stringify(input.payload ?? {}),
   });
 
   if (!response.ok) {

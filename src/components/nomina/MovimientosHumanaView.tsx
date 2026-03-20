@@ -1,55 +1,13 @@
 import { useCallback, useState, useEffect } from 'react';
 import { Plus, Trash2, Send, CheckCircle2, AlertCircle, Edit2, Download } from 'lucide-react';
 import ExcelJS from 'exceljs';
-import { type HumanaEmployeeData } from '../../services/humanaStorage';
-import { getNominaEmployees, N8N_API_CATALOG, n8nGetWithBody } from '../../services/n8nApi';
+import type { HumanaEmployeeData } from '../../types/humana';
+import type { EmpleadoNominaApiItem, EmpleadoNominaApiPayload } from '../../types/nomina';
+import { dbApi } from '../../services/dbApi';
+import { getNominaEmployees, getNominaEmployeesActive, N8N_API_CATALOG, n8nGetWithBody, n8nPostDirect } from '../../services/n8nApi';
 
 interface MovimientosHumanaViewProps {
   onUnsavedChangesChange: (hasUnsavedChanges: boolean) => void;
-}
-
-interface EmpleadoNominaApiItem {
-  json?: {
-    CEDULA?: string;
-    NOMBRES?: string;
-    APELLIDOS?: string;
-    PLAN?: string;
-    TIPO_PLAN?: string;
-    PLAN_CONTRATADO?: string;
-    PLAN_CONTRATADO_SALUD?: string;
-    TARIFA?: string;
-    INGRESO?: string | null;
-    SALIDA?: string | null;
-    FechaIngreso?: string | null;
-    FechaSalida?: string | null;
-  };
-  CEDULA?: string;
-  NOMBRES?: string;
-  APELLIDOS?: string;
-  PLAN?: string;
-  TIPO_PLAN?: string;
-  PLAN_CONTRATADO?: string;
-  PLAN_CONTRATADO_SALUD?: string;
-  TARIFA?: string;
-  INGRESO?: string | null;
-  SALIDA?: string | null;
-  FechaIngreso?: string | null;
-  FechaSalida?: string | null;
-}
-
-interface EmpleadoNominaApiPayload {
-  CEDULA?: string;
-  NOMBRES?: string;
-  APELLIDOS?: string;
-  INGRESO?: string;
-  SALIDA?: string;
-  FechaIngreso?: string;
-  FechaSalida?: string;
-  TARIFA?: string;
-  PLAN?: string;
-  TIPO_PLAN?: string;
-  PLAN_CONTRATADO?: string;
-  PLAN_CONTRATADO_SALUD?: string;
 }
 
 const obtenerPayloadEmpleadoNomina = (item: EmpleadoNominaApiItem): EmpleadoNominaApiPayload => {
@@ -219,11 +177,11 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
     };
   }, []);
 
-  // Cargar empleados desde API de nomina
+  // Cargar empleados desde API de nomina para selector
   useEffect(() => {
     const cargarEmpleados = async () => {
       try {
-        const data = await getNominaEmployees<EmpleadoNominaApiItem[]>();
+        const data = await getNominaEmployeesActive<EmpleadoNominaApiItem[]>();
         const empleadosApi = Array.isArray(data) ? data : [];
         const empleadosNormalizados = empleadosApi
           .map(mapearEmpleadoDesdeApi)
@@ -292,7 +250,7 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
   const obtenerDatosEmpleadoCentroCostos = async (cedula: string) => {
     try {
       const data = await n8nGetWithBody<Record<string, unknown>>({
-        endpoint: 'https://n8n.172.10.219.15.sslip.io/webhook/centrocostos/empleados',
+        endpoint: N8N_API_CATALOG.detalleEmpleadoCentroCostos,
         payload: { Cedula: cedula },
       });
       const tarifa = normalizarTarifaApi(
@@ -329,12 +287,7 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
 
   const obtenerPlanTarifaActualDesdeBd = async (empleadoNombre: string) => {
     try {
-      const response = await fetch(`/api/humana/employee-latest?empleado=${encodeURIComponent(empleadoNombre)}`);
-      if (!response.ok) {
-        throw new Error(`API error: ${response.statusText}`);
-      }
-
-      const data = await response.json();
+      const data = await dbApi.humana.getEmployeeLatest<{ found?: boolean; tarifa?: string; plan?: string }>(empleadoNombre);
       if (data?.found === false) {
         return { tarifa: '', plan: '' };
       }
@@ -371,8 +324,8 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
 
     setCargandoFamiliares(true);
     try {
-      const data = await n8nGetWithBody<{ familiares?: unknown[] }>({
-        endpoint: N8N_API_CATALOG.humanaDatos,
+      const data = await n8nPostDirect<{ familiares?: unknown[] }>({
+        url: N8N_API_CATALOG.familiaresEmpleados,
         payload: { Cedula: cedula },
       });
       const familiares = Array.isArray(data?.familiares) ? data.familiares : [];
