@@ -3,9 +3,8 @@ import DescuentosView from './DescuentosView';
 import MovimientosHumanaView from './MovimientosHumanaView';
 import ProveedorHumanaView from './ProveedorHumanaView';
 import ExentosPagoSeguroView from './ExentosPagoSeguroView.tsx';
-import ValetsFijosView from './ValetsFijosView.tsx';
 
-type TabPrincipal = 'gestion_descuentos' | 'descuentos_humana' | 'valets_fijos';
+type TabPrincipal = 'gestion_descuentos' | 'descuentos_humana';
 type TabHumana = 'movimientos_humana' | 'proveedor_humana' | 'exentos_pago_seguro';
 
 const GestionDescuentosTabsView = () => {
@@ -49,10 +48,6 @@ const GestionDescuentosTabsView = () => {
   const renderContenido = () => {
     if (tabPrincipal === 'gestion_descuentos') {
       return <DescuentosView />;
-    }
-
-    if (tabPrincipal === 'valets_fijos') {
-      return <ValetsFijosView />;
     }
 
     return (
@@ -121,16 +116,6 @@ const GestionDescuentosTabsView = () => {
           }`}
         >
           Descuentos Humana
-        </button>
-        <button
-          onClick={() => handleTabPrincipalChange('valets_fijos')}
-          className={`px-6 py-2 rounded-xl text-sm font-semibold transition min-w-[240px] ${
-            tabPrincipal === 'valets_fijos'
-              ? 'bg-blue-50 text-blue-700 border border-blue-200'
-              : 'text-slate-600 hover:bg-slate-100 border border-transparent'
-          }`}
-        >
-          Valets Fijos
         </button>
       </div>
 

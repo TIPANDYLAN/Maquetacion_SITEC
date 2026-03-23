@@ -6,6 +6,7 @@ const TicketsView = lazy(() => import("./components/operaciones/TicketsView"));
 const PagosView = lazy(() => import("./components/pagos/PagosView"));
 const HumanaView = lazy(() => import("./components/nomina/HumanaView"));
 const GestionDescuentosTabsView = lazy(() => import("./components/nomina/GestionDescuentosTabsView"));
+const ValetsFijosView = lazy(() => import("./components/nomina/ValetsFijosView"));
 const BancosView = lazy(() => import("./components/pagos/BancosView"));
 
 interface PlaceholderContent {
@@ -80,6 +81,8 @@ function App() {
         return <BancosView />;
       case 'descuentos':
         return <GestionDescuentosTabsView />;
+      case 'valets_fijos':
+        return <ValetsFijosView />;
       case 'humana':
         return <HumanaView />;
       default: {
@@ -189,6 +192,7 @@ function App() {
                 <button onClick={() => setActiveTab('alimentacion')} className={`block w-full text-left px-3 py-2 rounded-lg text-sm transition-all ${isItemActive('alimentacion') ? 'bg-blue-50 text-blue-600 font-bold' : 'text-slate-600 hover:bg-slate-50'}`}>Alimentación</button>
                 <button onClick={() => setActiveTab('fondos')} className={`block w-full text-left px-3 py-2 rounded-lg text-sm transition-all ${isItemActive('fondos') ? 'bg-blue-50 text-blue-600 font-bold' : 'text-slate-600 hover:bg-slate-50'}`}>Fondos de reserva</button>
                 <button onClick={() => setActiveTab('descuentos')} className={`block w-full text-left px-3 py-2 rounded-lg text-sm transition-all ${isItemActive('descuentos') ? 'bg-blue-50 text-blue-600 font-bold' : 'text-slate-600 hover:bg-slate-50'}`}>Gestión de descuentos</button>
+                <button onClick={() => setActiveTab('valets_fijos')} className={`block w-full text-left px-3 py-2 rounded-lg text-sm transition-all ${isItemActive('valets_fijos') ? 'bg-blue-50 text-blue-600 font-bold' : 'text-slate-600 hover:bg-slate-50'}`}>Valets fijos</button>
                 <button onClick={() => setActiveTab('horas')} className={`block w-full text-left px-3 py-2 rounded-lg text-sm transition-all ${isItemActive('horas') ? 'bg-blue-50 text-blue-600 font-bold' : 'text-slate-600 hover:bg-slate-50'}`}>Registro de horas</button>
                 <button onClick={() => setActiveTab('humana')} className={`block w-full text-left px-3 py-2 rounded-lg text-sm transition-all ${isItemActive('humana') ? 'bg-blue-50 text-blue-600 font-bold' : 'text-slate-600 hover:bg-slate-50'}`}>Humana</button>
               </div>

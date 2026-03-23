@@ -32,6 +32,14 @@ interface HorarioFijoGuardado {
   horaSalida: string;
 }
 
+interface EventoCalendario {
+  empleadoNombre: string;
+  dia: DiaLaboralKey;
+  horaEntrada: string;
+  horaSalida: string;
+  esAdicional: boolean;
+}
+
 interface ValetAsignadoCentro {
   id: string;
   centroCostoId: string;
@@ -119,9 +127,12 @@ const MESES: Array<{ value: number; label: string }> = [
   { value: 12, label: 'Diciembre' },
 ];
 
-const OPCIONES_HORA_MEDIA = Array.from({ length: 48 }, (_, index) => {
-  const horas = Math.floor(index / 2);
-  const minutos = index % 2 === 0 ? '00' : '30';
+const HORA_INICIO = 7;
+const HORA_FIN = 24;
+
+const OPCIONES_HORA_MEDIA = Array.from({ length: HORA_FIN - HORA_INICIO + 1 }, (_, index) => {
+  const horas = HORA_INICIO + index;
+  const minutos = '00';
   return `${String(horas).padStart(2, '0')}:${minutos}`;
 });
 
@@ -157,11 +168,96 @@ const calcularHorasTrabajadas = (horaEntrada: string, horaSalida: string): numbe
   return Math.round((diferencia / 60) * 100) / 100;
 };
 
-const esMediaHoraValida = (hora: string): boolean => {
+const esHoraValida = (hora: string): boolean => {
   const partes = hora.split(':');
   if (partes.length < 2) return false;
   const minutos = Number(partes[1]);
-  return minutos === 0 || minutos === 30;
+  return minutos === 0;
+};
+
+const generarHorasDelDia = (): string[] => {
+  return Array.from({ length: HORA_FIN - HORA_INICIO + 1 }, (_, i) => {
+    const hora = HORA_INICIO + i;
+    const minutos = '00';
+    return `${String(hora).padStart(2, '0')}:${minutos}`;
+  });
+};
+
+const diaLaboralAIndice = (dia: DiaLaboralKey): number => {
+  const indice = DIAS_LABORALES.findIndex((d) => d.key === dia);
+  return indice;
+};
+
+interface BloqueCalendario {
+  nombre: string;
+  horaEntrada: string;
+  horaSalida: string;
+  esAdicional: boolean;
+  top: number;
+  height: number;
+  lane: number;
+  lanesTotal: number;
+}
+
+const obtenerBloquesCalendarioDia = (
+  eventosCalendario: EventoCalendario[],
+  dia: DiaLaboralKey,
+  slotHeight: number,
+): BloqueCalendario[] => {
+  const inicioDia = HORA_INICIO * 60;
+  const finDia = HORA_FIN * 60;
+
+  const eventos = eventosCalendario
+    .filter((evento) => evento.dia === dia)
+    .map((evento) => {
+      const [entradaH, entradaM] = evento.horaEntrada.split(':').map(Number);
+      const [salidaH, salidaM] = evento.horaSalida.split(':').map(Number);
+      const inicio = entradaH * 60 + entradaM;
+      const fin = salidaH * 60 + salidaM;
+      return {
+        nombre: evento.empleadoNombre,
+        horaEntrada: evento.horaEntrada,
+        horaSalida: evento.horaSalida,
+        esAdicional: evento.esAdicional,
+        inicio,
+        fin,
+      };
+    })
+    .filter((e) => e.fin > e.inicio)
+    .map((e) => ({
+      ...e,
+      inicio: Math.max(inicioDia, e.inicio),
+      fin: Math.min(finDia, e.fin),
+    }))
+    .filter((e) => e.fin > e.inicio)
+    .sort((a, b) => a.inicio - b.inicio || a.fin - b.fin);
+
+  if (eventos.length === 0) return [];
+
+  const finPorLane: number[] = [];
+  const eventosConLane = eventos.map((evento) => {
+    let lane = finPorLane.findIndex((finLane) => evento.inicio >= finLane);
+    if (lane === -1) {
+      lane = finPorLane.length;
+      finPorLane.push(evento.fin);
+    } else {
+      finPorLane[lane] = evento.fin;
+    }
+    return { ...evento, lane };
+  });
+
+  const lanesTotal = Math.max(1, finPorLane.length);
+
+  return eventosConLane.map((evento) => ({
+    nombre: evento.nombre,
+    horaEntrada: evento.horaEntrada,
+    horaSalida: evento.horaSalida,
+    esAdicional: evento.esAdicional,
+    top: ((evento.inicio - inicioDia) / 60) * slotHeight,
+    height: Math.max(28, ((evento.fin - evento.inicio) / 60) * slotHeight),
+    lane: evento.lane,
+    lanesTotal,
+  }));
 };
 
 const ValetsFijosView = () => {
@@ -708,8 +804,8 @@ const ValetsFijosView = () => {
             return;
           }
 
-          if (!esMediaHoraValida(diaDia.horaEntrada) || !esMediaHoraValida(diaDia.horaSalida)) {
-            setMensaje({ type: 'error', text: `Las horas de semana ${semanaDia.semana} deben estar en punto o media (:00 o :30).` });
+          if (!esHoraValida(diaDia.horaEntrada) || !esHoraValida(diaDia.horaSalida)) {
+            setMensaje({ type: 'error', text: `Las horas de semana ${semanaDia.semana} deben estar en punto (:00).` });
             return;
           }
 
@@ -812,8 +908,8 @@ const ValetsFijosView = () => {
       return;
     }
 
-    if (!esMediaHoraValida(horaEntradaHorario) || !esMediaHoraValida(horaSalidaHorario)) {
-      setMensaje({ type: 'error', text: 'Las horas deben estar en punto o media (:00 o :30).' });
+    if (!esHoraValida(horaEntradaHorario) || !esHoraValida(horaSalidaHorario)) {
+      setMensaje({ type: 'error', text: 'Las horas deben estar en punto (:00).' });
       return;
     }
 
@@ -1034,12 +1130,57 @@ const ValetsFijosView = () => {
     })();
   };
 
-  const horariosEmpleadoPeriodo = useMemo(() => {
-    if (!empleadoSeleccionado) return [];
+  const horariosCentroPeriodo = useMemo(() => {
+    if (!centroHorarioSeleccionado) return [];
     return horariosFijosGuardados
-      .filter((item) => item.empleadoCedula === empleadoSeleccionado.cedula && item.anio === anio && item.mes === mes)
-      .sort((a, b) => a.semana - b.semana || DIAS_LABORALES.findIndex((d) => d.key === a.dia) - DIAS_LABORALES.findIndex((d) => d.key === b.dia));
-  }, [horariosFijosGuardados, empleadoSeleccionado, anio, mes]);
+      .filter((item) => 
+        item.centroCostoId === centroHorarioSeleccionado.IDCENTROCOSTO && 
+        item.anio === anio && 
+        item.mes === mes &&
+        item.semana === semanaHorario &&
+        DIAS_LABORALES.some((d) => d.key === item.dia)
+      )
+      .sort((a, b) => diaLaboralAIndice(a.dia) - diaLaboralAIndice(b.dia));
+  }, [horariosFijosGuardados, centroHorarioSeleccionado, anio, mes, semanaHorario]);
+
+  const eventosCalendarioPeriodo = useMemo(() => {
+    const eventosBase: EventoCalendario[] = horariosCentroPeriodo.map((item) => ({
+      empleadoNombre: item.empleadoNombre,
+      dia: item.dia,
+      horaEntrada: item.horaEntrada,
+      horaSalida: item.horaSalida,
+      esAdicional: false,
+    }));
+
+    if (!centroHorarioSeleccionado) return eventosBase;
+
+    const adicionales: EventoCalendario[] = asignacionesCentro
+      .filter((item) => item.centroCostoId === centroHorarioSeleccionado.IDCENTROCOSTO)
+      .flatMap((asignacion) => {
+        const config = adicionalesPorEmpleado[asignacion.id];
+        if (!config?.habilitarDiaAdicional) return [];
+        if (config.diaAdicionalAnio !== anio || config.diaAdicionalMes !== mes) return [];
+
+        const semana = config.diaAdicionalSemanas.find((item) => item.semana === semanaHorario && item.habilitado);
+        if (!semana) return [];
+
+        return semana.dias
+          .filter((diaAdicional) => diaAdicional.horaEntrada && diaAdicional.horaSalida)
+          .map((diaAdicional) => ({
+            empleadoNombre: asignacion.empleadoNombre,
+            dia: diaAdicional.dia,
+            horaEntrada: diaAdicional.horaEntrada,
+            horaSalida: diaAdicional.horaSalida,
+            esAdicional: true,
+          }));
+      });
+
+    return [...eventosBase, ...adicionales];
+  }, [horariosCentroPeriodo, centroHorarioSeleccionado, asignacionesCentro, adicionalesPorEmpleado, anio, mes, semanaHorario]);
+
+  const diasCalendario = useMemo(() => {
+    return [...DIAS_LABORALES];
+  }, []);
 
   return (
     <div className="space-y-4">
@@ -1137,47 +1278,38 @@ const ValetsFijosView = () => {
         </div>
       </div>
 
-      {centroHorarioSeleccionado && empleadosCentroHorario.length === 0 && (
-        <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm font-semibold text-amber-700">
-          No existen empleados dentro de ese centro de costo.
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div>
+          <label className="block text-xs font-semibold text-slate-600 mb-1">Mes</label>
+          <select
+            value={mes}
+            onChange={(e) => setMes(Number(e.target.value))}
+            className="w-full border border-slate-300 rounded-lg px-2.5 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            {MESES.map((item) => (
+              <option key={item.value} value={item.value}>
+                {item.label}
+              </option>
+            ))}
+          </select>
         </div>
-      )}
-
-      <div className="space-y-3 max-w-4xl">
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
-          <div>
-            <label className="block text-xs font-semibold text-slate-600 mb-1">Año</label>
-            <input
-              type="number"
-              min={2020}
-              max={2100}
-              value={anio}
-              onChange={(e) => setAnio(Number(e.target.value) || hoy.getFullYear())}
-              className="w-full border border-slate-300 rounded-lg px-2.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-slate-600 mb-1">Mes</label>
-            <select
-              value={mes}
-              onChange={(e) => setMes(Number(e.target.value))}
-              className="w-full border border-slate-300 rounded-lg px-2.5 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              {MESES.map((item) => (
-                <option key={item.value} value={item.value}>
-                  {item.label}
-                </option>
-              ))}
-            </select>
-          </div>
+        <div>
+          <label className="block text-xs font-semibold text-slate-600 mb-1">Año</label>
+          <input
+            type="number"
+            min={2020}
+            max={2100}
+            value={anio}
+            onChange={(e) => setAnio(Number(e.target.value) || hoy.getFullYear())}
+            className="w-full border border-slate-300 rounded-lg px-2.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
         </div>
-
-        <div className="border border-slate-200 rounded-lg px-3 py-2 bg-slate-50 max-w-sm">
-          <p className="text-[11px] font-semibold text-slate-600">Semana</p>
+        <div>
+          <label className="block text-xs font-semibold text-slate-600 mb-1">Semana</label>
           <select
             value={semanaHorario}
             onChange={(e) => setSemanaHorario(Number(e.target.value))}
-            className="w-full mt-1 border border-slate-300 rounded-lg px-2.5 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full border border-slate-300 rounded-lg px-2.5 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
             {[1, 2, 3, 4, 5].map((semana) => (
               <option key={semana} value={semana}>Semana {semana}</option>
@@ -1185,6 +1317,12 @@ const ValetsFijosView = () => {
           </select>
         </div>
       </div>
+
+      {centroHorarioSeleccionado && empleadosCentroHorario.length === 0 && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm font-semibold text-amber-700">
+          No existen empleados dentro de ese centro de costo.
+        </div>
+      )}
 
       <div className="overflow-x-auto border border-slate-200 rounded-xl">
         <table className="min-w-full bg-white text-sm">
@@ -1247,39 +1385,93 @@ const ValetsFijosView = () => {
         </button>
       </div>
 
-      <div className="overflow-x-auto border border-slate-200 rounded-xl">
-        <table className="min-w-full bg-white text-sm">
-          <thead className="bg-slate-50">
-            <tr>
-              <th className="text-left text-xs font-bold text-slate-600 px-4 py-3">Centro de costo</th>
-              <th className="text-left text-xs font-bold text-slate-600 px-4 py-3">Semana</th>
-              <th className="text-left text-xs font-bold text-slate-600 px-4 py-3">Dia</th>
-              <th className="text-left text-xs font-bold text-slate-600 px-4 py-3">Hora entrada</th>
-              <th className="text-left text-xs font-bold text-slate-600 px-4 py-3">Hora salida</th>
-            </tr>
-          </thead>
-          <tbody>
-            {!empleadoSeleccionado && (
-              <tr>
-                <td colSpan={5} className="px-4 py-6 text-center text-slate-500">Selecciona un empleado para ver horarios guardados.</td>
-              </tr>
-            )}
-            {empleadoSeleccionado && horariosEmpleadoPeriodo.length === 0 && (
-              <tr>
-                <td colSpan={5} className="px-4 py-6 text-center text-slate-500">No hay horario guardado para este empleado en el periodo.</td>
-              </tr>
-            )}
-            {horariosEmpleadoPeriodo.map((item) => (
-              <tr key={item.id} className="border-t border-slate-100">
-                <td className="px-4 py-3">{item.centroCostoId} - {item.centroCostoNombre}</td>
-                <td className="px-4 py-3">Semana {item.semana}</td>
-                <td className="px-4 py-3">{DIAS_LABORALES.find((dia) => dia.key === item.dia)?.label || item.dia}</td>
-                <td className="px-4 py-3">{item.horaEntrada}</td>
-                <td className="px-4 py-3">{item.horaSalida}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div className="overflow-x-auto border border-slate-200 rounded-xl [&::-webkit-scrollbar]:hidden" style={{ msOverflowStyle: 'none', scrollbarWidth: 'none' }}>
+        {!centroHorarioSeleccionado ? (
+          <div className="px-4 py-6 text-center text-slate-500">
+            Selecciona un centro de costo para ver el calendario de horarios.
+          </div>
+        ) : (
+          <div className="overflow-x-auto [&::-webkit-scrollbar]:hidden" style={{ msOverflowStyle: 'none', scrollbarWidth: 'none' }}>
+            <div className="inline-block min-w-full">
+              {/* Grid de calendario */}
+              {(() => {
+                const horasCalendario = generarHorasDelDia();
+                const slotHeight = 34;
+                const alturaTotal = horasCalendario.length * slotHeight;
+
+                return (
+              <div className="grid gap-0" style={{ gridTemplateColumns: `80px repeat(${diasCalendario.length}, 1fr)` }}>
+                <div className="bg-slate-100 border border-slate-300 px-2 py-2 text-xs font-bold text-slate-600"></div>
+
+                {/* Encabezados de días */}
+                {diasCalendario.map((dia) => (
+                  <div
+                    key={dia.key}
+                    className="bg-slate-100 border border-slate-300 px-3 py-2 text-xs font-bold text-slate-600 text-center"
+                  >
+                    {dia.label}
+                  </div>
+                ))}
+
+                {/* Columna de horas */}
+                <div className="border border-slate-200 bg-slate-50" style={{ height: `${alturaTotal}px` }}>
+                  {horasCalendario.map((hora) => (
+                    <div
+                      key={`hora-${hora}`}
+                      className="px-2 text-[11px] font-semibold text-slate-600 text-center flex items-center justify-center border-b border-slate-200"
+                      style={{ height: `${slotHeight}px` }}
+                    >
+                      {hora}
+                    </div>
+                  ))}
+                </div>
+
+                {/* Columnas por día con bloques continuos */}
+                {diasCalendario.map((dia) => {
+                  const bloques = obtenerBloquesCalendarioDia(eventosCalendarioPeriodo, dia.key, slotHeight);
+                  return (
+                    <div
+                      key={`col-${dia.key}`}
+                      className="relative border border-slate-200 bg-white"
+                      style={{ height: `${alturaTotal}px` }}
+                    >
+                      {horasCalendario.map((hora, idx) => (
+                        <div
+                          key={`linea-${dia.key}-${hora}`}
+                          className="absolute left-0 right-0 border-b border-slate-100"
+                          style={{ top: `${(idx + 1) * slotHeight}px` }}
+                        />
+                      ))}
+
+                      {bloques.map((bloque, idx) => (
+                        <div
+                          key={`${dia.key}-${bloque.nombre}-${bloque.horaEntrada}-${bloque.horaSalida}-${idx}`}
+                          className={`absolute rounded text-[10px] leading-tight px-1.5 py-0.5 overflow-hidden ${
+                            bloque.esAdicional
+                              ? 'border border-red-300 bg-red-100 text-red-900'
+                              : 'border border-blue-300 bg-blue-100 text-blue-900'
+                          }`}
+                          style={{
+                            top: `${bloque.top + 2}px`,
+                            height: `${Math.max(18, bloque.height - 4)}px`,
+                            left: `calc(${(bloque.lane * 100) / bloque.lanesTotal}% + 2px)`,
+                            width: `calc(${100 / bloque.lanesTotal}% - 4px)`,
+                          }}
+                          title={`${bloque.nombre} (${bloque.horaEntrada}-${bloque.horaSalida})`}
+                        >
+                          <div className="font-semibold truncate">{bloque.nombre}</div>
+                          <div className="text-[10px] opacity-80">{bloque.horaEntrada} - {bloque.horaSalida}</div>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })}
+              </div>
+                );
+              })()}
+            </div>
+          </div>
+        )}
       </div>
         </>
       )}
