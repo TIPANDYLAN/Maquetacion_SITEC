@@ -35,18 +35,8 @@ interface ExentoPagoSeguroRegistro {
 
 type ListarExentosPagoSeguroResponse = NominaApiListResponse<ExentoPagoSeguroRegistro>;
 
-const CENTRO_COSTO_POR_DEFECTO = '0110001 - ADMINISTRACION-ADMINISTRACION-ADMINISTRACION';
-
 const normalizarCentroCostoEmpleado = (empleado: HumanaEmployeeData) => {
-    const centroCostoNormalizado = String(empleado.centroCosto || '').trim().toUpperCase();
-    if (centroCostoNormalizado === '53279' || centroCostoNormalizado.startsWith('53279 -')) {
-        empleado.centroCosto = CENTRO_COSTO_POR_DEFECTO;
-        return;
-    }
-
-    if (!centroCostoNormalizado || centroCostoNormalizado === 'N/A') {
-        empleado.centroCosto = CENTRO_COSTO_POR_DEFECTO;
-    }
+    empleado.centroCosto = String(empleado.centroCosto || '').trim();
 };
 
 const ProveedorHumanaView = () => {
@@ -612,11 +602,7 @@ const ProveedorHumanaView = () => {
                             if (valor > 0) break;
                         }
 
-                        let centroCosto = 'N/A';
-                        if (grupo) {
-                            const grupoMatch = grupo.match(/URBAPARK[^-]*-?\s*(\d+)/i);
-                            centroCosto = grupoMatch ? grupoMatch[1] : grupo;
-                        }
+                        const centroCosto = grupo || 'N/A';
 
                         const plan = obtenerPlanDesdeGrupo(grupo);
 

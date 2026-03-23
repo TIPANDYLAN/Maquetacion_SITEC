@@ -23,7 +23,7 @@ interface DependienteForm {
   apellidos: string;
   cedula: string;
   fechaNacimiento: string;
-  parentesco: 'CONYUGE' | 'HIJO/HIJA' | 'PADRE/MADRE' | '';
+  parentesco: string;
   genero: 'M' | 'F' | '';
   estadoCivil: string;
   // Datos bancarios (solo si es mayor de edad)
@@ -51,7 +51,7 @@ interface FamiliarDisponible {
   cedula: string;
   genero: 'M' | 'F' | '';
   fechaNacimiento: string;
-  parentesco: 'CONYUGE' | 'HIJO/HIJA' | 'PADRE/MADRE' | '';
+  parentesco: string;
   estadoCivil: string;
 }
 
@@ -60,9 +60,11 @@ interface DatosExcelEmpleado {
   plan: string;
   fechaIngreso: string;
   fechaNacimiento: string;
+  parentesco: string;
   genero: string;
   estadoCivil: string;
   banco: string;
+  tipoCuenta: string;
   numeroCuenta: string;
   correo: string;
 }
@@ -72,9 +74,11 @@ const DATOS_EXCEL_EMPLEADO_VACIO: DatosExcelEmpleado = {
   plan: '',
   fechaIngreso: '',
   fechaNacimiento: '',
+  parentesco: '',
   genero: '',
   estadoCivil: '',
   banco: '',
+  tipoCuenta: '',
   numeroCuenta: '',
   correo: '',
 };
@@ -135,15 +139,6 @@ const normalizarFechaISOaInput = (iso: string) => {
 };
 
 const obtenerFechaActualInput = () => new Date().toISOString().slice(0, 10);
-
-const mapearParentesco = (codigo: string): 'CONYUGE' | 'HIJO/HIJA' | 'PADRE/MADRE' | '' => {
-  const valor = (codigo || '').trim().toUpperCase();
-  if (!valor) return '';
-  if (valor === 'HN' || valor === 'HD') return 'HIJO/HIJA';
-  if (valor === 'E' || valor === 'ED') return 'CONYUGE';
-  if (valor === 'P') return 'PADRE/MADRE';
-  return '';
-};
 
 const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaViewProps) => {
   const [movimientos, setMovimientos] = useState<MovimientoRow[]>([]);
@@ -218,6 +213,7 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
           .map((item: EmpleadoNominaApiItem) => {
             const payload = obtenerPayloadEmpleadoNomina(item);
             const raw = (item?.json ?? item ?? {}) as Record<string, unknown>;
+            const payloadRaw = payload as Record<string, unknown>;
             const cedula = String(payload.CEDULA || '').trim();
 
             if (cedula) {
@@ -227,9 +223,11 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
                 plan: actual.plan || normalizarPlanApi(String(payload.PLAN || payload.TIPO_PLAN || payload.PLAN_CONTRATADO || payload.PLAN_CONTRATADO_SALUD || '')),
                 fechaIngreso: actual.fechaIngreso || String(payload.INGRESO || payload.FechaIngreso || raw.INGRESO || raw.FechaIngreso || '').trim(),
                 fechaNacimiento: actual.fechaNacimiento || String(raw.FEC_NAC || raw.FECHA_NACIMIENTO || '').trim(),
+                parentesco: actual.parentesco || String(payloadRaw.COD_PARENTESCO || raw.COD_PARENTESCO || payloadRaw.PARENTESCO || raw.PARENTESCO || raw.TIPO_PARENTESCO || '').trim().toUpperCase(),
                 genero: actual.genero || String(raw.SEXO || '').trim().toUpperCase(),
                 estadoCivil: actual.estadoCivil || String(raw.EST_CIVIL || raw.ESTADO_CIVIL || '').trim().toUpperCase(),
                 banco: actual.banco || String(raw.BANCO || '').trim(),
+                tipoCuenta: actual.tipoCuenta || String(raw.TIPO_CUENTA || raw.TIPOCUENTA || '').trim().toUpperCase(),
                 numeroCuenta: actual.numeroCuenta || String(raw.CUENTA_BNCO || raw.NUMERO_CUENTA || '').trim(),
                 correo: actual.correo || String(raw.CORREO || '').trim(),
               };
@@ -355,7 +353,7 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
           cedula: String(familiar.CEDULA_FAM || familiar.CEDULA || familiar.IDENTIFICACION_FAM || familiar.IDENTIFICACION || '').trim(),
           genero,
           fechaNacimiento: normalizarFechaISOaInput(String(familiar.NACIMIENTO_FAM || '')),
-          parentesco: mapearParentesco(String(familiar.PARENTESCO || '')),
+          parentesco: String(familiar.PARENTESCO || familiar.TIPO_PARENTESCO || '').trim().toUpperCase(),
           estadoCivil: String(familiar.EST_CIVIL || familiar.ESTADO_CIVIL || '').trim().toUpperCase(),
         };
       }).filter((f: FamiliarDisponible) => f.nombre);
@@ -921,14 +919,6 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
     return 10;
   };
 
-  const mapearParentescoReporte = (parentesco: string, esTitular: boolean) => {
-    if (esTitular) return 'T';
-    if (parentesco === 'CONYUGE') return 'C';
-    if (parentesco === 'HIJO/HIJA') return 'H';
-    if (parentesco === 'PADRE/MADRE') return 'P';
-    return '';
-  };
-
   const obtenerCantidadDependientesTarifa = (tarifa: string) => {
     const valor = String(tarifa || '').trim().toUpperCase();
     if (valor === 'T' || valor === 'TS') return 0;
@@ -1201,6 +1191,7 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
         const nombreTitular = separarDosApellidosDosNombres(movimiento.empleadoNombre);
         const esCambioRetiroDependiente = requiereRetiroDependienteCambioTarifa(movimiento);
         const datosExcelTitular = obtenerDatosExcelEmpleado(movimiento.empleadoCedula);
+        const parentescoTitular = String(datosExcelTitular.parentesco || '').trim().toUpperCase();
         const generoTitular = datosExcelTitular.genero === 'M' || datosExcelTitular.genero === 'F' ? datosExcelTitular.genero : '';
 
         agregarFilaConBordes(hojaInclusiones, [
@@ -1213,7 +1204,7 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
           nombreTitular.primerNombre,
           nombreTitular.segundoNombre,
           formatearFechaDesdeApiADdMmYyyy(datosExcelTitular.fechaNacimiento),
-          mapearParentescoReporte('', true),
+          parentescoTitular,
           generoTitular,
           '',
           datosExcelTitular.estadoCivil,
@@ -1221,7 +1212,7 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
           'PH-5000',
           tarifa,
           datosExcelTitular.banco,
-          '',
+          datosExcelTitular.tipoCuenta,
           datosExcelTitular.numeroCuenta,
           datosExcelTitular.correo,
           '',
@@ -1231,44 +1222,49 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
 
         if (!esCambioRetiroDependiente) {
           movimiento.dependientes.forEach((dependiente) => {
-          const nombreDependiente = separarDosApellidosDosNombres(`${dependiente.apellidos} ${dependiente.nombres}`);
-          agregarFilaConBordes(hojaInclusiones, [
-            EMPRESA_FIJA,
-            CONTRATO_FIJO,
-            tipoMovimientoNumerico(movimiento.tipoAccion),
-            dependiente.cedula,
-            nombreDependiente.apellidoPaterno,
-            nombreDependiente.apellidoMaterno,
-            nombreDependiente.primerNombre,
-            nombreDependiente.segundoNombre,
-            formatearFechaDDMMYYYY(dependiente.fechaNacimiento),
-            mapearParentescoReporte(dependiente.parentesco, false),
-            dependiente.genero,
-            '',
-            dependiente.estadoCivil,
-            fechaAplicacion,
-            'PH-5000',
-            tarifa,
-            dependiente.banco,
-            dependiente.tipoCuenta,
-            dependiente.numeroCuenta,
-            dependiente.correo,
-            '',
-          ]);
-          const filaD = hojaInclusiones.rowCount;
-          hojaInclusiones.mergeCells(`K${filaD}:L${filaD}`);
+            const esMenor = calcularEdad(dependiente.fechaNacimiento) < 18;
+            const bancoDependiente = esMenor ? datosExcelTitular.banco : dependiente.banco;
+            const tipoCuentaDependiente = esMenor ? datosExcelTitular.tipoCuenta : dependiente.tipoCuenta;
+            const numeroCuentaDependiente = esMenor ? datosExcelTitular.numeroCuenta : dependiente.numeroCuenta;
+            const nombreDependiente = separarDosApellidosDosNombres(`${dependiente.apellidos} ${dependiente.nombres}`);
+            agregarFilaConBordes(hojaInclusiones, [
+              EMPRESA_FIJA,
+              CONTRATO_FIJO,
+              tipoMovimientoNumerico(movimiento.tipoAccion),
+              dependiente.cedula,
+              nombreDependiente.apellidoPaterno,
+              nombreDependiente.apellidoMaterno,
+              nombreDependiente.primerNombre,
+              nombreDependiente.segundoNombre,
+              formatearFechaDDMMYYYY(dependiente.fechaNacimiento),
+              String(dependiente.parentesco || '').trim().toUpperCase(),
+              dependiente.genero,
+              '',
+              dependiente.estadoCivil,
+              fechaAplicacion,
+              'PH-5000',
+              tarifa,
+              bancoDependiente,
+              tipoCuentaDependiente,
+              numeroCuentaDependiente,
+              dependiente.correo,
+              '',
+            ]);
+            const filaD = hojaInclusiones.rowCount;
+            hojaInclusiones.mergeCells(`K${filaD}:L${filaD}`);
           });
         }
       }
 
       exclusiones.forEach((movimiento) => {
         const nombreCompleto = String(movimiento.empleadoNombre || '').toUpperCase();
+        const datosExcelTitular = obtenerDatosExcelEmpleado(movimiento.empleadoCedula);
         agregarFilaExclusion(hojaExclusiones, [
           CONTRATO_FIJO,
           tipoMovimientoNumerico(movimiento.tipoAccion),
           movimiento.empleadoCedula,
           nombreCompleto,
-          'T',
+          String(datosExcelTitular.parentesco || '').trim().toUpperCase(),
           formatearFechaDDMMYYYY(movimiento.fechaSalida),
           'RENUNCIA',
           '',
@@ -1283,7 +1279,7 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
             11,
             dependiente.cedula || '',
             nombreCompleto,
-            mapearParentescoReporte(dependiente.parentesco, false) || '',
+            String(dependiente.parentesco || '').trim().toUpperCase(),
             formatearFechaDDMMYYYY(movimiento.fechaSalida),
             'RETIRO DEPENDIENTE',
             '',
@@ -1299,7 +1295,7 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
             11,
             dependiente.cedula || '',
             nombreCompleto,
-            mapearParentescoReporte(dependiente.parentesco, false) || '',
+            String(dependiente.parentesco || '').trim().toUpperCase(),
             formatearFechaDDMMYYYY(movimiento.fechaSalida),
             'CAMBIO TARIFA',
             'RETIRO DE DEPENDIENTE',
@@ -2022,20 +2018,6 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
                                     onChange={(e) => actualizarDependienteModal(dependiente.id, 'fechaNacimiento', e.target.value)}
                                     className="w-full px-2 py-1.5 border border-slate-200 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                                   />
-                                </div>
-
-                                <div>
-                                  <label className="block text-xs font-semibold text-slate-600 mb-1">Parentesco *</label>
-                                  <select
-                                    value={dependiente.parentesco}
-                                    onChange={(e) => actualizarDependienteModal(dependiente.id, 'parentesco', e.target.value as DependienteForm['parentesco'])}
-                                    className="w-full px-2 py-1.5 border border-slate-200 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-                                  >
-                                    <option value="">Seleccionar...</option>
-                                    <option value="CONYUGE">Cónyuge</option>
-                                    <option value="HIJO/HIJA">Hijo/Hija</option>
-                                    <option value="PADRE/MADRE">Padre/Madre</option>
-                                  </select>
                                 </div>
 
                                 <div>

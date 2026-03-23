@@ -455,6 +455,15 @@ const ValetsFijosView = () => {
     return dias;
   }, [empleadoSeleccionado, centroHorarioSeleccionado, anio, mes, semanaHorario, adicionalesPorEmpleado, asignacionesCentro]);
 
+  useEffect(() => {
+    if (diasDisponiblesIngreso.length === 0) return;
+
+    const diaSigueDisponible = diasDisponiblesIngreso.some((dia) => dia.key === diaHorario);
+    if (!diaSigueDisponible) {
+      setDiaHorario(diasDisponiblesIngreso[0].key);
+    }
+  }, [diasDisponiblesIngreso, diaHorario]);
+
   const abrirModalAdicionales = async (empleado: ValetAsignadoCentro) => {
     const configGuardada = adicionalesPorEmpleado[empleado.id];
     setEmpleadoAdicionalSeleccionado(empleado);
@@ -813,6 +822,12 @@ const ValetsFijosView = () => {
       return;
     }
 
+    const diaSeleccionadoDisponible = diasDisponiblesIngreso.find((dia) => dia.key === diaHorario);
+    if (!diaSeleccionadoDisponible) {
+      setMensaje({ type: 'error', text: 'El dia seleccionado ya no esta disponible para la semana actual. Selecciona un dia valido.' });
+      return;
+    }
+
     const nuevoHorario: HorarioFijoGuardado = {
       id: `${Date.now()}-${empleadoSeleccionado.cedula}`,
       empleadoCedula: empleadoSeleccionado.cedula,
@@ -823,7 +838,7 @@ const ValetsFijosView = () => {
       anio,
       mes,
       semana: semanaHorario,
-      dia: diaHorario,
+      dia: diaSeleccionadoDisponible.key,
       horaEntrada: horaEntradaHorario,
       horaSalida: horaSalidaHorario,
     };
@@ -889,7 +904,7 @@ const ValetsFijosView = () => {
 
         setMensaje({
           type: 'success',
-          text: `Horario guardado en base de datos para ${empleadoSeleccionado.nombre} en semana ${semanaHorario}, ${DIAS_LABORALES.find((d) => d.key === diaHorario)?.label || diaHorario}.`,
+          text: `Horario guardado en base de datos para ${empleadoSeleccionado.nombre} en semana ${semanaHorario}, ${diaSeleccionadoDisponible.label}.`,
         });
 
         setHoraEntradaHorario('');
