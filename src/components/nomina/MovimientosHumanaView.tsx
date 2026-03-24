@@ -1469,6 +1469,7 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
     const existente = acc.get(key) || {
       key: `titular-${key}`,
       movimientoId: movimiento.id,
+      movimientoRetiroId: '',
       movimientoIds: new Set<string>(),
       nombre: movimiento.empleadoNombre || '-',
       cedula: movimiento.empleadoCedula || '-',
@@ -1494,6 +1495,7 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
       existente.fechaExclusion = movimiento.fechaSalida || existente.fechaExclusion;
       existente.etiquetasMovimiento.add('Retirar');
       existente.esSalida = true;
+      existente.movimientoRetiroId = movimiento.id;
     } else if (movimiento.tipoAccion === 'eliminar_dependiente') {
       existente.fechaExclusion = movimiento.fechaSalida || existente.fechaExclusion;
       existente.etiquetasMovimiento.add('Eliminar dependiente');
@@ -1522,6 +1524,7 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
   }, new Map<string, {
     key: string;
     movimientoId: string;
+    movimientoRetiroId: string;
     movimientoIds: Set<string>;
     nombre: string;
     cedula: string;
@@ -1539,10 +1542,12 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
     key: fila.key,
     origen: 'movimiento' as const,
     movimientoId: fila.movimientoId,
+    movimientoRetiroId: fila.movimientoRetiroId,
     nombre: fila.nombre || '-',
     cedula: fila.cedula || '-',
     parentesco: fila.parentesco,
     esSalida: fila.esSalida,
+    esRetiro: fila.etiquetasMovimiento.has('Retirar') && fila.fechaExclusion !== '-',
     movimiento:
       fila.etiquetasMovimiento.has('Retirar') && fila.fechaExclusion !== '-'
         ? 'Retirar'
@@ -1666,7 +1671,17 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
                         </td>
                         <td className="px-4 py-3">
                           {fila.esTitular ? (
-                            fila.permiteAcciones ? (
+                            fila.esRetiro && fila.movimientoRetiroId ? (
+                              <div className="flex gap-2">
+                                <button
+                                  onClick={() => eliminarMovimiento(fila.movimientoRetiroId)}
+                                  className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                                  title="Eliminar"
+                                >
+                                  <Trash2 size={16} />
+                                </button>
+                              </div>
+                            ) : fila.permiteAcciones ? (
                               <div className="flex gap-2">
                                 <button
                                   onClick={() => abrirModalEdicion(fila.movimientoId)}
