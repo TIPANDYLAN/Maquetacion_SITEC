@@ -919,6 +919,12 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
     return 10;
   };
 
+  const obtenerCodigoPlanExcel = (tipoPlan: string) => {
+    const valor = String(tipoPlan || '').trim().toUpperCase();
+    if (valor.includes('10')) return 'PH-10000';
+    return 'PH-5000';
+  };
+
   const obtenerCantidadDependientesTarifa = (tarifa: string) => {
     const valor = String(tarifa || '').trim().toUpperCase();
     if (valor === 'T' || valor === 'TS') return 0;
@@ -1191,6 +1197,7 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
         const nombreTitular = separarDosApellidosDosNombres(movimiento.empleadoNombre);
         const esCambioRetiroDependiente = requiereRetiroDependienteCambioTarifa(movimiento);
         const datosExcelTitular = obtenerDatosExcelEmpleado(movimiento.empleadoCedula);
+        const codigoPlan = obtenerCodigoPlanExcel(movimiento.tipoPlan || datosExcelTitular.plan);
         const parentescoTitular = String(datosExcelTitular.parentesco || '').trim().toUpperCase();
         const generoTitular = datosExcelTitular.genero === 'M' || datosExcelTitular.genero === 'F' ? datosExcelTitular.genero : '';
 
@@ -1209,7 +1216,7 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
           '',
           datosExcelTitular.estadoCivil,
           fechaAplicacion,
-          'PH-5000',
+          codigoPlan,
           tarifa,
           datosExcelTitular.banco,
           datosExcelTitular.tipoCuenta,
@@ -1242,7 +1249,7 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
               '',
               dependiente.estadoCivil,
               fechaAplicacion,
-              'PH-5000',
+              codigoPlan,
               tarifa,
               bancoDependiente,
               tipoCuentaDependiente,
