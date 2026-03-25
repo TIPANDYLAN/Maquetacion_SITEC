@@ -392,7 +392,7 @@ const DescuentosView = () => {
                                 className="px-4 py-2 border border-slate-200 rounded-xl text-sm bg-white min-w-[180px]"
                             >
                                 <option value="">Tipo de descuento - Selecciona una opción</option>
-                                <option value="faltantes_incidentes">Faltantes e incidentes caja chica</option>
+                                <option value="faltantes_incidentes">Faltantes e incidentes de recaudación</option>
                                 <option value="multas">Multas por memos</option>
                                 <option value="otro">Otro descuento</option>
                             </select>
@@ -519,7 +519,7 @@ const DescuentosView = () => {
                                 <option value="">Selecciona el tipo de descuento</option>
                                 <option value="subsidio_enfermedad">Subsidio de enfermedad</option>
                                 <option value="subsidio_maternidad">Subsidio de maternidad</option>
-                                <option value="faltantes_incidentes">Faltantes e incidentes caja chica</option>
+                                <option value="faltantes_incidentes">Faltantes e incidentes de recaudación</option>
                                 <option value="descuentos_varios">Descuentos varios</option>
                                 <option value="multas_memos">Multas por memos</option>
                             </select>
@@ -641,7 +641,7 @@ const DescuentosView = () => {
                                         disabled
                                         className="w-full px-4 py-3 border-2 border-blue-300 rounded-xl text-sm bg-blue-50 font-medium text-slate-700 cursor-not-allowed"
                                     >
-                                        <option value="faltantes_incidentes">Faltantes e incidentes caja chica</option>
+                                        <option value="faltantes_incidentes">Faltantes e incidentes de recaudación</option>
                                     </select>
                                     <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none">
                                         <svg className="w-5 h-5 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
