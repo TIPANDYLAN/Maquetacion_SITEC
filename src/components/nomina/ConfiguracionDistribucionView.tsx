@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Building2, ChevronLeft, Clock3, Pencil, Plus, Search, Trash2, Users } from 'lucide-react';
+import { Building2, ChevronLeft, Clock3, Pencil, Plus, Save, Search, Trash2, Users, Settings } from 'lucide-react';
 import { getNominaCostCenters, getNominaEmployeesActive, type NominaCostCenter } from '../../services/n8nApi';
+import { dbApi } from '../../services/dbApi';
 import type { EmpleadoNominaApiItem } from '../../types/nomina';
 
 const FILTRO_DSC_MFCC = 'ADMINISTRACION-SUPERVISORES';
@@ -34,7 +35,85 @@ interface DistribucionEmpleadoTemporal {
   centros: DistribucionTemporal[];
 }
 
+interface DistribucionCentroCostoApiItem {
+  id?: number;
+  centroCostoId?: string;
+  centroCostoNombre?: string;
+  porcentaje?: number | string;
+  fechaCreacion?: string;
+  fechaActualizacion?: string;
+  centro_costo_id?: string;
+  centro_costo_nombre?: string;
+}
+
+interface DistribucionCentroCostoResponse {
+  ok?: boolean;
+  centros?: DistribucionCentroCostoApiItem[];
+}
+
+interface DistribucionEmpleadoCentroCostoApiCentroItem {
+  centroCostoId?: string;
+  centroCostoNombre?: string;
+  porcentaje?: number | string;
+  centro_costo_id?: string;
+  centro_costo_nombre?: string;
+}
+
+interface DistribucionEmpleadoCentroCostoApiItem {
+  id?: number;
+  empleadoId?: string;
+  empleadoDocumento?: string;
+  empleadoNombreCompleto?: string;
+  centros?: DistribucionEmpleadoCentroCostoApiCentroItem[];
+  porcentajeTotal?: number | string;
+  fechaCreacion?: string;
+  fechaActualizacion?: string;
+  empleado_id?: string;
+  empleado_documento?: string;
+  empleado_nombre_completo?: string;
+  porcentaje_total?: number | string;
+}
+
+interface DistribucionEmpleadoCentroCostoResponse {
+  ok?: boolean;
+  empleado?: DistribucionEmpleadoCentroCostoApiItem;
+  empleados?: DistribucionEmpleadoCentroCostoApiItem[];
+}
+
+interface EstadoGuardadoDistribucionCentros {
+  tipo: 'exito' | 'error';
+  mensaje: string;
+}
+
+interface EstadoGuardadoDistribucionEmpleados {
+  tipo: 'exito' | 'error';
+  mensaje: string;
+}
+
 const normalizarTexto = (valor: string): string => String(valor || '').trim().toUpperCase();
+
+const normalizarDistribucionCentroCosto = (item: DistribucionCentroCostoApiItem): DistribucionTemporal => ({
+  centroCostoId: String(item?.centroCostoId || item?.centro_costo_id || '').trim(),
+  centroCostoNombre: String(item?.centroCostoNombre || item?.centro_costo_nombre || '').trim(),
+  porcentaje: Number(item?.porcentaje || 0),
+});
+
+const normalizarDistribucionEmpleadoCentroCosto = (item: DistribucionEmpleadoCentroCostoApiItem): DistribucionEmpleadoTemporal => {
+  const centrosFuente = Array.isArray(item?.centros) ? item.centros : [];
+
+  return {
+    empleadoId: String(item?.empleadoId || item?.empleado_id || '').trim(),
+    empleadoDocumento: String(item?.empleadoDocumento || item?.empleado_documento || '').trim(),
+    empleadoNombreCompleto: String(item?.empleadoNombreCompleto || item?.empleado_nombre_completo || '').trim(),
+    centros: centrosFuente
+      .map((centro) => ({
+        centroCostoId: String(centro?.centroCostoId || centro?.centro_costo_id || '').trim(),
+        centroCostoNombre: String(centro?.centroCostoNombre || centro?.centro_costo_nombre || '').trim(),
+        porcentaje: Number(centro?.porcentaje || 0),
+      }))
+      .filter((centro) => centro.centroCostoId && centro.centroCostoNombre),
+  };
+};
 
 const normalizarEmpleado = (item: EmpleadoNominaApiItem): EmpleadoDistribucion => {
   const payload = (item?.json ?? item ?? {}) as Record<string, unknown>;
@@ -76,12 +155,22 @@ const ConfiguracionDistribucionView = () => {
   const [empleadoDistribucionEditandoId, setEmpleadoDistribucionEditandoId] = useState<string | null>(null);
   const [cargandoEmpleados, setCargandoEmpleados] = useState(false);
   const [cargandoCentros, setCargandoCentros] = useState(false);
+  const [cargandoDistribucionCentros, setCargandoDistribucionCentros] = useState(false);
+  const [cargandoDistribucionEmpleados, setCargandoDistribucionEmpleados] = useState(false);
+  const [guardandoDistribucionCentros, setGuardandoDistribucionCentros] = useState(false);
+  const [guardandoDistribucionEmpleados, setGuardandoDistribucionEmpleados] = useState(false);
   const [errorEmpleados, setErrorEmpleados] = useState<string | null>(null);
   const [errorCentros, setErrorCentros] = useState<string | null>(null);
+  const [errorDistribucionCentros, setErrorDistribucionCentros] = useState<string | null>(null);
+  const [errorDistribucionEmpleados, setErrorDistribucionEmpleados] = useState<string | null>(null);
+  const [estadoGuardadoDistribucionCentros, setEstadoGuardadoDistribucionCentros] = useState<EstadoGuardadoDistribucionCentros | null>(null);
+  const [estadoGuardadoDistribucionEmpleados, setEstadoGuardadoDistribucionEmpleados] = useState<EstadoGuardadoDistribucionEmpleados | null>(null);
 
   useEffect(() => {
     void cargarEmpleados();
     void cargarCentrosCosto();
+    void cargarDistribucionCentroCosto();
+    void cargarDistribucionEmpleadoCentroCosto();
   }, []);
 
   useEffect(() => {
@@ -152,6 +241,54 @@ const ConfiguracionDistribucionView = () => {
     }
   };
 
+  const cargarDistribucionCentroCosto = async () => {
+    setCargandoDistribucionCentros(true);
+    setErrorDistribucionCentros(null);
+    setEstadoGuardadoDistribucionCentros(null);
+
+    try {
+      const data = await dbApi.distribucionCentroCosto.list<DistribucionCentroCostoResponse>();
+      const centros = Array.isArray(data?.centros) ? data.centros : [];
+
+      setDistribucionesTemporales(
+        centros
+          .map(normalizarDistribucionCentroCosto)
+          .filter((item) => item.centroCostoId && item.centroCostoNombre)
+          .sort((a, b) => a.centroCostoNombre.localeCompare(b.centroCostoNombre, 'es', { sensitivity: 'base' })),
+      );
+    } catch (error) {
+      console.error('Error cargando distribucion de centros de costo:', error);
+      setDistribucionesTemporales([]);
+      setErrorDistribucionCentros('No se pudo cargar la configuracion de centros de costo.');
+    } finally {
+      setCargandoDistribucionCentros(false);
+    }
+  };
+
+  const cargarDistribucionEmpleadoCentroCosto = async () => {
+    setCargandoDistribucionEmpleados(true);
+    setErrorDistribucionEmpleados(null);
+    setEstadoGuardadoDistribucionEmpleados(null);
+
+    try {
+      const data = await dbApi.distribucionEmpleadoCentroCosto.list<DistribucionEmpleadoCentroCostoResponse>();
+      const empleadosGuardados = Array.isArray(data?.empleados) ? data.empleados : [];
+
+      setDistribucionesEmpleadoTemporales(
+        empleadosGuardados
+          .map(normalizarDistribucionEmpleadoCentroCosto)
+          .filter((item) => item.empleadoId && item.empleadoNombreCompleto)
+          .sort((a, b) => a.empleadoNombreCompleto.localeCompare(b.empleadoNombreCompleto, 'es', { sensitivity: 'base' })),
+      );
+    } catch (error) {
+      console.error('Error cargando distribucion por empleado:', error);
+      setDistribucionesEmpleadoTemporales([]);
+      setErrorDistribucionEmpleados('No se pudo cargar la distribucion por empleado.');
+    } finally {
+      setCargandoDistribucionEmpleados(false);
+    }
+  };
+
   const limpiarFormularioCentro = () => {
     setCentroCostoSeleccionado('');
     setPorcentajeDistribucion('');
@@ -191,6 +328,8 @@ const ConfiguracionDistribucionView = () => {
 
   const abrirModalNuevoEmpleado = () => {
     limpiarFormularioEmpleado();
+    setErrorDistribucionEmpleados(null);
+    setEstadoGuardadoDistribucionEmpleados(null);
     setModalEmpleadoAbierto(true);
   };
 
@@ -201,12 +340,13 @@ const ConfiguracionDistribucionView = () => {
     setEmpleadoDistribucionEditandoId(registro.empleadoId);
     setEmpleadoSeleccionadoId(registro.empleadoId);
     setCentrosEmpleadoBorrador(registro.centros.map((centro) => ({ ...centro })));
+    setErrorDistribucionEmpleados(null);
+    setEstadoGuardadoDistribucionEmpleados(null);
     setModalEmpleadoAbierto(true);
     setVistaActiva('distribucion_empleados');
   };
 
   const cerrarModalEmpleado = () => {
-    limpiarFormularioEmpleado();
     setModalEmpleadoAbierto(false);
   };
 
@@ -282,7 +422,7 @@ const ConfiguracionDistribucionView = () => {
     }
   };
 
-  const guardarEmpleadoTemporal = () => {
+  const guardarEmpleadoTemporal = async () => {
     const empleado = empleadosFiltrados.find((item) => item.idEmpleado === empleadoSeleccionadoId);
     if (!empleado) {
       alert('Selecciona un empleado a distribuir');
@@ -299,23 +439,51 @@ const ConfiguracionDistribucionView = () => {
       return;
     }
 
-    setDistribucionesEmpleadoTemporales((prev) => {
-      const sinDuplicado = prev.filter(
-        (item) => item.empleadoId !== empleadoSeleccionadoId && item.empleadoId !== empleadoDistribucionEditandoId,
-      );
+    setGuardandoDistribucionEmpleados(true);
+    setErrorDistribucionEmpleados(null);
+    setEstadoGuardadoDistribucionEmpleados(null);
 
-      return [
-        ...sinDuplicado,
-        {
+    try {
+      const data = await dbApi.distribucionEmpleadoCentroCosto.save<DistribucionEmpleadoCentroCostoResponse>({
+        empleadoId: empleado.idEmpleado,
+        empleadoDocumento: empleado.documento || empleado.codigoEmpleado,
+        empleadoNombreCompleto: `${empleado.apellidos} ${empleado.nombres}`.trim(),
+        centros: centrosEmpleadoBorrador.map((centro) => ({ ...centro })),
+      });
+
+      const empleadoGuardado = normalizarDistribucionEmpleadoCentroCosto(
+        data?.empleado || {
           empleadoId: empleado.idEmpleado,
           empleadoDocumento: empleado.documento || empleado.codigoEmpleado,
           empleadoNombreCompleto: `${empleado.apellidos} ${empleado.nombres}`.trim(),
           centros: centrosEmpleadoBorrador.map((centro) => ({ ...centro })),
         },
-      ];
-    });
+      );
 
-    cerrarModalEmpleado();
+      setDistribucionesEmpleadoTemporales((prev) => {
+        const sinDuplicado = prev.filter((item) => item.empleadoId !== empleadoGuardado.empleadoId);
+
+        return [
+          ...sinDuplicado,
+          empleadoGuardado,
+        ].sort((a, b) => a.empleadoNombreCompleto.localeCompare(b.empleadoNombreCompleto, 'es', { sensitivity: 'base' }));
+      });
+
+      setEstadoGuardadoDistribucionEmpleados({
+        tipo: 'exito',
+        mensaje: 'La distribución por empleado se guardó correctamente.',
+      });
+      cerrarModalEmpleado();
+    } catch (error) {
+      console.error('Error guardando distribucion por empleado:', error);
+      setErrorDistribucionEmpleados('No se pudo guardar la distribucion por empleado.');
+      setEstadoGuardadoDistribucionEmpleados({
+        tipo: 'error',
+        mensaje: 'No se pudo guardar la distribución por empleado.',
+      });
+    } finally {
+      setGuardandoDistribucionEmpleados(false);
+    }
   };
 
   const guardarCentroTemporal = () => {
@@ -346,6 +514,54 @@ const ConfiguracionDistribucionView = () => {
     cerrarModalCentro();
   };
 
+  const guardarDistribucionCentroCosto = async () => {
+    if (distribucionesTemporales.length === 0) {
+      alert('Agrega al menos un centro de costo');
+      return;
+    }
+
+    if (Math.abs(totalDistribucion - 100) > 0.01) {
+      alert('La suma de los porcentajes de los centros de costo debe ser 100%');
+      return;
+    }
+
+    setGuardandoDistribucionCentros(true);
+    setErrorDistribucionCentros(null);
+    setEstadoGuardadoDistribucionCentros(null);
+
+    try {
+      const data = await dbApi.distribucionCentroCosto.save<DistribucionCentroCostoResponse>({
+        centros: distribucionesTemporales.map((item) => ({
+          centroCostoId: item.centroCostoId,
+          centroCostoNombre: item.centroCostoNombre,
+          porcentaje: item.porcentaje,
+        })),
+      });
+
+      const centrosGuardados = Array.isArray(data?.centros)
+        ? data.centros.map(normalizarDistribucionCentroCosto)
+        : distribucionesTemporales;
+      setDistribucionesTemporales(
+        centrosGuardados
+          .filter((item) => item.centroCostoId && item.centroCostoNombre)
+          .sort((a, b) => a.centroCostoNombre.localeCompare(b.centroCostoNombre, 'es', { sensitivity: 'base' })),
+      );
+      setEstadoGuardadoDistribucionCentros({
+        tipo: 'exito',
+        mensaje: 'La configuración de centros de costo se guardó correctamente.',
+      });
+    } catch (error) {
+      console.error('Error guardando distribucion de centros de costo:', error);
+      setErrorDistribucionCentros('No se pudo guardar la configuracion de centros de costo.');
+      setEstadoGuardadoDistribucionCentros({
+        tipo: 'error',
+        mensaje: 'No se pudo guardar la configuración de centros de costo.',
+      });
+    } finally {
+      setGuardandoDistribucionCentros(false);
+    }
+  };
+
   const eliminarCentroTemporal = (centroCostoId: string) => {
     setDistribucionesTemporales((prev) => prev.filter((item) => item.centroCostoId !== centroCostoId));
     if (centroCostoEditandoId === centroCostoId) {
@@ -353,16 +569,36 @@ const ConfiguracionDistribucionView = () => {
     }
   };
 
-  const eliminarDistribucionEmpleado = (empleadoId: string) => {
-    setDistribucionesEmpleadoTemporales((prev) => prev.filter((item) => item.empleadoId !== empleadoId));
-    if (empleadoDistribucionEditandoId === empleadoId) {
-      cerrarModalEmpleado();
+  const eliminarDistribucionEmpleado = async (empleadoId: string) => {
+    try {
+      await dbApi.distribucionEmpleadoCentroCosto.delete(empleadoId);
+      setDistribucionesEmpleadoTemporales((prev) => prev.filter((item) => item.empleadoId !== empleadoId));
+      setEstadoGuardadoDistribucionEmpleados({
+        tipo: 'exito',
+        mensaje: 'La distribución por empleado se eliminó correctamente.',
+      });
+
+      if (empleadoDistribucionEditandoId === empleadoId) {
+        cerrarModalEmpleado();
+      }
+    } catch (error) {
+      console.error('Error eliminando distribucion por empleado:', error);
+      setErrorDistribucionEmpleados('No se pudo eliminar la distribucion por empleado.');
+      setEstadoGuardadoDistribucionEmpleados({
+        tipo: 'error',
+        mensaje: 'No se pudo eliminar la distribución por empleado.',
+      });
     }
   };
 
   const totalDistribucion = useMemo(
     () => distribucionesTemporales.reduce((acumulado, item) => acumulado + item.porcentaje, 0),
     [distribucionesTemporales],
+  );
+
+  const distribucionCentroCostoValida = useMemo(
+    () => distribucionesTemporales.length > 0 && Math.abs(totalDistribucion - 100) <= 0.01,
+    [distribucionesTemporales.length, totalDistribucion],
   );
 
   const totalDistribucionEmpleadoBorrador = useMemo(
@@ -383,7 +619,7 @@ const ConfiguracionDistribucionView = () => {
     const empleadosAsignados = new Set(distribucionesEmpleadoTemporales.map((item) => item.empleadoId));
 
     return empleadosFiltrados.filter((empleado) => !empleadosAsignados.has(empleado.idEmpleado));
-  }, [empleadosFiltrados, distribucionesEmpleadoTemporales, empleadoDistribucionEditandoId]);
+  }, [empleadosFiltrados, distribucionesEmpleadoTemporales]);
 
   const empleadosDisponiblesParaSelectorDistribucion = useMemo(() => {
     const empleadosAsignados = new Set(distribucionesEmpleadoTemporales.map((item) => item.empleadoId));
@@ -433,7 +669,7 @@ const ConfiguracionDistribucionView = () => {
               className="mt-6 inline-flex items-center justify-center gap-2 rounded-2xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
             >
               <Search size={18} />
-              Abrir detalle
+              Detalle
             </button>
           </article>
 
@@ -454,8 +690,8 @@ const ConfiguracionDistribucionView = () => {
               onClick={() => setVistaActiva('centros')}
               className="mt-6 inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-800 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-900"
             >
-              <Search size={18} />
-              Abrir detalle
+              <Settings size={18} />
+              Configurar
             </button>
           </article>
 
@@ -476,8 +712,8 @@ const ConfiguracionDistribucionView = () => {
               onClick={() => setVistaActiva('distribucion_empleados')}
               className="mt-6 inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700"
             >
-              <Search size={18} />
-              Abrir detalle
+              <Settings size={18} />
+              Configurar
             </button>
           </article>
         </section>
@@ -575,7 +811,7 @@ const ConfiguracionDistribucionView = () => {
                   </div>
                   <div>
                     <h2 className="text-lg font-bold text-slate-800">Centros de costo</h2>
-                    <p className="text-sm text-slate-500">Agrega, edita y elimina centros con porcentaje de distribución temporal.</p>
+                    <p className="text-sm text-slate-500">Agrega, edita y elimina centros con porcentaje de distribución.</p>
                   </div>
                 </div>
 
@@ -590,7 +826,24 @@ const ConfiguracionDistribucionView = () => {
               </div>
 
               <div className="space-y-5 px-6 py-5">
-                <div className="text-sm text-slate-500">Esta lista es temporal. Luego la conectamos a base de datos.</div>
+
+                {errorDistribucionCentros ? (
+                  <div className="rounded-2xl border border-amber-200 bg-amber-50 px-6 py-4 text-sm text-amber-800">
+                    {errorDistribucionCentros}
+                  </div>
+                ) : null}
+
+                {estadoGuardadoDistribucionCentros ? (
+                  <div
+                    className={
+                      estadoGuardadoDistribucionCentros.tipo === 'exito'
+                        ? 'rounded-2xl border border-emerald-200 bg-emerald-50 px-6 py-4 text-sm text-emerald-800'
+                        : 'rounded-2xl border border-rose-200 bg-rose-50 px-6 py-4 text-sm text-rose-800'
+                    }
+                  >
+                    {estadoGuardadoDistribucionCentros.mensaje}
+                  </div>
+                ) : null}
 
                 {cargandoCentros ? (
                   <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-6 py-10 text-center text-slate-500">
@@ -661,6 +914,24 @@ const ConfiguracionDistribucionView = () => {
                       <span className="rounded-full bg-slate-100 px-3 py-1">Centros agregados: {distribucionesTemporales.length}</span>
                       <span className="rounded-full bg-slate-100 px-3 py-1">Total: {totalDistribucion.toFixed(2)}%</span>
                     </div>
+
+                    <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-slate-50 px-4 py-4">
+                      <div className="text-sm text-slate-600">
+                        {distribucionCentroCostoValida
+                          ? 'La configuracion esta lista para guardarse en la base de datos.'
+                          : 'La suma debe quedar exactamente en 100% para poder guardar.'}
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={guardarDistribucionCentroCosto}
+                        disabled={!distribucionCentroCostoValida || guardandoDistribucionCentros}
+                        className="inline-flex items-center gap-2 rounded-2xl bg-slate-800 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-900 disabled:cursor-not-allowed disabled:bg-slate-300"
+                      >
+                        <Save size={16} />
+                        {guardandoDistribucionCentros ? 'Guardando...' : 'Guardar configuración'}
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
@@ -691,11 +962,33 @@ const ConfiguracionDistribucionView = () => {
               </div>
 
               <div className="space-y-5 px-6 py-5">
-                <div className="text-sm text-slate-500">
-                  La suma de porcentajes por empleado debe ser 100% antes de guardar.
-                </div>
 
-                <div className="overflow-x-auto rounded-2xl border border-slate-100">
+                {errorDistribucionEmpleados ? (
+                  <div className="rounded-2xl border border-amber-200 bg-amber-50 px-6 py-4 text-sm text-amber-800">
+                    {errorDistribucionEmpleados}
+                  </div>
+                ) : null}
+
+                {estadoGuardadoDistribucionEmpleados ? (
+                  <div
+                    className={
+                      estadoGuardadoDistribucionEmpleados.tipo === 'exito'
+                        ? 'rounded-2xl border border-emerald-200 bg-emerald-50 px-6 py-4 text-sm text-emerald-800'
+                        : 'rounded-2xl border border-rose-200 bg-rose-50 px-6 py-4 text-sm text-rose-800'
+                    }
+                  >
+                    {estadoGuardadoDistribucionEmpleados.mensaje}
+                  </div>
+                ) : null}
+
+                {cargandoDistribucionEmpleados ? (
+                  <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-6 py-10 text-center text-slate-500">
+                    Cargando distribuciones por empleado...
+                  </div>
+                ) : null}
+
+                {!cargandoDistribucionEmpleados ? (
+                  <div className="overflow-x-auto rounded-2xl border border-slate-100">
                   <table className="min-w-full text-left text-sm">
                     <thead className="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-400">
                       <tr>
@@ -753,7 +1046,8 @@ const ConfiguracionDistribucionView = () => {
                       )}
                     </tbody>
                   </table>
-                </div>
+                  </div>
+                ) : null}
               </div>
             </article>
           )}
@@ -1024,7 +1318,7 @@ const ConfiguracionDistribucionView = () => {
 
             <div className="flex flex-wrap items-center justify-between gap-4 border-t border-slate-100 px-6 py-5">
               <div className="min-h-[1.25rem] text-sm font-medium text-red-700">
-                {!empleadoDistribucionValida ? 'La suma de los porcentajes debe ser 100% antes de guardar.' : ''}
+                {errorDistribucionEmpleados || (!empleadoDistribucionValida ? 'La suma de los porcentajes debe ser 100% antes de guardar.' : '')}
               </div>
 
               <div className="flex flex-wrap items-center justify-end gap-3">
@@ -1038,15 +1332,19 @@ const ConfiguracionDistribucionView = () => {
                 <button
                   type="button"
                   onClick={guardarEmpleadoTemporal}
-                  disabled={!empleadoDistribucionValida}
+                  disabled={!empleadoDistribucionValida || guardandoDistribucionEmpleados}
                   className={`inline-flex items-center justify-center gap-2 rounded-2xl px-5 py-3 text-sm font-semibold text-white shadow-sm transition ${
-                    empleadoDistribucionValida
+                    empleadoDistribucionValida && !guardandoDistribucionEmpleados
                       ? 'bg-emerald-600 hover:bg-emerald-700'
                       : 'cursor-not-allowed bg-emerald-300'
                   }`}
                 >
                   <Plus size={18} />
-                  {empleadoDistribucionEditandoId ? 'Actualizar empleado' : 'Guardar empleado'}
+                  {guardandoDistribucionEmpleados
+                    ? 'Guardando...'
+                    : empleadoDistribucionEditandoId
+                      ? 'Actualizar distribución'
+                      : 'Guardar distribución'}
                 </button>
               </div>
             </div>

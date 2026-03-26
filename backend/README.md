@@ -5,6 +5,8 @@ Servicio API para:
 - Consultas y carga de periodos Humana.
 - Gestion de descuentos de nomina.
 - Gestion de exentos de pago de seguro.
+- Gestion de distribucion de centros de costo.
+- Gestion de distribucion por empleado.
 - Gestion de valets (empleados, horarios y adicionales).
 
 ## Requisitos
@@ -42,6 +44,8 @@ Scripts utiles en `backend/sql/`:
 - `create_humana_period_data.sql`
 - `create_descuentos_nomina_table.sql`
 - `create_humana_exentos_pago_seguro_table.sql`
+- `create_distribucion_centro_costo_table.sql`
+- `create_empleado_distribucion_centro_costo_table.sql`
 - `alter_medic_secure_humana_to_8_decimals.sql`
 
 El backend valida/crea estructura necesaria al iniciar para tablas de descuentos, exentos y valets.
@@ -57,6 +61,11 @@ El backend valida/crea estructura necesaria al iniciar para tablas de descuentos
 - `PATCH /api/descuentos/incidentes-caja-chica/:id/estado`
 - `GET /api/descuentos/exentos-pago-seguro`
 - `POST /api/descuentos/exentos-pago-seguro`
+- `GET /api/nomina/distribucion-centro-costo`
+- `POST /api/nomina/distribucion-centro-costo`
+- `GET /api/nomina/empleado-distribucion-centro-costo`
+- `POST /api/nomina/empleado-distribucion-centro-costo`
+- `DELETE /api/nomina/empleado-distribucion-centro-costo/:empleadoId`
 - `GET /api/valets/empleados`
 - `POST /api/valets/empleados`
 - `DELETE /api/valets/empleados`

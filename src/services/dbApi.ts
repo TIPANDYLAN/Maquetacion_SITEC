@@ -9,6 +9,8 @@ export const DB_API_CATALOG = {
   valetsAdicionalesLista: '/api/valets/adicionales/lista',
   descuentosIncidentesCajaChica: '/api/descuentos/incidentes-caja-chica',
   descuentosExentosPagoSeguro: '/api/descuentos/exentos-pago-seguro',
+  distribucionCentroCosto: '/api/nomina/distribucion-centro-costo',
+  distribucionEmpleadoCentroCosto: '/api/nomina/empleado-distribucion-centro-costo',
 } as const;
 
 interface PeriodSummary {
@@ -228,6 +230,41 @@ export const dbApi = {
           estado: 'certificado',
         });
       },
+    },
+  },
+
+  distribucionCentroCosto: {
+    list: async <T = unknown>(): Promise<T> => {
+      return await requireData(dbApiFetch<T>({ endpoint: DB_API_CATALOG.distribucionCentroCosto }));
+    },
+
+    save: async <T = unknown>(payload: unknown): Promise<T> => {
+      return await requireData(dbApiFetch<T>({
+        endpoint: DB_API_CATALOG.distribucionCentroCosto,
+        method: 'POST',
+        body: payload,
+      }));
+    },
+  },
+
+  distribucionEmpleadoCentroCosto: {
+    list: async <T = unknown>(): Promise<T> => {
+      return await requireData(dbApiFetch<T>({ endpoint: DB_API_CATALOG.distribucionEmpleadoCentroCosto }));
+    },
+
+    save: async <T = unknown>(payload: unknown): Promise<T> => {
+      return await requireData(dbApiFetch<T>({
+        endpoint: DB_API_CATALOG.distribucionEmpleadoCentroCosto,
+        method: 'POST',
+        body: payload,
+      }));
+    },
+
+    delete: async <T = unknown>(empleadoId: string): Promise<T> => {
+      return await requireData(dbApiFetch<T>({
+        endpoint: `${DB_API_CATALOG.distribucionEmpleadoCentroCosto}/${encodeURIComponent(empleadoId)}`,
+        method: 'DELETE',
+      }));
     },
   },
 

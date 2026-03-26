@@ -216,6 +216,56 @@ const ensureValetFijoHorarioTable = async () => {
   `);
 };
 
+const ensureDistribucionCentroCostoTable = async () => {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS distribucion_centro_costo (
+      id BIGSERIAL PRIMARY KEY,
+      centro_costo_id TEXT NOT NULL UNIQUE,
+      centro_costo_nombre TEXT NOT NULL DEFAULT '',
+      porcentaje NUMERIC(5,2) NOT NULL,
+      fecha_creacion TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      fecha_actualizacion TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT chk_distribucion_centro_costo_porcentaje_rango CHECK (porcentaje >= 0 AND porcentaje <= 100)
+    )
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_distribucion_centro_costo_nombre
+      ON distribucion_centro_costo (centro_costo_nombre)
+  `);
+};
+
+const ensureEmpleadoDistribucionCentroCostoTable = async () => {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS empleado_distribucion_centro_costo (
+      id BIGSERIAL PRIMARY KEY,
+      empleado_id TEXT NOT NULL,
+      empleado_documento TEXT NOT NULL DEFAULT '',
+      empleado_nombre_completo TEXT NOT NULL DEFAULT '',
+      centro_costo_id TEXT NOT NULL,
+      centro_costo_nombre TEXT NOT NULL DEFAULT '',
+      porcentaje NUMERIC(5,2) NOT NULL,
+      fecha_creacion TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      fecha_actualizacion TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_empleado_distribucion_centro_costo_empleado_id
+      ON empleado_distribucion_centro_costo (empleado_id)
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_empleado_distribucion_centro_costo_documento
+      ON empleado_distribucion_centro_costo (empleado_documento)
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_empleado_distribucion_centro_costo_centro
+      ON empleado_distribucion_centro_costo (centro_costo_id)
+  `);
+};
+
 const getPeriodoActual = () => {
   const now = new Date();
   const year = now.getFullYear();
@@ -335,6 +385,32 @@ const mapDbRowToValetFijoHorario = (row) => ({
   dia: String(row.dia || ''),
   horaEntrada: String(row.hora_entrada || ''),
   horaSalida: String(row.hora_salida || ''),
+  fechaCreacion: row.fecha_creacion,
+  fechaActualizacion: row.fecha_actualizacion,
+});
+
+const mapDbRowToDistribucionCentroCosto = (row) => ({
+  id: Number(row.id),
+  centroCostoId: String(row.centro_costo_id || ''),
+  centroCostoNombre: String(row.centro_costo_nombre || ''),
+  porcentaje: Number(row.porcentaje || 0),
+  fechaCreacion: row.fecha_creacion,
+  fechaActualizacion: row.fecha_actualizacion,
+});
+
+const mapDbRowToDistribucionEmpleadoCentroCosto = (row) => ({
+  id: Number(row.id),
+  empleadoId: String(row.empleado_id || ''),
+  empleadoDocumento: String(row.empleado_documento || ''),
+  empleadoNombreCompleto: String(row.empleado_nombre_completo || ''),
+  centros: Array.isArray(row.centros)
+    ? row.centros.map((centro) => ({
+        centroCostoId: String(centro?.centroCostoId || centro?.centro_costo_id || '').trim(),
+        centroCostoNombre: String(centro?.centroCostoNombre || centro?.centro_costo_nombre || '').trim(),
+        porcentaje: Number(centro?.porcentaje || 0),
+      }))
+    : [],
+  porcentajeTotal: Number(row.porcentaje_total || 0),
   fechaCreacion: row.fecha_creacion,
   fechaActualizacion: row.fecha_actualizacion,
 });
@@ -1336,6 +1412,282 @@ app.post('/api/valets/horarios', async (req, res) => {
   }
 });
 
+app.get('/api/nomina/distribucion-centro-costo', async (_req, res) => {
+  try {
+    await ensureDistribucionCentroCostoTable();
+    const result = await pool.query(
+      `SELECT id, centro_costo_id, centro_costo_nombre, porcentaje, fecha_creacion, fecha_actualizacion
+       FROM distribucion_centro_costo
+       ORDER BY centro_costo_nombre ASC, id ASC`
+    );
+
+    res.status(200).json({
+      ok: true,
+      centros: result.rows.map(mapDbRowToDistribucionCentroCosto),
+    });
+  } catch (error) {
+    console.error('[GET /api/nomina/distribucion-centro-costo] Error:', error instanceof Error ? error.message : String(error));
+    res.status(500).json({
+      error: 'No se pudo cargar la distribucion de centros de costo',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+app.post('/api/nomina/distribucion-centro-costo', async (req, res) => {
+  const centros = Array.isArray(req.body?.centros) ? req.body.centros : [];
+
+  if (centros.length === 0) {
+    res.status(400).json({ error: 'Debe enviar al menos un centro de costo' });
+    return;
+  }
+
+  const normalizados = [];
+  const idsVistos = new Set();
+
+  for (const item of centros) {
+    const centroCostoId = String(item?.centroCostoId || item?.centro_costo_id || '').trim();
+    const centroCostoNombre = String(item?.centroCostoNombre || item?.centro_costo_nombre || '').trim();
+    const porcentaje = parseValor(item?.porcentaje);
+
+    if (!centroCostoId) {
+      res.status(400).json({ error: 'Cada centro debe incluir centroCostoId' });
+      return;
+    }
+
+    if (!centroCostoNombre) {
+      res.status(400).json({ error: 'Cada centro debe incluir centroCostoNombre' });
+      return;
+    }
+
+    if (!Number.isFinite(porcentaje) || porcentaje < 0 || porcentaje > 100) {
+      res.status(400).json({ error: 'Cada porcentaje debe ser numerico entre 0 y 100' });
+      return;
+    }
+
+    if (idsVistos.has(centroCostoId)) {
+      res.status(400).json({ error: 'No se permiten centros duplicados en la misma configuracion' });
+      return;
+    }
+
+    idsVistos.add(centroCostoId);
+    normalizados.push({ centroCostoId, centroCostoNombre, porcentaje });
+  }
+
+  const total = normalizados.reduce((acumulado, item) => acumulado + item.porcentaje, 0);
+  if (Math.abs(total - 100) > 0.01) {
+    res.status(400).json({ error: 'La suma de porcentajes de los centros de costo debe ser 100%' });
+    return;
+  }
+
+  try {
+    await ensureDistribucionCentroCostoTable();
+
+    await pool.query('BEGIN');
+    await pool.query('DELETE FROM distribucion_centro_costo');
+
+    for (const item of normalizados) {
+      await pool.query(
+        `INSERT INTO distribucion_centro_costo (
+          centro_costo_id,
+          centro_costo_nombre,
+          porcentaje,
+          fecha_actualizacion
+        ) VALUES ($1, $2, $3, NOW())`,
+        [item.centroCostoId, item.centroCostoNombre, item.porcentaje]
+      );
+    }
+
+    await pool.query('COMMIT');
+
+    const result = await pool.query(
+      `SELECT id, centro_costo_id, centro_costo_nombre, porcentaje, fecha_creacion, fecha_actualizacion
+       FROM distribucion_centro_costo
+       ORDER BY centro_costo_nombre ASC, id ASC`
+    );
+
+    res.status(200).json({
+      ok: true,
+      total,
+      centros: result.rows.map(mapDbRowToDistribucionCentroCosto),
+    });
+  } catch (error) {
+    await pool.query('ROLLBACK').catch(() => {});
+    console.error('[POST /api/nomina/distribucion-centro-costo] Error:', error instanceof Error ? error.message : String(error));
+    res.status(500).json({
+      error: 'No se pudo guardar la distribucion de centros de costo',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+
+// GET: devuelve [{ empleado_id, empleado_documento, empleado_nombre_completo, centros: [{centro_costo_id, centro_costo_nombre, porcentaje}] }]
+app.get('/api/nomina/empleado-distribucion-centro-costo', async (_req, res) => {
+  try {
+    await ensureEmpleadoDistribucionCentroCostoTable();
+    const result = await pool.query(
+      `SELECT empleado_id, empleado_documento, empleado_nombre_completo, centro_costo_id, centro_costo_nombre, porcentaje
+       FROM empleado_distribucion_centro_costo
+       ORDER BY empleado_nombre_completo ASC, empleado_id ASC, id ASC`
+    );
+    // Agrupar por empleado
+    const empleadosMap = new Map();
+    for (const row of result.rows) {
+      if (!empleadosMap.has(row.empleado_id)) {
+        empleadosMap.set(row.empleado_id, {
+          empleadoId: row.empleado_id,
+          empleadoDocumento: row.empleado_documento,
+          empleadoNombreCompleto: row.empleado_nombre_completo,
+          centros: [],
+        });
+      }
+      empleadosMap.get(row.empleado_id).centros.push({
+        centroCostoId: row.centro_costo_id,
+        centroCostoNombre: row.centro_costo_nombre,
+        porcentaje: Number(row.porcentaje),
+      });
+    }
+    res.status(200).json({
+      ok: true,
+      empleados: Array.from(empleadosMap.values()),
+    });
+  } catch (error) {
+    console.error('[GET /api/nomina/empleado-distribucion-centro-costo] Error:', error instanceof Error ? error.message : String(error));
+    res.status(500).json({
+      error: 'No se pudo cargar la distribucion por empleado',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+
+// POST: recibe { empleadoId, empleadoDocumento, empleadoNombreCompleto, centros: [{centroCostoId, centroCostoNombre, porcentaje}] }
+app.post('/api/nomina/empleado-distribucion-centro-costo', async (req, res) => {
+  const empleadoId = String(req.body?.empleadoId || '').trim();
+  const empleadoDocumento = String(req.body?.empleadoDocumento || '').trim();
+  const empleadoNombreCompleto = String(req.body?.empleadoNombreCompleto || '').trim();
+  const centros = Array.isArray(req.body?.centros) ? req.body.centros : [];
+
+  if (!empleadoId) {
+    res.status(400).json({ error: 'El campo empleadoId es requerido' });
+    return;
+  }
+  if (!empleadoNombreCompleto) {
+    res.status(400).json({ error: 'El campo empleadoNombreCompleto es requerido' });
+    return;
+  }
+  if (centros.length === 0) {
+    res.status(400).json({ error: 'Debe enviar al menos un centro de costo' });
+    return;
+  }
+  const normalizados = [];
+  const idsVistos = new Set();
+  for (const item of centros) {
+    const centroCostoId = String(item?.centroCostoId || item?.centro_costo_id || '').trim();
+    const centroCostoNombre = String(item?.centroCostoNombre || item?.centro_costo_nombre || '').trim();
+    const porcentaje = parseValor(item?.porcentaje);
+    if (!centroCostoId) {
+      res.status(400).json({ error: 'Cada centro debe incluir centroCostoId' });
+      return;
+    }
+    if (!centroCostoNombre) {
+      res.status(400).json({ error: 'Cada centro debe incluir centroCostoNombre' });
+      return;
+    }
+    if (!Number.isFinite(porcentaje) || porcentaje < 0 || porcentaje > 100) {
+      res.status(400).json({ error: 'Cada porcentaje debe ser numerico entre 0 y 100' });
+      return;
+    }
+    if (idsVistos.has(centroCostoId)) {
+      res.status(400).json({ error: 'No se permiten centros duplicados en la misma distribucion del empleado' });
+      return;
+    }
+    idsVistos.add(centroCostoId);
+    normalizados.push({ centroCostoId, centroCostoNombre, porcentaje });
+  }
+  const total = normalizados.reduce((acumulado, item) => acumulado + item.porcentaje, 0);
+  if (Math.abs(total - 100) > 0.01) {
+    res.status(400).json({ error: 'La suma de porcentajes del empleado debe ser 100%' });
+    return;
+  }
+  try {
+    await ensureEmpleadoDistribucionCentroCostoTable();
+    // Eliminar filas previas del empleado
+    await pool.query('DELETE FROM empleado_distribucion_centro_costo WHERE empleado_id = $1', [empleadoId]);
+    // Insertar cada centro como fila
+    const values = [];
+    const placeholders = [];
+    normalizados.forEach((item, idx) => {
+      values.push(
+        empleadoId,
+        empleadoDocumento,
+        empleadoNombreCompleto,
+        item.centroCostoId,
+        item.centroCostoNombre,
+        item.porcentaje
+      );
+      const base = idx * 6;
+      placeholders.push(`($${base+1}, $${base+2}, $${base+3}, $${base+4}, $${base+5}, $${base+6})`);
+    });
+    if (values.length > 0) {
+      await pool.query(
+        `INSERT INTO empleado_distribucion_centro_costo (
+          empleado_id, empleado_documento, empleado_nombre_completo, centro_costo_id, centro_costo_nombre, porcentaje
+        ) VALUES ${placeholders.join(',')}`,
+        values
+      );
+    }
+    res.status(200).json({
+      ok: true,
+      empleado: {
+        empleadoId,
+        empleadoDocumento,
+        empleadoNombreCompleto,
+        centros: normalizados,
+      },
+    });
+  } catch (error) {
+    console.error('[POST /api/nomina/empleado-distribucion-centro-costo] Error:', error instanceof Error ? error.message : String(error));
+    res.status(500).json({
+      error: 'No se pudo guardar la distribucion por empleado',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+
+// DELETE: elimina todas las filas de un empleado
+app.delete('/api/nomina/empleado-distribucion-centro-costo/:empleadoId', async (req, res) => {
+  const empleadoId = String(req.params.empleadoId || '').trim();
+  if (!empleadoId) {
+    res.status(400).json({ error: 'El parametro empleadoId es requerido' });
+    return;
+  }
+  try {
+    await ensureEmpleadoDistribucionCentroCostoTable();
+    const result = await pool.query(
+      `DELETE FROM empleado_distribucion_centro_costo
+       WHERE empleado_id = $1`,
+      [empleadoId]
+    );
+    if (result.rowCount === 0) {
+      res.status(404).json({ error: 'Distribucion del empleado no encontrada' });
+      return;
+    }
+    res.status(200).json({
+      ok: true,
+      empleadoId,
+    });
+  } catch (error) {
+    console.error('[DELETE /api/nomina/empleado-distribucion-centro-costo/:empleadoId] Error:', error instanceof Error ? error.message : String(error));
+    res.status(500).json({
+      error: 'No se pudo eliminar la distribucion por empleado',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
 const startServer = async () => {
   try {
     await ensureDescuentosTable();
@@ -1343,6 +1695,8 @@ const startServer = async () => {
     await ensureValetsAdicionalesTable();
     await ensureValetFijoEmpleadoTable();
     await ensureValetFijoHorarioTable();
+    await ensureDistribucionCentroCostoTable();
+    await ensureEmpleadoDistribucionCentroCostoTable();
     app.listen(PORT, () => {
       console.log(`humana-backend escuchando en http://localhost:${PORT}`);
     });
