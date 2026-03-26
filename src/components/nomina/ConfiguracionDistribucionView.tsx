@@ -2,8 +2,6 @@ import { useEffect, useMemo, useState } from 'react';
 import { Building2, ChevronLeft, Clock3, Pencil, Plus, Save, Search, Trash2, Users, Settings } from 'lucide-react';
 import { getNominaCostCenters, getEmpleadosDistribucion, type NominaCostCenter, type EmpleadoDistribucionApiItem } from '../../services/n8nApi';
 import { dbApi } from '../../services/dbApi';
-import type { EmpleadoNominaApiItem } from '../../types/nomina';
-
 
 type TabDistribucion = 'empleados' | 'centros' | 'distribucion_empleados';
 type VistaDistribucion = 'inicio' | TabDistribucion;
@@ -90,8 +88,6 @@ interface EstadoGuardadoDistribucionEmpleados {
   mensaje: string;
 }
 
-const normalizarTexto = (valor: string): string => String(valor || '').trim().toUpperCase();
-
 const normalizarDistribucionCentroCosto = (item: DistribucionCentroCostoApiItem): DistribucionTemporal => ({
   centroCostoId: String(item?.centroCostoId || item?.centro_costo_id || '').trim(),
   centroCostoNombre: String(item?.centroCostoNombre || item?.centro_costo_nombre || '').trim(),
@@ -152,7 +148,7 @@ const ConfiguracionDistribucionView = () => {
   const [empleadoDistribucionEditandoId, setEmpleadoDistribucionEditandoId] = useState<string | null>(null);
   const [cargandoEmpleados, setCargandoEmpleados] = useState(false);
   const [cargandoCentros, setCargandoCentros] = useState(false);
-  const [cargandoDistribucionCentros, setCargandoDistribucionCentros] = useState(false);
+  const [, setCargandoDistribucionCentros] = useState(false);
   const [cargandoDistribucionEmpleados, setCargandoDistribucionEmpleados] = useState(false);
   const [guardandoDistribucionCentros, setGuardandoDistribucionCentros] = useState(false);
   const [guardandoDistribucionEmpleados, setGuardandoDistribucionEmpleados] = useState(false);
