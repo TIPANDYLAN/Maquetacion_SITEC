@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Building2, ChevronLeft, Clock3, Pencil, Plus, Save, Search, Trash2, Users, Settings } from 'lucide-react';
-import { getNominaCostCenters, getNominaEmployeesActive, type NominaCostCenter } from '../../services/n8nApi';
+import { getNominaCostCenters, getEmpleadosDistribucion, type NominaCostCenter, type EmpleadoDistribucionApiItem } from '../../services/n8nApi';
 import { dbApi } from '../../services/dbApi';
 import type { EmpleadoNominaApiItem } from '../../types/nomina';
 
-const FILTRO_DSC_MFCC = 'ADMINISTRACION-SUPERVISORES';
+
 type TabDistribucion = 'empleados' | 'centros' | 'distribucion_empleados';
 type VistaDistribucion = 'inicio' | TabDistribucion;
 
@@ -115,23 +115,20 @@ const normalizarDistribucionEmpleadoCentroCosto = (item: DistribucionEmpleadoCen
   };
 };
 
-const normalizarEmpleado = (item: EmpleadoNominaApiItem): EmpleadoDistribucion => {
-  const payload = (item?.json ?? item ?? {}) as Record<string, unknown>;
-  const documento = String(payload.DOCI_MFEMP || payload.CEDULA || '').trim();
-  const codigoEmpleado = String(payload.COD_MFEMP || documento || '').trim();
-
+const normalizarEmpleadoDistribucion = (item: EmpleadoDistribucionApiItem): EmpleadoDistribucion & { codigoDistribucion: string } => {
   return {
-    idEmpleado: documento || codigoEmpleado,
-    documento,
-    codigoEmpleado,
-    nombres: String(payload.NOMBRES || '').trim(),
-    apellidos: String(payload.APELLIDOS || '').trim(),
-    centroCostoCodigo: String(payload.COD_MFCC || '').trim(),
-    centroCostoDescripcion: String(payload.DSC_MFCC || '').trim(),
-    departamentoCodigo: String(payload.COD_MFDPT || '').trim(),
-    departamentoDescripcion: String(payload.DSC_MFDPT || '').trim(),
-    plan: String(payload.PLAN || payload.TIPO_PLAN || payload.PLAN_CONTRATADO || '').trim(),
-    ingreso: String(payload.FECING_MFEDC || payload.INGRESO || payload.FechaIngreso || '').trim(),
+    idEmpleado: String(item.DOCI_MFEMP || item.COD_MFEMP || '').trim(),
+    documento: String(item.DOCI_MFEMP || '').trim(),
+    codigoEmpleado: String(item.COD_MFEMP || '').trim(),
+    nombres: String(item.NOMBRES || '').trim(),
+    apellidos: String(item.APELLIDOS || '').trim(),
+    centroCostoCodigo: String(item.COD_MFCC || '').trim(),
+    centroCostoDescripcion: String(item.DSC_MFCC || '').trim(),
+    departamentoCodigo: '',
+    departamentoDescripcion: String(item.DSC_MFDPT || '').trim(),
+    plan: '',
+    ingreso: '',
+    codigoDistribucion: String(item.COD_DISTRIBUCION || '').trim(),
   };
 };
 
@@ -196,13 +193,13 @@ const ConfiguracionDistribucionView = () => {
     setErrorEmpleados(null);
 
     try {
-      const data = await getNominaEmployeesActive<EmpleadoNominaApiItem[]>();
+      const data = await getEmpleadosDistribucion<EmpleadoDistribucionApiItem[]>();
       const empleadosApi = Array.isArray(data) ? data : [];
 
+
       const empleadosNormalizados = empleadosApi
-        .map(normalizarEmpleado)
+        .map(normalizarEmpleadoDistribucion)
         .filter((empleado) => empleado.idEmpleado)
-        .filter((empleado) => normalizarTexto(empleado.centroCostoDescripcion) === FILTRO_DSC_MFCC)
         .sort((a, b) => `${a.apellidos} ${a.nombres}`.localeCompare(`${b.apellidos} ${b.nombres}`, 'es', { sensitivity: 'base' }));
 
       const sinDuplicados = empleadosNormalizados.filter(
@@ -611,14 +608,16 @@ const ConfiguracionDistribucionView = () => {
     [centrosEmpleadoBorrador.length, totalDistribucionEmpleadoBorrador],
   );
 
-  const empleadosFiltrados = useMemo(() => {
-    return empleados.filter((empleado) => normalizarTexto(empleado.centroCostoDescripcion) === FILTRO_DSC_MFCC);
-  }, [empleados]);
+  const empleadosFiltrados = useMemo(() => empleados, [empleados]);
 
   const empleadosParaDistribuir = useMemo(() => {
     const empleadosAsignados = new Set(distribucionesEmpleadoTemporales.map((item) => item.empleadoId));
-
-    return empleadosFiltrados.filter((empleado) => !empleadosAsignados.has(empleado.idEmpleado));
+    return empleadosFiltrados
+      .filter((empleado) => !empleadosAsignados.has(empleado.idEmpleado))
+      .map((empleado) => ({
+        ...empleado,
+        codigoDistribucion: (empleado as any).codigoDistribucion ?? '',
+      }));
   }, [empleadosFiltrados, distribucionesEmpleadoTemporales]);
 
   const empleadosDisponiblesParaSelectorDistribucion = useMemo(() => {
@@ -782,6 +781,7 @@ const ConfiguracionDistribucionView = () => {
                           <th className="px-4 py-3">Nombres</th>
                           <th className="px-4 py-3">Centro costo</th>
                           <th className="px-4 py-3">Departamento</th>
+                          <th className="px-4 py-3">Cod. Distribución</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
@@ -792,6 +792,7 @@ const ConfiguracionDistribucionView = () => {
                             <td className="px-4 py-3 text-slate-600">{empleado.nombres || '-'}</td>
                             <td className="px-4 py-3 text-slate-600">{empleado.centroCostoDescripcion || empleado.centroCostoCodigo || '-'}</td>
                             <td className="px-4 py-3 text-slate-600">{empleado.departamentoDescripcion || empleado.departamentoCodigo || '-'}</td>
+                            <td className="px-4 py-3 text-slate-600">{empleado.codigoDistribucion || '-'}</td>
                           </tr>
                         ))}
                       </tbody>

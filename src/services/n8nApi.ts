@@ -4,7 +4,29 @@ export const N8N_API_CATALOG = {
   listaCentroCosto: '/api/n8n/webhook/centrocostos/empleados/test',
   detalleEmpleadoCentroCostos: '/api/n8n/webhook/centrocostos/empleados',
   familiaresEmpleados: '/api/n8n/webhook/detalle/familiares/nomina/test',
+  empleadosDistribucion: 'https://n8n.172.10.219.15.sslip.io/webhook/empleados/distribucion',
 } as const;
+export interface EmpleadoDistribucionApiItem {
+  COD_MFEMP: number|string;
+  DOCI_MFEMP: string;
+  NOMBRES: string;
+  APELLIDOS: string;
+  COD_MFCC: string;
+  DSC_MFCC: string;
+  DSC_MFDPT: string;
+  COD_DISTRIBUCION: string;
+}
+
+export const getEmpleadosDistribucion = async <T = EmpleadoDistribucionApiItem[]>(): Promise<T> => {
+  const response = await fetch(N8N_API_CATALOG.empleadosDistribucion, {
+    method: 'GET',
+    headers: buildHeaders(),
+  });
+  if (!response.ok) {
+    throw new Error(await parseErrorMessage(response));
+  }
+  return await response.json() as T;
+};
 
 const N8N_DEFAULT_API_KEY = 'u37KhX9gYj2Ns5rPAWq4EtZcLVtMoF16';
 
