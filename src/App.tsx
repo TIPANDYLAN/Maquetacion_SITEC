@@ -7,6 +7,7 @@ const PagosView = lazy(() => import("./components/pagos/PagosView"));
 const HumanaView = lazy(() => import("./components/nomina/HumanaView"));
 const GestionDescuentosTabsView = lazy(() => import("./components/nomina/GestionDescuentosTabsView"));
 const ValetsFijosView = lazy(() => import("./components/nomina/ValetsFijosView"));
+const ConfiguracionDistribucionView = lazy(() => import("./components/nomina/ConfiguracionDistribucionView.tsx"));
 const BancosView = lazy(() => import("./components/pagos/BancosView"));
 
 interface PlaceholderContent {
@@ -70,6 +71,7 @@ function App() {
 
   const isItemActive = (id: string) => activeTab === id;
   const esTabDescuentos = activeTab === 'descuentos';
+  const esTabConfiguracionDistribucion = activeTab === 'configuracion_distribucion';
 
   const renderActiveContent = () => {
     switch (activeTab) {
@@ -85,6 +87,8 @@ function App() {
         return <ValetsFijosView />;
       case 'humana':
         return <HumanaView />;
+      case 'configuracion_distribucion':
+        return <ConfiguracionDistribucionView />;
       default: {
         const placeholder = PLACEHOLDER_TABS[activeTab];
         if (placeholder) {
@@ -193,6 +197,7 @@ function App() {
                 <button onClick={() => setActiveTab('fondos')} className={`block w-full text-left px-3 py-2 rounded-lg text-sm transition-all ${isItemActive('fondos') ? 'bg-blue-50 text-blue-600 font-bold' : 'text-slate-600 hover:bg-slate-50'}`}>Fondos de reserva</button>
                 <button onClick={() => setActiveTab('descuentos')} className={`block w-full text-left px-3 py-2 rounded-lg text-sm transition-all ${isItemActive('descuentos') ? 'bg-blue-50 text-blue-600 font-bold' : 'text-slate-600 hover:bg-slate-50'}`}>Gestión de descuentos</button>
                 <button onClick={() => setActiveTab('valets_fijos')} className={`block w-full text-left px-3 py-2 rounded-lg text-sm transition-all ${isItemActive('valets_fijos') ? 'bg-blue-50 text-blue-600 font-bold' : 'text-slate-600 hover:bg-slate-50'}`}>Valets fijos</button>
+                <button onClick={() => setActiveTab('configuracion_distribucion')} className={`block w-full text-left px-3 py-2 rounded-lg text-sm transition-all ${isItemActive('configuracion_distribucion') ? 'bg-blue-50 text-blue-600 font-bold' : 'text-slate-600 hover:bg-slate-50'}`}>Configuración de distribución</button>
                 <button onClick={() => setActiveTab('horas')} className={`block w-full text-left px-3 py-2 rounded-lg text-sm transition-all ${isItemActive('horas') ? 'bg-blue-50 text-blue-600 font-bold' : 'text-slate-600 hover:bg-slate-50'}`}>Registro de horas</button>
                 <button onClick={() => setActiveTab('humana')} className={`block w-full text-left px-3 py-2 rounded-lg text-sm transition-all ${isItemActive('humana') ? 'bg-blue-50 text-blue-600 font-bold' : 'text-slate-600 hover:bg-slate-50'}`}>Humana</button>
               </div>
@@ -256,6 +261,11 @@ function App() {
                 <div>
                   <h2 className="text-lg font-bold text-slate-700">Gestión de descuentos</h2>
                   <p className="text-xs text-slate-500">Control de descuentos salariales</p>
+                </div>
+              ) : esTabConfiguracionDistribucion ? (
+                <div>
+                  <h2 className="text-lg font-bold text-slate-700">Configuración de distribución</h2>
+                  <p className="text-xs text-slate-500">Reglas y parámetros de distribución de nómina</p>
                 </div>
               ) : (
                 <h2 className="text-lg font-bold text-slate-700 capitalize">{activeTab.replace('_', ' ')}</h2>

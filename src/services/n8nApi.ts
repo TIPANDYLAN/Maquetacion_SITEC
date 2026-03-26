@@ -1,6 +1,6 @@
 export const N8N_API_CATALOG = {
   movimientosHumanaEmpleados: '/api/n8n/webhook/lista/empleados/nomina/entsal/test',
-  empleadosActivos: '/api/n8n/webhook/empleados/activos/test',
+  empleadosActivos: '/api/n8n/webhook/empleados/activos',
   listaCentroCosto: '/api/n8n/webhook/centrocostos/empleados/test',
   detalleEmpleadoCentroCostos: '/api/n8n/webhook/centrocostos/empleados',
   familiaresEmpleados: '/api/n8n/webhook/detalle/familiares/nomina/test',
