@@ -408,7 +408,7 @@ const ValetsFijosView = () => {
       const empleadosNormalizados = empleadosApi
         .map((item: EmpleadoNominaApiItem) => {
           const payload = (item?.json ?? item ?? {}) as Record<string, unknown>;
-          const cedula = String(payload?.CEDULA || '').trim();
+          const cedula = String(payload?.CEDULA || payload?.DOCI_MFEMP || '').trim();
           const nombres = String(payload?.NOMBRES || '').trim();
           const apellidos = String(payload?.APELLIDOS || '').trim();
           const nombre = `${apellidos} ${nombres}`.trim();

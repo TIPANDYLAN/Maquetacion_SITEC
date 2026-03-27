@@ -105,7 +105,7 @@ const DescuentosView = () => {
                 .map((item: EmpleadoNominaApiItem) => {
                   const payload = (item?.json ?? item ?? {}) as Record<string, unknown>;
                   return {
-                    cedula: String(payload?.CEDULA || '').trim(),
+                                        cedula: String(payload?.CEDULA || payload?.DOCI_MFEMP || '').trim(),
                     nombres: String(payload?.NOMBRES || '').trim(),
                     apellidos: String(payload?.APELLIDOS || '').trim(),
                   };

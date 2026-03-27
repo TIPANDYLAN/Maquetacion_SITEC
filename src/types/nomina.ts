@@ -1,5 +1,6 @@
 export interface EmpleadoNominaApiPayload {
   CEDULA?: string;
+  DOCI_MFEMP?: string;
   NOMBRES?: string;
   APELLIDOS?: string;
   PLAN?: string;
@@ -8,6 +9,15 @@ export interface EmpleadoNominaApiPayload {
   PLAN_CONTRATADO_SALUD?: string;
   TARIFA?: string;
   INGRESO?: string | null;
+  FECING_MFEDC?: string | null;
+  FECN_MFEMP?: string | null;
+  SEX_MFEMP?: string | null;
+  ESTC_MFEMP?: string | null;
+  DSC_MFBNC?: string | null;
+  CNTB_MFEDC?: string | null;
+  MAIL_MFEMP?: string | null;
+  COD_PARENTESCO?: string | null;
+  PARENTESCO?: string | null;
   SALIDA?: string | null;
   FechaIngreso?: string | null;
   FechaSalida?: string | null;

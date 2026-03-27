@@ -138,6 +138,15 @@ const normalizarFechaISOaInput = (iso: string) => {
   return fecha.toISOString().slice(0, 10);
 };
 
+const limpiarParentesco = (valor: string) => {
+  const parentesco = String(valor || '').trim().toUpperCase();
+  if (!parentesco) return '';
+  if (parentesco === 'TITULAR') return 'T';
+  if (parentesco === 'CONYUGE' || parentesco === 'C\u00d3NYUGE') return 'C';
+  if (parentesco.startsWith('HIJ')) return 'H';
+  return parentesco;
+};
+
 const obtenerFechaActualInput = () => new Date().toISOString().slice(0, 10);
 
 const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaViewProps) => {
@@ -173,17 +182,18 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
         || ''
       ).trim();
     const tarifaApi = normalizarTarifaApi(String(json.TARIFA || ''));
+    const cedula = String(json.CEDULA || json.DOCI_MFEMP || '').trim();
 
     return {
       apellidos: String(json.APELLIDOS || '').trim(),
       nombres: String(json.NOMBRES || '').trim(),
-      cedula: String(json.CEDULA || '').trim(),
+      cedula,
       centroCosto: '',
-      fechaNacimiento: '',
-      estadoCivil: '',
+      fechaNacimiento: normalizarFechaISOaInput(String(json.FECN_MFEMP || '')),
+      estadoCivil: String(json.ESTC_MFEMP || '').trim().toUpperCase(),
       tarifa: tarifaApi,
       parentesco: '',
-      genero: '',
+      genero: String(json.SEX_MFEMP || '').trim().toUpperCase(),
       fechaSolicitud: '',
       fechaInclusion: '',
       fechaExclusion: '',
@@ -214,22 +224,22 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
             const payload = obtenerPayloadEmpleadoNomina(item);
             const raw = (item?.json ?? item ?? {}) as Record<string, unknown>;
             const payloadRaw = payload as Record<string, unknown>;
-            const cedula = String(payload.CEDULA || '').trim();
+            const cedula = String(payload.CEDULA || payload.DOCI_MFEMP || raw.DOCI_MFEMP || '').trim();
 
             if (cedula) {
               const actual = datosPorCedula[cedula] || DATOS_EXCEL_EMPLEADO_VACIO;
               datosPorCedula[cedula] = {
                 tarifa: actual.tarifa || normalizarTarifaApi(String(payload.TARIFA || raw.TARIFA_ACTUAL || raw.TIPO_TARIFA || '')),
                 plan: actual.plan || normalizarPlanApi(String(payload.PLAN || payload.TIPO_PLAN || payload.PLAN_CONTRATADO || payload.PLAN_CONTRATADO_SALUD || '')),
-                fechaIngreso: actual.fechaIngreso || String(payload.INGRESO || payload.FechaIngreso || raw.INGRESO || raw.FechaIngreso || '').trim(),
-                fechaNacimiento: actual.fechaNacimiento || String(raw.FEC_NAC || raw.FECHA_NACIMIENTO || '').trim(),
-                parentesco: actual.parentesco || String(payloadRaw.COD_PARENTESCO || raw.COD_PARENTESCO || payloadRaw.PARENTESCO || raw.PARENTESCO || raw.TIPO_PARENTESCO || '').trim().toUpperCase(),
-                genero: actual.genero || String(raw.SEXO || '').trim().toUpperCase(),
-                estadoCivil: actual.estadoCivil || String(raw.EST_CIVIL || raw.ESTADO_CIVIL || '').trim().toUpperCase(),
-                banco: actual.banco || String(raw.BANCO || '').trim(),
+                fechaIngreso: actual.fechaIngreso || String(payload.FECING_MFEDC || payload.INGRESO || payload.FechaIngreso || raw.FECING_MFEDC || raw.INGRESO || raw.FechaIngreso || '').trim(),
+                fechaNacimiento: actual.fechaNacimiento || String(payload.FECN_MFEMP || raw.FECN_MFEMP || raw.FEC_NAC || raw.FECHA_NACIMIENTO || '').trim(),
+                parentesco: actual.parentesco || limpiarParentesco(String(payload.COD_PARENTESCO || payloadRaw.COD_PARENTESCO || payload.PARENTESCO || payloadRaw.PARENTESCO || raw.COD_PARENTESCO || raw.PARENTESCO || raw.TIPO_PARENTESCO || '')),
+                genero: actual.genero || String(payload.SEX_MFEMP || raw.SEX_MFEMP || raw.SEXO || '').trim().toUpperCase(),
+                estadoCivil: actual.estadoCivil || String(payload.ESTC_MFEMP || raw.ESTC_MFEMP || raw.EST_CIVIL || raw.ESTADO_CIVIL || '').trim().toUpperCase(),
+                banco: actual.banco || String(payload.DSC_MFBNC || raw.DSC_MFBNC || raw.BANCO || '').trim(),
                 tipoCuenta: actual.tipoCuenta || String(raw.TIPO_CUENTA || raw.TIPOCUENTA || '').trim().toUpperCase(),
-                numeroCuenta: actual.numeroCuenta || String(raw.CUENTA_BNCO || raw.NUMERO_CUENTA || '').trim(),
-                correo: actual.correo || String(raw.CORREO || '').trim(),
+                numeroCuenta: actual.numeroCuenta || String(payload.CNTB_MFEDC || raw.CNTB_MFEDC || raw.CUENTA_BNCO || raw.NUMERO_CUENTA || '').trim(),
+                correo: actual.correo || String(payload.MAIL_MFEMP || raw.MAIL_MFEMP || raw.CORREO || '').trim(),
               };
             }
 
@@ -424,9 +434,9 @@ const MovimientosHumanaView = ({ onUnsavedChangesChange }: MovimientosHumanaView
         .map((item) => {
           const payload = obtenerPayloadEmpleadoNomina(item);
           return {
-            cedula: String(payload.CEDULA || '').trim(),
+            cedula: String(payload.CEDULA || payload.DOCI_MFEMP || '').trim(),
             nombre: `${String(payload.APELLIDOS || '').trim()} ${String(payload.NOMBRES || '').trim()}`.trim(),
-            ingreso: String(payload.INGRESO || payload.FechaIngreso || '').trim(),
+            ingreso: String(payload.INGRESO || payload.FECING_MFEDC || payload.FechaIngreso || '').trim(),
             salida: String(payload.SALIDA || payload.FechaSalida || '').trim(),
             tarifa: normalizarTarifaApi(String(payload.TARIFA || '')),
           };
