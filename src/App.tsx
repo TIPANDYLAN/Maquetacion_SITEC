@@ -9,6 +9,7 @@ const GestionDescuentosTabsView = lazy(() => import("./components/nomina/Gestion
 const ValetsFijosView = lazy(() => import("./components/nomina/ValetsFijosView"));
 const ConfiguracionDistribucionView = lazy(() => import("./components/nomina/ConfiguracionDistribucionView.tsx"));
 const BancosView = lazy(() => import("./components/pagos/BancosView"));
+const SolicitudAccesoriosTabsView = lazy(() => import("./components/mantenimiento/SolicitudAccesoriosTabsView"));
 
 interface PlaceholderContent {
   title: string;
@@ -42,6 +43,7 @@ const PLACEHOLDER_TABS: Record<string, PlaceholderContent> = {
   mant_tecnicos: { title: 'Tecnicos', description: 'Gestion de tecnicos de mantenimiento' },
   mant_parqueaderos: { title: 'Parqueaderos', description: 'Gestion de espacios de estacionamiento' },
   mant_planificacion: { title: 'Planificacion y Gestion', description: 'Planificacion de mantenimiento' },
+  solicitud_accesorios: { title: 'Solicitud Accesorios', description: 'Gestion de solicitudes de accesorios y repuestos' },
 };
 
 interface MenuState {
@@ -89,6 +91,8 @@ function App() {
         return <HumanaView />;
       case 'configuracion_distribucion':
         return <ConfiguracionDistribucionView />;
+      case 'solicitud_accesorios':
+        return <SolicitudAccesoriosTabsView />;
       default: {
         const placeholder = PLACEHOLDER_TABS[activeTab];
         if (placeholder) {
@@ -200,6 +204,7 @@ function App() {
                 <button onClick={() => setActiveTab('configuracion_distribucion')} className={`block w-full text-left px-3 py-2 rounded-lg text-sm transition-all ${isItemActive('configuracion_distribucion') ? 'bg-blue-50 text-blue-600 font-bold' : 'text-slate-600 hover:bg-slate-50'}`}>Configuración de distribución</button>
                 <button onClick={() => setActiveTab('horas')} className={`block w-full text-left px-3 py-2 rounded-lg text-sm transition-all ${isItemActive('horas') ? 'bg-blue-50 text-blue-600 font-bold' : 'text-slate-600 hover:bg-slate-50'}`}>Registro de horas</button>
                 <button onClick={() => setActiveTab('humana')} className={`block w-full text-left px-3 py-2 rounded-lg text-sm transition-all ${isItemActive('humana') ? 'bg-blue-50 text-blue-600 font-bold' : 'text-slate-600 hover:bg-slate-50'}`}>Humana</button>
+                <button onClick={() => setActiveTab('solicitud_accesorios')} className={`block w-full text-left px-3 py-2 rounded-lg text-sm transition-all ${isItemActive('solicitud_accesorios') ? 'bg-blue-50 text-blue-600 font-bold' : 'text-slate-600 hover:bg-slate-50'}`}>Solicitud Accesorios</button>
               </div>
             )}
           </div>

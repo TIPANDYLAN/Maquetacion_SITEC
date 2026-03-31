@@ -5,7 +5,7 @@ export const N8N_API_CATALOG = {
   listaCentroCostoFallback: '/api/n8n/webhook/centrocostos/empleados/test',
   detalleEmpleadoCentroCostos: '/api/n8n/webhook/centrocostos/empleados',
   familiaresEmpleados: '/api/n8n/webhook/detalle/familiares/nomina',
-  empleadosDistribucion: 'https://n8n.172.10.219.15.sslip.io/webhook/empleados/distribucion',
+  empleadosDistribucion: '/api/n8n/webhook/empleados/distribucion',
 } as const;
 export interface EmpleadoDistribucionApiItem {
   COD_MFEMP: number|string;
