@@ -26,3 +26,14 @@
 	scrollbar-width: thin;
 	scrollbar-color: #cbd5e1 #f1f5f9;
 }
+
+.no-spinner {
+	appearance: textfield;
+	-moz-appearance: textfield;
+}
+
+.no-spinner::-webkit-outer-spin-button,
+.no-spinner::-webkit-inner-spin-button {
+	-webkit-appearance: none;
+	margin: 0;
+}

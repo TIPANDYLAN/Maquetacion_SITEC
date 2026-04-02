@@ -1,9 +1,37 @@
 import { useState } from 'react';
-import SolicitarView from './SolicitarView';
+import SolicitarView from './SolicitarView.tsx';
 import OrdenCompraView from './OrdenCompraView';
-import RevisionView from './RevisionView';
+import RevisionView from './RevisionView.tsx';
 
-type Tab = 'solicitar' | 'orden_compra' | 'revision';
+export type Tab = 'solicitar' | 'orden_compra' | 'revision';
+
+export interface FilaEmpleado {
+  id: string;
+  empleadoNombre: string;
+  empleadoCedula: string;
+  centroCosto: string;
+  accesorio: 'botas' | 'auriculares';
+  talla: string;
+}
+
+export interface SolicitudGuardada {
+  id: string;
+  fecha: string;
+  filas: FilaEmpleado[];
+  estado: 'creada' | 'orden_generada' | 'pedido_realizado';
+}
+
+export interface OrdenCompraResumen {
+  solicitudId: string;
+  numeroOrden: string;
+  totalValor: number;
+  fecha: string;
+  filas: FilaEmpleado[];
+  archivoOrdenNombre?: string;
+  archivoValidadaNombre?: string;
+  numeroFactura?: string;
+  cuotasPorAccesorio?: Record<string, string>;
+}
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'solicitar', label: 'Solicitar' },
@@ -13,15 +41,77 @@ const TABS: { id: Tab; label: string }[] = [
 
 const SolicitudAccesoriosTabsView = () => {
   const [tab, setTab] = useState<Tab>('solicitar');
+  const [solicitudes, setSolicitudes] = useState<SolicitudGuardada[]>([]);
+  const [ordenesCompra, setOrdenesCompra] = useState<OrdenCompraResumen[]>([]);
+
+  const handleGuardarSolicitud = (filas: FilaEmpleado[]) => {
+    const nuevaSolicitud: SolicitudGuardada = {
+      id: `SOL-${Date.now()}`,
+      fecha: new Date().toLocaleDateString('es-ES', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+      }),
+      filas,
+      estado: 'creada',
+    };
+    setSolicitudes((prev) => [nuevaSolicitud, ...prev]);
+    setTab('orden_compra');
+  };
+
+  const handleUpdateEstado = (solicitudId: string, estado: SolicitudGuardada['estado']) => {
+    setSolicitudes((prev) => prev.map((s) => (s.id === solicitudId ? { ...s, estado } : s)));
+  };
+
+  const handleOrdenCompraSubida = (orden: OrdenCompraResumen) => {
+    setOrdenesCompra((prev) => {
+      const index = prev.findIndex((o) => o.solicitudId === orden.solicitudId);
+      if (index === -1) {
+        return [orden, ...prev];
+      }
+      const copia = [...prev];
+      copia[index] = { ...copia[index], ...orden };
+      return copia;
+    });
+  };
+
+  const handleActualizarRevision = (solicitudId: string, data: { numeroFactura: string; cuotasPorAccesorio: Record<string, string> }) => {
+    setOrdenesCompra((prev) =>
+      prev.map((orden) =>
+        orden.solicitudId === solicitudId
+          ? {
+              ...orden,
+              numeroFactura: data.numeroFactura,
+              cuotasPorAccesorio: data.cuotasPorAccesorio,
+            }
+          : orden
+      )
+    );
+  };
+
+  const handlePedidoRealizado = (solicitudId: string) => {
+    handleUpdateEstado(solicitudId, 'pedido_realizado');
+    setTab('revision');
+  };
 
   const renderContenido = () => {
     switch (tab) {
       case 'solicitar':
-        return <SolicitarView />;
+        return <SolicitarView onGuardar={handleGuardarSolicitud} />;
       case 'orden_compra':
-        return <OrdenCompraView />;
+        return (
+          <OrdenCompraView
+            solicitudes={solicitudes}
+            ordenesCompra={ordenesCompra}
+            onUpdateEstado={handleUpdateEstado}
+            onOrdenCompraSubida={handleOrdenCompraSubida}
+            onPedidoRealizado={handlePedidoRealizado}
+          />
+        );
       case 'revision':
-        return <RevisionView />;
+        return <RevisionView ordenesCompra={ordenesCompra} onGuardarRevision={handleActualizarRevision} />;
     }
   };
 
