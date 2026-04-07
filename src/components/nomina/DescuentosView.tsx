@@ -19,6 +19,7 @@ interface FormularioDescuento {
     tipoDescuento: string;
     usuario: string;
     valorTotal: string;
+    codigoComprobante: string;
     centroCosto: string;
     observacion: string;
 }
@@ -63,6 +64,7 @@ const DescuentosView = () => {
         tipoDescuento: '',
         usuario: '',
         valorTotal: '',
+        codigoComprobante: '',
         centroCosto: '',
         observacion: '',
     });
@@ -148,6 +150,7 @@ const DescuentosView = () => {
                 tipoDescuento: 'faltantes_incidentes',
                 usuario: '',
                 valorTotal: '',
+                codigoComprobante: '',
                 centroCosto: '',
                 observacion: '',
             });
@@ -212,6 +215,7 @@ const DescuentosView = () => {
             const data = await dbApi.descuentos.incidentesCajaChica.save<GuardarDescuentoResponse>({
                 nombre: formulario.usuario,
                 valor: formulario.valorTotal,
+                codigoComprobante: formulario.codigoComprobante,
                 centroCosto: formulario.centroCosto,
                 observacion: formulario.observacion,
             });
@@ -247,6 +251,7 @@ const DescuentosView = () => {
                 tipoDescuento: 'faltantes_incidentes',
                 usuario: '',
                 valorTotal: '',
+                codigoComprobante: '',
                 centroCosto: '',
                 observacion: '',
             });
@@ -607,8 +612,8 @@ const DescuentosView = () => {
             )}
 
             {mostrarFormulario && tipoDescuentoSeleccionado === 'faltantes_incidentes' && (
-                <div className="fixed inset-0 z-50 bg-slate-900/45 flex items-center justify-center p-4">
-                    <div className="w-full max-w-xl bg-white rounded-2xl border border-slate-200 shadow-xl p-6">
+                <div className="fixed inset-0 z-50 bg-slate-900/45 flex items-center justify-center p-2 sm:p-4">
+                    <div className="w-full max-w-2xl bg-white rounded-2xl border border-slate-200 shadow-xl max-h-[92vh] overflow-y-auto p-6">
                         <div className="flex justify-between items-start mb-4">
                             <h3 className="text-lg font-bold text-slate-800">Añadir descuento</h3>
                             <button
@@ -651,80 +656,93 @@ const DescuentosView = () => {
                                 </div>
                             </div>
 
-                            {/* Usuarios en sitec_dsp */}
-                            <div>
-                                <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">
-                                    Nombre del Empleado
-                                </label>
-                                <input
-                                    type="text"
-                                    placeholder={cargandoEmpleados ? 'Cargando usuarios...' : 'Escribe para buscar empleado'}
-                                    value={formulario.usuario}
-                                    onChange={(e) => setFormulario({ ...formulario, usuario: e.target.value })}
-                                    list="usuarios-descuento"
-                                    disabled={cargandoEmpleados}
-                                    className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:border-blue-500 transition-all"
-                                />
-                                <datalist id="usuarios-descuento">
-                                    {obtenerEmpleadosPorNombre(formulario.usuario).map((emp) => (
-                                        <option key={emp.cedula} value={`${emp.apellidos} ${emp.nombres}`}>
-                                            {emp.cedula}
-                                        </option>
-                                    ))}
-                                </datalist>
-                            </div>
-
-                            {/* Valor Total */}
-                            <div>
-                                <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">
-                                    Valor
-                                </label>
-                                <input
-                                    type="text"
-                                    placeholder="Ingresa el valor total"
-                                    value={formulario.valorTotal}
-                                    onChange={(e) => setFormulario({ ...formulario, valorTotal: e.target.value })}
-                                    className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:border-blue-500 transition-all"
-                                />
-                            </div>
-
-                            <div>
-                                <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">
-                                    Observación
-                                </label>
-                                <textarea
-                                    placeholder="Agrega una observación"
-                                    value={formulario.observacion}
-                                    onChange={(e) => setFormulario({ ...formulario, observacion: e.target.value })}
-                                    rows={3}
-                                    className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:border-blue-500 transition-all resize-none"
-                                />
-                            </div>
-
-                            {/* Centro de Costo */}
-                            <div>
-                                <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">
-                                    Centro de Costo
-                                </label>
-                                <input
-                                    type="text"
-                                    placeholder={cargandoCentros ? 'Cargando centros...' : 'Escribe para buscar centro de costo'}
-                                    value={formulario.centroCosto}
-                                    onChange={(e) => setFormulario({ ...formulario, centroCosto: e.target.value })}
-                                    list="centros-costo-descuento"
-                                    disabled={cargandoCentros}
-                                    className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:border-blue-500 transition-all"
-                                />
-                                <datalist id="centros-costo-descuento">
-                                    {obtenerCentrosPorNombre(formulario.centroCosto).map((centro) => (
-                                        <option
-                                            key={centro.IDCENTROCOSTO}
-                                            value={`${centro.IDCENTROCOSTO} - ${centro.CENTROCOSTO}`}
+                                    {/* Usuarios en sitec_dsp */}
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">
+                                            Nombre del Empleado
+                                        </label>
+                                        <input
+                                            type="text"
+                                            placeholder={cargandoEmpleados ? 'Cargando usuarios...' : 'Escribe para buscar empleado'}
+                                            value={formulario.usuario}
+                                            onChange={(e) => setFormulario({ ...formulario, usuario: e.target.value })}
+                                            list="usuarios-descuento"
+                                            disabled={cargandoEmpleados}
+                                            className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:border-blue-500 transition-all"
                                         />
-                                    ))}
-                                </datalist>
-                            </div>
-                        </div>
+                                        <datalist id="usuarios-descuento">
+                                            {obtenerEmpleadosPorNombre(formulario.usuario).map((emp) => (
+                                                <option key={emp.cedula} value={`${emp.apellidos} ${emp.nombres}`}>
+                                                    {emp.cedula}
+                                                </option>
+                                            ))}
+                                        </datalist>
+                                    </div>
+
+                                    {/* Valor Total */}
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">
+                                            Valor
+                                        </label>
+                                        <input
+                                            type="text"
+                                            placeholder="Ingresa el valor total"
+                                            value={formulario.valorTotal}
+                                            onChange={(e) => setFormulario({ ...formulario, valorTotal: e.target.value })}
+                                            className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:border-blue-500 transition-all"
+                                        />
+                                    </div>
+
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">
+                                            Codigo de Comprobante
+                                        </label>
+                                        <input
+                                            type="text"
+                                            placeholder="Ingresa el codigo de comprobante"
+                                            value={formulario.codigoComprobante}
+                                            onChange={(e) => setFormulario({ ...formulario, codigoComprobante: e.target.value })}
+                                            className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:border-blue-500 transition-all"
+                                        />
+                                    </div>
+
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">
+                                            Observación
+                                        </label>
+                                        <textarea
+                                            placeholder="Agrega una observación"
+                                            value={formulario.observacion}
+                                            onChange={(e) => setFormulario({ ...formulario, observacion: e.target.value })}
+                                            rows={3}
+                                            className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:border-blue-500 transition-all resize-none"
+                                        />
+                                    </div>
+
+                                    {/* Centro de Costo */}
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">
+                                            Centro de Costo
+                                        </label>
+                                        <input
+                                            type="text"
+                                            placeholder={cargandoCentros ? 'Cargando centros...' : 'Escribe para buscar centro de costo'}
+                                            value={formulario.centroCosto}
+                                            onChange={(e) => setFormulario({ ...formulario, centroCosto: e.target.value })}
+                                            list="centros-costo-descuento"
+                                            disabled={cargandoCentros}
+                                            className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:border-blue-500 transition-all"
+                                        />
+                                        <datalist id="centros-costo-descuento">
+                                            {obtenerCentrosPorNombre(formulario.centroCosto).map((centro) => (
+                                                <option
+                                                    key={centro.IDCENTROCOSTO}
+                                                    value={`${centro.IDCENTROCOSTO} - ${centro.CENTROCOSTO}`}
+                                                />
+                                            ))}
+                                        </datalist>
+                                    </div>
+                                </div>
 
                         <div className="flex gap-3 justify-end mt-6">
                             <button
