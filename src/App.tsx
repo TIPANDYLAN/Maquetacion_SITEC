@@ -10,6 +10,7 @@ const ValetsFijosView = lazy(() => import("./components/nomina/ValetsFijosView")
 const ConfiguracionDistribucionView = lazy(() => import("./components/nomina/ConfiguracionDistribucionView.tsx"));
 const BancosView = lazy(() => import("./components/pagos/BancosView"));
 const SolicitudAccesoriosTabsView = lazy(() => import("./components/mantenimiento/SolicitudAccesoriosTabsView"));
+const PyGView = lazy(() => import("./components/contabilidad/PyGView"));
 
 interface PlaceholderContent {
   title: string;
@@ -83,6 +84,8 @@ function App() {
         return <PagosView />;
       case 'bancos':
         return <BancosView />;
+      case 'pyg':
+        return <PyGView />;
       case 'descuentos':
         return <GestionDescuentosTabsView />;
       case 'valets_fijos':
@@ -217,6 +220,7 @@ function App() {
             </button>
             {expandedMenus.contabilidad && (
               <div className="ml-4 pl-4 border-l border-slate-100 space-y-1 mt-1 mb-2">
+                <button onClick={() => setActiveTab('pyg')} className={`block w-full text-left px-3 py-2 rounded-lg text-sm transition-all ${isItemActive('pyg') ? 'bg-blue-50 text-blue-600 font-bold' : 'text-slate-600 hover:bg-slate-50'}`}>Pérdidas y Ganancias</button>
                 <button onClick={() => setActiveTab('bancos')} className={`block w-full text-left px-3 py-2 rounded-lg text-sm transition-all ${isItemActive('bancos') ? 'bg-blue-50 text-blue-600 font-bold' : 'text-slate-600 hover:bg-slate-50'}`}>Bancos</button>
                 <button onClick={() => setActiveTab('presupuestos')} className={`block w-full text-left px-3 py-2 rounded-lg text-sm transition-all ${isItemActive('presupuestos') ? 'bg-blue-50 text-blue-600 font-bold' : 'text-slate-600 hover:bg-slate-50'}`}>Presupuestos</button>
                 <button onClick={() => setActiveTab('cajas_chicas')} className={`block w-full text-left px-3 py-2 rounded-lg text-sm transition-all ${isItemActive('cajas_chicas') ? 'bg-blue-50 text-blue-600 font-bold' : 'text-slate-600 hover:bg-slate-50'}`}>Cajas Chicas</button>

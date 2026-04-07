@@ -96,3 +96,25 @@ export interface Statistics {
     pagosTotal: number;
     saldoPendiente: number;
 }
+
+// 💰 PyG - Cuenta contable
+export interface CuentaPyG {
+    codigo: string;
+    descripcion: string;
+    tipo: 'titulo' | 'cuenta' | 'grupo';
+    total: string;
+}
+
+// 💹 PyG - Filtros
+export interface FiltrosPyG {
+    periodo: string;
+    tipoReporte: 'general' | 'por_proyecto';
+    centroCosto: string;
+}
+
+// 📈 PyG - Detalle de período
+export interface DetailePeriodoPyG {
+    ingresos: CuentaPyG[];
+    gastos: CuentaPyG[];
+    utilidad: number;
+}
