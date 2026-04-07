@@ -571,7 +571,7 @@ const ConfiguracionDistribucionView = () => {
               <div>
                 <h2 className="text-xl font-bold text-slate-800">Generar plantillas</h2>
                 <p className="mt-2 text-sm leading-relaxed text-slate-500">
-                  Crea una o varias plantillas con nombre, centros de costo y porcentajes que sumen exactamente 100%.
+                  Crea una o varias plantillas con nombre, centros de costo y porcentajes.
                 </p>
               </div>
             </div>
@@ -593,7 +593,7 @@ const ConfiguracionDistribucionView = () => {
               <div>
                 <h2 className="text-xl font-bold text-slate-800">Configurar personas por plantilla</h2>
                 <p className="mt-2 text-sm leading-relaxed text-slate-500">
-                  Selecciona la plantilla y agrega empleados desde la API para que pertenezcan a esa configuración.
+                  Selecciona la plantilla y agrega empleados para que pertenezcan a esa configuración.
                 </p>
               </div>
             </div>
