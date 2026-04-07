@@ -216,53 +216,66 @@ const ensureValetFijoHorarioTable = async () => {
   `);
 };
 
-const ensureDistribucionCentroCostoTable = async () => {
+const ensureDistribucionPlantillasTable = async () => {
   await pool.query(`
-    CREATE TABLE IF NOT EXISTS distribucion_centro_costo (
+    CREATE TABLE IF NOT EXISTS distribucion_plantilla (
       id BIGSERIAL PRIMARY KEY,
-      centro_costo_id TEXT NOT NULL UNIQUE,
-      centro_costo_nombre TEXT NOT NULL DEFAULT '',
-      porcentaje NUMERIC(5,2) NOT NULL,
-      fecha_creacion TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      fecha_actualizacion TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      CONSTRAINT chk_distribucion_centro_costo_porcentaje_rango CHECK (porcentaje >= 0 AND porcentaje <= 100)
-    )
-  `);
-
-  await pool.query(`
-    CREATE INDEX IF NOT EXISTS idx_distribucion_centro_costo_nombre
-      ON distribucion_centro_costo (centro_costo_nombre)
-  `);
-};
-
-const ensureEmpleadoDistribucionCentroCostoTable = async () => {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS empleado_distribucion_centro_costo (
-      id BIGSERIAL PRIMARY KEY,
-      empleado_id TEXT NOT NULL,
-      empleado_documento TEXT NOT NULL DEFAULT '',
-      empleado_nombre_completo TEXT NOT NULL DEFAULT '',
-      centro_costo_id TEXT NOT NULL,
-      centro_costo_nombre TEXT NOT NULL DEFAULT '',
-      porcentaje NUMERIC(5,2) NOT NULL,
+      nombre TEXT NOT NULL UNIQUE,
+      centros JSONB NOT NULL DEFAULT '[]'::jsonb,
       fecha_creacion TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       fecha_actualizacion TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
 
   await pool.query(`
-    CREATE INDEX IF NOT EXISTS idx_empleado_distribucion_centro_costo_empleado_id
-      ON empleado_distribucion_centro_costo (empleado_id)
+    CREATE INDEX IF NOT EXISTS idx_distribucion_plantilla_nombre
+      ON distribucion_plantilla (nombre)
+  `);
+};
+
+const ensureEmpleadoDistribucionPlantillaTable = async () => {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS empleado_distribucion_plantilla (
+      id BIGSERIAL PRIMARY KEY,
+      plantilla_id BIGINT NOT NULL REFERENCES distribucion_plantilla(id) ON DELETE CASCADE,
+      empleado_id TEXT NOT NULL UNIQUE,
+      empleado_documento TEXT NOT NULL DEFAULT '',
+      empleado_nombre_completo TEXT NOT NULL DEFAULT '',
+      fecha_asignacion TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      fecha_actualizacion TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
   `);
 
   await pool.query(`
-    CREATE INDEX IF NOT EXISTS idx_empleado_distribucion_centro_costo_documento
-      ON empleado_distribucion_centro_costo (empleado_documento)
+    ALTER TABLE empleado_distribucion_plantilla
+    ADD COLUMN IF NOT EXISTS fecha_asignacion TIMESTAMPTZ NOT NULL DEFAULT NOW()
   `);
 
   await pool.query(`
-    CREATE INDEX IF NOT EXISTS idx_empleado_distribucion_centro_costo_centro
-      ON empleado_distribucion_centro_costo (centro_costo_id)
+    ALTER TABLE empleado_distribucion_plantilla
+    ADD COLUMN IF NOT EXISTS fecha_actualizacion TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_empleado_distribucion_plantilla_plantilla
+      ON empleado_distribucion_plantilla (plantilla_id)
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_empleado_distribucion_plantilla_empleado
+      ON empleado_distribucion_plantilla (empleado_id)
+  `);
+};
+
+const ensureHumanaCedulaColumn = async () => {
+  await pool.query(`
+    ALTER TABLE medic_secure_humana
+    ADD COLUMN IF NOT EXISTS cedula TEXT NOT NULL DEFAULT ''
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_medic_secure_humana_cedula
+      ON medic_secure_humana (anio, mes, cedula)
   `);
 };
 
@@ -389,31 +402,22 @@ const mapDbRowToValetFijoHorario = (row) => ({
   fechaActualizacion: row.fecha_actualizacion,
 });
 
-const mapDbRowToDistribucionCentroCosto = (row) => ({
-  id: Number(row.id),
-  centroCostoId: String(row.centro_costo_id || ''),
-  centroCostoNombre: String(row.centro_costo_nombre || ''),
-  porcentaje: Number(row.porcentaje || 0),
-  fechaCreacion: row.fecha_creacion,
-  fechaActualizacion: row.fecha_actualizacion,
-});
+const mapDbRowToDistribucionPlantilla = (row) => {
+  const centrosRaw = Array.isArray(row.centros) ? row.centros : [];
 
-const mapDbRowToDistribucionEmpleadoCentroCosto = (row) => ({
-  id: Number(row.id),
-  empleadoId: String(row.empleado_id || ''),
-  empleadoDocumento: String(row.empleado_documento || ''),
-  empleadoNombreCompleto: String(row.empleado_nombre_completo || ''),
-  centros: Array.isArray(row.centros)
-    ? row.centros.map((centro) => ({
-        centroCostoId: String(centro?.centroCostoId || centro?.centro_costo_id || '').trim(),
-        centroCostoNombre: String(centro?.centroCostoNombre || centro?.centro_costo_nombre || '').trim(),
-        porcentaje: Number(centro?.porcentaje || 0),
-      }))
-    : [],
-  porcentajeTotal: Number(row.porcentaje_total || 0),
-  fechaCreacion: row.fecha_creacion,
-  fechaActualizacion: row.fecha_actualizacion,
-});
+  return {
+    id: Number(row.id || 0),
+    nombre: String(row.nombre || '').trim(),
+    centros: centrosRaw.map((centro) => ({
+      centroCostoId: String(centro?.centroCostoId || centro?.centro_costo_id || '').trim(),
+      centroCostoNombre: String(centro?.centroCostoNombre || centro?.centro_costo_nombre || '').trim(),
+      porcentaje: Number(centro?.porcentaje || 0),
+    })),
+    totalEmpleados: Number(row.total_empleados || 0),
+    fechaCreacion: row.fecha_creacion,
+    fechaActualizacion: row.fecha_actualizacion,
+  };
+};
 
 const separarApellidosYNombres = (nombreCompleto) => {
   const partes = String(nombreCompleto || '').trim().split(/\s+/).filter(Boolean);
@@ -438,7 +442,7 @@ const separarApellidosYNombres = (nombreCompleto) => {
 
 const mapDbRowToEmpleado = (row) => ({
   ...separarApellidosYNombres(row.empleado),
-  cedula: '',
+  cedula: String(row.cedula || ''),
   centroCosto: String(row.centro || ''),
   fechaNacimiento: '',
   estadoCivil: '',
@@ -694,18 +698,18 @@ app.put('/api/humana/periods/:anio/:mes', async (req, res) => {
       await pool.query(
         `INSERT INTO medic_secure_humana (
           anio, mes,
-          empleado, centro, plan, tarifa,
+          empleado, cedula, centro, plan, tarifa,
           trabajador_rol, urbapark, prima, ajuste, assist, seguro,
           f_ingreso, f_exclusion
         ) VALUES (
           $1, $2,
-          $3, $4, $5, $6,
-          $7, $8, $9, $10, $11, $12,
-          $13, $14
+          $3, $4, $5, $6, $7,
+          $8, $9, $10, $11, $12, $13,
+          $14, $15
         )`,
         [
           anio, mes,
-          empleado, String(emp?.centroCosto || ''), String(emp?.plan || ''), String(emp?.tarifa || ''),
+          empleado, String(emp?.cedula || ''), String(emp?.centroCosto || ''), String(emp?.plan || ''), String(emp?.tarifa || ''),
           Number(emp?.trabajador || 0), Number(emp?.urbapark || 0), Number(emp?.prima || 0), Number(emp?.ajuste || 0), Number(emp?.humanaAssist || 0), Number(emp?.seguroCampesino || 0),
           String(emp?.fechaInclusion || ''), String(emp?.fechaExclusion || ''),
         ]
@@ -1412,30 +1416,47 @@ app.post('/api/valets/horarios', async (req, res) => {
   }
 });
 
-app.get('/api/nomina/distribucion-centro-costo', async (_req, res) => {
+app.get('/api/nomina/distribucion-plantillas', async (_req, res) => {
   try {
-    await ensureDistribucionCentroCostoTable();
+    await ensureDistribucionPlantillasTable();
+    await ensureEmpleadoDistribucionPlantillaTable();
+
     const result = await pool.query(
-      `SELECT id, centro_costo_id, centro_costo_nombre, porcentaje, fecha_creacion, fecha_actualizacion
-       FROM distribucion_centro_costo
-       ORDER BY centro_costo_nombre ASC, id ASC`
+      `SELECT
+         p.id,
+         p.nombre,
+         p.centros,
+         p.fecha_creacion,
+         p.fecha_actualizacion,
+         COALESCE(COUNT(ep.id), 0) AS total_empleados
+       FROM distribucion_plantilla p
+       LEFT JOIN empleado_distribucion_plantilla ep ON ep.plantilla_id = p.id
+       GROUP BY p.id
+       ORDER BY p.nombre ASC`
     );
 
     res.status(200).json({
       ok: true,
-      centros: result.rows.map(mapDbRowToDistribucionCentroCosto),
+      plantillas: result.rows.map(mapDbRowToDistribucionPlantilla),
     });
   } catch (error) {
-    console.error('[GET /api/nomina/distribucion-centro-costo] Error:', error instanceof Error ? error.message : String(error));
+    console.error('[GET /api/nomina/distribucion-plantillas] Error:', error instanceof Error ? error.message : String(error));
     res.status(500).json({
-      error: 'No se pudo cargar la distribucion de centros de costo',
+      error: 'No se pudieron cargar las plantillas de distribucion',
       details: error instanceof Error ? error.message : 'Unknown error',
     });
   }
 });
 
-app.post('/api/nomina/distribucion-centro-costo', async (req, res) => {
+app.post('/api/nomina/distribucion-plantillas', async (req, res) => {
+  const plantillaId = Number(req.body?.plantillaId || 0);
+  const nombre = String(req.body?.nombre || '').trim();
   const centros = Array.isArray(req.body?.centros) ? req.body.centros : [];
+
+  if (!nombre) {
+    res.status(400).json({ error: 'El campo nombre es requerido' });
+    return;
+  }
 
   if (centros.length === 0) {
     res.status(400).json({ error: 'Debe enviar al menos un centro de costo' });
@@ -1450,13 +1471,8 @@ app.post('/api/nomina/distribucion-centro-costo', async (req, res) => {
     const centroCostoNombre = String(item?.centroCostoNombre || item?.centro_costo_nombre || '').trim();
     const porcentaje = parseValor(item?.porcentaje);
 
-    if (!centroCostoId) {
-      res.status(400).json({ error: 'Cada centro debe incluir centroCostoId' });
-      return;
-    }
-
-    if (!centroCostoNombre) {
-      res.status(400).json({ error: 'Cada centro debe incluir centroCostoNombre' });
+    if (!centroCostoId || !centroCostoNombre) {
+      res.status(400).json({ error: 'Cada centro debe incluir centroCostoId y centroCostoNombre' });
       return;
     }
 
@@ -1466,7 +1482,7 @@ app.post('/api/nomina/distribucion-centro-costo', async (req, res) => {
     }
 
     if (idsVistos.has(centroCostoId)) {
-      res.status(400).json({ error: 'No se permiten centros duplicados en la misma configuracion' });
+      res.status(400).json({ error: 'No se permiten centros duplicados en la misma plantilla' });
       return;
     }
 
@@ -1476,99 +1492,152 @@ app.post('/api/nomina/distribucion-centro-costo', async (req, res) => {
 
   const total = normalizados.reduce((acumulado, item) => acumulado + item.porcentaje, 0);
   if (Math.abs(total - 100) > 0.01) {
-    res.status(400).json({ error: 'La suma de porcentajes de los centros de costo debe ser 100%' });
+    res.status(400).json({ error: 'La suma de porcentajes debe ser 100%' });
     return;
   }
 
   try {
-    await ensureDistribucionCentroCostoTable();
+    await ensureDistribucionPlantillasTable();
 
-    await pool.query('BEGIN');
-    await pool.query('DELETE FROM distribucion_centro_costo');
+    let result;
+    if (Number.isFinite(plantillaId) && plantillaId > 0) {
+      result = await pool.query(
+        `UPDATE distribucion_plantilla
+         SET nombre = $2,
+             centros = $3::jsonb,
+             fecha_actualizacion = NOW()
+         WHERE id = $1
+         RETURNING id, nombre, centros, fecha_creacion, fecha_actualizacion`,
+        [plantillaId, nombre, JSON.stringify(normalizados)]
+      );
 
-    for (const item of normalizados) {
-      await pool.query(
-        `INSERT INTO distribucion_centro_costo (
-          centro_costo_id,
-          centro_costo_nombre,
-          porcentaje,
-          fecha_actualizacion
-        ) VALUES ($1, $2, $3, NOW())`,
-        [item.centroCostoId, item.centroCostoNombre, item.porcentaje]
+      if (result.rowCount === 0) {
+        res.status(404).json({ error: 'Plantilla no encontrada' });
+        return;
+      }
+    } else {
+      result = await pool.query(
+        `INSERT INTO distribucion_plantilla (nombre, centros, fecha_actualizacion)
+         VALUES ($1, $2::jsonb, NOW())
+         RETURNING id, nombre, centros, fecha_creacion, fecha_actualizacion`,
+        [nombre, JSON.stringify(normalizados)]
       );
     }
 
-    await pool.query('COMMIT');
-
-    const result = await pool.query(
-      `SELECT id, centro_costo_id, centro_costo_nombre, porcentaje, fecha_creacion, fecha_actualizacion
-       FROM distribucion_centro_costo
-       ORDER BY centro_costo_nombre ASC, id ASC`
-    );
-
-    res.status(200).json({
-      ok: true,
-      total,
-      centros: result.rows.map(mapDbRowToDistribucionCentroCosto),
+    const plantilla = mapDbRowToDistribucionPlantilla({
+      ...result.rows[0],
+      total_empleados: 0,
     });
+
+    res.status(200).json({ ok: true, plantilla });
   } catch (error) {
-    await pool.query('ROLLBACK').catch(() => {});
-    console.error('[POST /api/nomina/distribucion-centro-costo] Error:', error instanceof Error ? error.message : String(error));
+    console.error('[POST /api/nomina/distribucion-plantillas] Error:', error instanceof Error ? error.message : String(error));
+    const message = error instanceof Error ? error.message : '';
+    if (message.includes('distribucion_plantilla_nombre_key')) {
+      res.status(409).json({ error: 'Ya existe una plantilla con ese nombre' });
+      return;
+    }
+
     res.status(500).json({
-      error: 'No se pudo guardar la distribucion de centros de costo',
+      error: 'No se pudo guardar la plantilla de distribucion',
       details: error instanceof Error ? error.message : 'Unknown error',
     });
   }
 });
 
+app.delete('/api/nomina/distribucion-plantillas/:plantillaId', async (req, res) => {
+  const plantillaId = Number(req.params.plantillaId || 0);
 
-// GET: devuelve [{ empleado_id, empleado_documento, empleado_nombre_completo, centros: [{centro_costo_id, centro_costo_nombre, porcentaje}] }]
-app.get('/api/nomina/empleado-distribucion-centro-costo', async (_req, res) => {
+  if (!Number.isFinite(plantillaId) || plantillaId <= 0) {
+    res.status(400).json({ error: 'El parametro plantillaId es invalido' });
+    return;
+  }
+
   try {
-    await ensureEmpleadoDistribucionCentroCostoTable();
+    await ensureDistribucionPlantillasTable();
+
     const result = await pool.query(
-      `SELECT empleado_id, empleado_documento, empleado_nombre_completo, centro_costo_id, centro_costo_nombre, porcentaje
-       FROM empleado_distribucion_centro_costo
-       ORDER BY empleado_nombre_completo ASC, empleado_id ASC, id ASC`
+      `DELETE FROM distribucion_plantilla
+       WHERE id = $1`,
+      [plantillaId]
     );
-    // Agrupar por empleado
-    const empleadosMap = new Map();
+
+    if (result.rowCount === 0) {
+      res.status(404).json({ error: 'Plantilla no encontrada' });
+      return;
+    }
+
+    res.status(200).json({ ok: true, plantillaId });
+  } catch (error) {
+    console.error('[DELETE /api/nomina/distribucion-plantillas/:plantillaId] Error:', error instanceof Error ? error.message : String(error));
+    res.status(500).json({
+      error: 'No se pudo eliminar la plantilla',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+app.get('/api/nomina/distribucion-plantillas-empleados', async (_req, res) => {
+  try {
+    await ensureDistribucionPlantillasTable();
+    await ensureEmpleadoDistribucionPlantillaTable();
+
+    const result = await pool.query(
+      `SELECT
+         p.id AS plantilla_id,
+         p.nombre AS plantilla_nombre,
+         ep.empleado_id,
+         ep.empleado_documento,
+         ep.empleado_nombre_completo,
+         ep.fecha_asignacion
+       FROM distribucion_plantilla p
+       LEFT JOIN empleado_distribucion_plantilla ep ON ep.plantilla_id = p.id
+       ORDER BY p.nombre ASC, ep.empleado_nombre_completo ASC, ep.empleado_id ASC`
+    );
+
+    const map = new Map();
     for (const row of result.rows) {
-      if (!empleadosMap.has(row.empleado_id)) {
-        empleadosMap.set(row.empleado_id, {
-          empleadoId: row.empleado_id,
-          empleadoDocumento: row.empleado_documento,
-          empleadoNombreCompleto: row.empleado_nombre_completo,
-          centros: [],
+      const plantillaId = Number(row.plantilla_id || 0);
+      if (!plantillaId) continue;
+
+      if (!map.has(plantillaId)) {
+        map.set(plantillaId, {
+          plantillaId,
+          plantillaNombre: String(row.plantilla_nombre || '').trim(),
+          empleados: [],
         });
       }
-      empleadosMap.get(row.empleado_id).centros.push({
-        centroCostoId: row.centro_costo_id,
-        centroCostoNombre: row.centro_costo_nombre,
-        porcentaje: Number(row.porcentaje),
-      });
+
+      if (row.empleado_id) {
+        map.get(plantillaId).empleados.push({
+          empleadoId: String(row.empleado_id || '').trim(),
+          empleadoDocumento: String(row.empleado_documento || '').trim(),
+          empleadoNombreCompleto: String(row.empleado_nombre_completo || '').trim(),
+          fechaAsignacion: row.fecha_asignacion,
+        });
+      }
     }
-    res.status(200).json({
-      ok: true,
-      empleados: Array.from(empleadosMap.values()),
-    });
+
+    res.status(200).json({ ok: true, plantillas: Array.from(map.values()) });
   } catch (error) {
-    console.error('[GET /api/nomina/empleado-distribucion-centro-costo] Error:', error instanceof Error ? error.message : String(error));
+    console.error('[GET /api/nomina/distribucion-plantillas-empleados] Error:', error instanceof Error ? error.message : String(error));
     res.status(500).json({
-      error: 'No se pudo cargar la distribucion por empleado',
+      error: 'No se pudieron cargar las asignaciones por plantilla',
       details: error instanceof Error ? error.message : 'Unknown error',
     });
   }
 });
 
-
-// POST: recibe { empleadoId, empleadoDocumento, empleadoNombreCompleto, centros: [{centroCostoId, centroCostoNombre, porcentaje}] }
-app.post('/api/nomina/empleado-distribucion-centro-costo', async (req, res) => {
+app.post('/api/nomina/distribucion-plantillas-empleados', async (req, res) => {
+  const plantillaId = Number(req.body?.plantillaId || 0);
   const empleadoId = String(req.body?.empleadoId || '').trim();
   const empleadoDocumento = String(req.body?.empleadoDocumento || '').trim();
   const empleadoNombreCompleto = String(req.body?.empleadoNombreCompleto || '').trim();
-  const centros = Array.isArray(req.body?.centros) ? req.body.centros : [];
 
+  if (!Number.isFinite(plantillaId) || plantillaId <= 0) {
+    res.status(400).json({ error: 'El campo plantillaId es invalido' });
+    return;
+  }
   if (!empleadoId) {
     res.status(400).json({ error: 'El campo empleadoId es requerido' });
     return;
@@ -1577,112 +1646,93 @@ app.post('/api/nomina/empleado-distribucion-centro-costo', async (req, res) => {
     res.status(400).json({ error: 'El campo empleadoNombreCompleto es requerido' });
     return;
   }
-  if (centros.length === 0) {
-    res.status(400).json({ error: 'Debe enviar al menos un centro de costo' });
-    return;
-  }
-  const normalizados = [];
-  const idsVistos = new Set();
-  for (const item of centros) {
-    const centroCostoId = String(item?.centroCostoId || item?.centro_costo_id || '').trim();
-    const centroCostoNombre = String(item?.centroCostoNombre || item?.centro_costo_nombre || '').trim();
-    const porcentaje = parseValor(item?.porcentaje);
-    if (!centroCostoId) {
-      res.status(400).json({ error: 'Cada centro debe incluir centroCostoId' });
-      return;
-    }
-    if (!centroCostoNombre) {
-      res.status(400).json({ error: 'Cada centro debe incluir centroCostoNombre' });
-      return;
-    }
-    if (!Number.isFinite(porcentaje) || porcentaje < 0 || porcentaje > 100) {
-      res.status(400).json({ error: 'Cada porcentaje debe ser numerico entre 0 y 100' });
-      return;
-    }
-    if (idsVistos.has(centroCostoId)) {
-      res.status(400).json({ error: 'No se permiten centros duplicados en la misma distribucion del empleado' });
-      return;
-    }
-    idsVistos.add(centroCostoId);
-    normalizados.push({ centroCostoId, centroCostoNombre, porcentaje });
-  }
-  const total = normalizados.reduce((acumulado, item) => acumulado + item.porcentaje, 0);
-  if (Math.abs(total - 100) > 0.01) {
-    res.status(400).json({ error: 'La suma de porcentajes del empleado debe ser 100%' });
-    return;
-  }
+
   try {
-    await ensureEmpleadoDistribucionCentroCostoTable();
-    // Eliminar filas previas del empleado
-    await pool.query('DELETE FROM empleado_distribucion_centro_costo WHERE empleado_id = $1', [empleadoId]);
-    // Insertar cada centro como fila
-    const values = [];
-    const placeholders = [];
-    normalizados.forEach((item, idx) => {
-      values.push(
-        empleadoId,
-        empleadoDocumento,
-        empleadoNombreCompleto,
-        item.centroCostoId,
-        item.centroCostoNombre,
-        item.porcentaje
-      );
-      const base = idx * 6;
-      placeholders.push(`($${base+1}, $${base+2}, $${base+3}, $${base+4}, $${base+5}, $${base+6})`);
-    });
-    if (values.length > 0) {
-      await pool.query(
-        `INSERT INTO empleado_distribucion_centro_costo (
-          empleado_id, empleado_documento, empleado_nombre_completo, centro_costo_id, centro_costo_nombre, porcentaje
-        ) VALUES ${placeholders.join(',')}`,
-        values
-      );
+    await ensureDistribucionPlantillasTable();
+    await ensureEmpleadoDistribucionPlantillaTable();
+
+    const plantillaExiste = await pool.query(
+      `SELECT id, nombre FROM distribucion_plantilla WHERE id = $1`,
+      [plantillaId]
+    );
+
+    if (plantillaExiste.rowCount === 0) {
+      res.status(404).json({ error: 'Plantilla no encontrada' });
+      return;
     }
+
+    const result = await pool.query(
+      `INSERT INTO empleado_distribucion_plantilla (
+         plantilla_id,
+         empleado_id,
+         empleado_documento,
+         empleado_nombre_completo,
+         fecha_actualizacion
+       )
+       VALUES ($1, $2, $3, $4, NOW())
+       ON CONFLICT (empleado_id)
+       DO UPDATE SET
+         plantilla_id = EXCLUDED.plantilla_id,
+         empleado_documento = EXCLUDED.empleado_documento,
+         empleado_nombre_completo = EXCLUDED.empleado_nombre_completo,
+         fecha_actualizacion = NOW()
+       RETURNING plantilla_id, empleado_id, empleado_documento, empleado_nombre_completo, fecha_asignacion, fecha_actualizacion`,
+      [plantillaId, empleadoId, empleadoDocumento, empleadoNombreCompleto]
+    );
+
     res.status(200).json({
       ok: true,
-      empleado: {
-        empleadoId,
-        empleadoDocumento,
-        empleadoNombreCompleto,
-        centros: normalizados,
+      asignacion: {
+        plantillaId: Number(result.rows[0].plantilla_id || 0),
+        empleadoId: String(result.rows[0].empleado_id || '').trim(),
+        empleadoDocumento: String(result.rows[0].empleado_documento || '').trim(),
+        empleadoNombreCompleto: String(result.rows[0].empleado_nombre_completo || '').trim(),
+        fechaAsignacion: result.rows[0].fecha_asignacion,
+        fechaActualizacion: result.rows[0].fecha_actualizacion,
       },
     });
   } catch (error) {
-    console.error('[POST /api/nomina/empleado-distribucion-centro-costo] Error:', error instanceof Error ? error.message : String(error));
+    console.error('[POST /api/nomina/distribucion-plantillas-empleados] Error:', error instanceof Error ? error.message : String(error));
     res.status(500).json({
-      error: 'No se pudo guardar la distribucion por empleado',
+      error: 'No se pudo guardar la asignacion del empleado',
       details: error instanceof Error ? error.message : 'Unknown error',
     });
   }
 });
 
-
-// DELETE: elimina todas las filas de un empleado
-app.delete('/api/nomina/empleado-distribucion-centro-costo/:empleadoId', async (req, res) => {
+app.delete('/api/nomina/distribucion-plantillas-empleados/:plantillaId/:empleadoId', async (req, res) => {
+  const plantillaId = Number(req.params.plantillaId || 0);
   const empleadoId = String(req.params.empleadoId || '').trim();
+
+  if (!Number.isFinite(plantillaId) || plantillaId <= 0) {
+    res.status(400).json({ error: 'El parametro plantillaId es invalido' });
+    return;
+  }
   if (!empleadoId) {
     res.status(400).json({ error: 'El parametro empleadoId es requerido' });
     return;
   }
+
   try {
-    await ensureEmpleadoDistribucionCentroCostoTable();
+    await ensureEmpleadoDistribucionPlantillaTable();
+
     const result = await pool.query(
-      `DELETE FROM empleado_distribucion_centro_costo
-       WHERE empleado_id = $1`,
-      [empleadoId]
+      `DELETE FROM empleado_distribucion_plantilla
+       WHERE plantilla_id = $1
+         AND empleado_id = $2`,
+      [plantillaId, empleadoId]
     );
+
     if (result.rowCount === 0) {
-      res.status(404).json({ error: 'Distribucion del empleado no encontrada' });
+      res.status(404).json({ error: 'Asignacion no encontrada' });
       return;
     }
-    res.status(200).json({
-      ok: true,
-      empleadoId,
-    });
+
+    res.status(200).json({ ok: true, plantillaId, empleadoId });
   } catch (error) {
-    console.error('[DELETE /api/nomina/empleado-distribucion-centro-costo/:empleadoId] Error:', error instanceof Error ? error.message : String(error));
+    console.error('[DELETE /api/nomina/distribucion-plantillas-empleados/:plantillaId/:empleadoId] Error:', error instanceof Error ? error.message : String(error));
     res.status(500).json({
-      error: 'No se pudo eliminar la distribucion por empleado',
+      error: 'No se pudo eliminar la asignacion del empleado',
       details: error instanceof Error ? error.message : 'Unknown error',
     });
   }
@@ -1690,13 +1740,14 @@ app.delete('/api/nomina/empleado-distribucion-centro-costo/:empleadoId', async (
 
 const startServer = async () => {
   try {
+    await ensureHumanaCedulaColumn();
     await ensureDescuentosTable();
     await ensureExentosPagoSeguroTable();
     await ensureValetsAdicionalesTable();
     await ensureValetFijoEmpleadoTable();
     await ensureValetFijoHorarioTable();
-    await ensureDistribucionCentroCostoTable();
-    await ensureEmpleadoDistribucionCentroCostoTable();
+    await ensureDistribucionPlantillasTable();
+    await ensureEmpleadoDistribucionPlantillaTable();
     app.listen(PORT, () => {
       console.log(`humana-backend escuchando en http://localhost:${PORT}`);
     });

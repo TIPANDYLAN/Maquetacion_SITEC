@@ -47,6 +47,7 @@ const HumanaView = () => {
     const loadData = useCallback(async () => {
         try {
             const data = await humanaApi.getData(anioSeleccionado, mesSeleccionado);
+
             const empleadosBd: HumanaEmployee[] = (data?.empleados || [])
                 .map((emp: HumanaEmployeeData) => ({
                     cedula: emp.cedula || '',
@@ -90,7 +91,7 @@ const HumanaView = () => {
         const workbook = new ExcelJS.Workbook();
         const worksheet = workbook.addWorksheet('Factura');
 
-        const headers = ['Empleado', 'Centro', 'Plan', 'Tarifa', 'Trabajador Rol', 'Urbapark', 'Prima', 'Ajuste', 'Assist', 'Seguro', 'F. Ingreso', 'F. Exclusión'];
+        const headers = ['Cédula', 'Empleado', 'Centro', 'Plan', 'Tarifa', 'Trabajador Rol', 'Urbapark', 'Prima', 'Ajuste', 'Assist', 'Seguro', 'F. Ingreso', 'F. Exclusión'];
         const headerRow = worksheet.addRow(headers);
 
         headerRow.font = { bold: true, size: 11 };
@@ -109,6 +110,7 @@ const HumanaView = () => {
             const assistExcel = esExcluido ? 0 : (emp.humanaAssist || 0);
 
             const row = worksheet.addRow([
+                emp.cedula || '—',
                 emp.nombre,
                 emp.centroCosto,
                 emp.plan,
@@ -124,10 +126,10 @@ const HumanaView = () => {
             ]);
 
             // Mantener formato general para visualizar y usar el valor exacto almacenado.
-            row.getCell(5).numFmt = 'General';
             row.getCell(6).numFmt = 'General';
             row.getCell(7).numFmt = 'General';
             row.getCell(8).numFmt = 'General';
+            row.getCell(9).numFmt = 'General';
             row.getCell(9).numFmt = 'General';
             row.getCell(10).numFmt = 'General';
 

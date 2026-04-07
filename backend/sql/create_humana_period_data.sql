@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS medic_secure_humana (
   mes TEXT NOT NULL,
 
   empleado TEXT NOT NULL,
+  cedula TEXT NOT NULL DEFAULT '',
   centro TEXT NOT NULL DEFAULT '',
   plan TEXT NOT NULL DEFAULT '',
   tarifa TEXT NOT NULL DEFAULT '',

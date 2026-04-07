@@ -4,6 +4,7 @@ import * as XLSX from 'xlsx';
 import type { HumanaEmployeeData } from '../../types/humana';
 import type { NominaApiListResponse } from '../../types/nomina';
 import { dbApi, humanaApi } from '../../services/dbApi';
+import { getNominaEmployeesActive } from '../../services/n8nApi';
 
 interface FileUploadMetrics {
     archivo: string;
@@ -662,12 +663,12 @@ const ProveedorHumanaView = () => {
                                 emp.prima = 0;
                                 emp.humanaAssist = 0;
                                 emp.seguroCampesino = 0;
-                                emp.totalUrbapark = emp.ajuste - 7.5;
+                                emp.totalUrbapark = emp.ajuste;
                                 return;
                             }
                             emp.seguroCampesino = seguroCampesinoPerEmpleado;
                             emp.totalUrbapark = emp.ajuste < 0
-                                ? emp.seguroCampesino + emp.ajuste - 7.5
+                                ? emp.ajuste
                                 : emp.prima + emp.seguroCampesino + emp.ajuste + emp.humanaAssist - emp.trabajador;
                         });
                     }
@@ -1070,7 +1071,7 @@ const ProveedorHumanaView = () => {
                             seguroCampesino,
                             urbapark: primaNeta,
                             sssCampesino: parseFloat(String(rowData[20] || '0').replace(/,/g, '')) || 0,
-                            totalUrbapark: primaNeta + seguroCampesino + ajuste + humanaAssist - 7.5,
+                            totalUrbapark: ajuste < 0 ? ajuste : (primaNeta + seguroCampesino + ajuste + humanaAssist - 7.5),
                             trabajador: parseFloat(String(rowData[22] || '0').replace(/,/g, '')) || 0,
                             total: parseFloat(String(rowData[23] || '0').replace(/,/g, '')) || 0,
                             diferencia: parseFloat(String(rowData[24] || '0').replace(/,/g, '')) || 0,
@@ -1137,9 +1138,10 @@ const ProveedorHumanaView = () => {
                 const salidaAjuste = calcularSalida(empleado.fechaExclusion, empleado.prima, nombreMesANumero(mesSeleccionado), anioSeleccionado);
                 if (salidaAjuste < 0) {
                     empleado.ajuste = -1;
+                    empleado.trabajador = 0;
                 }
                 empleado.totalUrbapark = empleado.ajuste < 0
-                    ? empleado.seguroCampesino + empleado.ajuste - 7.5
+                    ? empleado.ajuste
                     : empleado.prima + empleado.seguroCampesino + empleado.ajuste + empleado.humanaAssist - 7.5;
             }
 
@@ -1171,6 +1173,43 @@ const ProveedorHumanaView = () => {
 
             const empleadosFinal = Array.from(mapa.values());
 
+            // Corregir nombres/apellidos usando la API (cubre nombres con más de 4 palabras)
+            try {
+                const empleadosApi = await getNominaEmployeesActive<unknown[]>();
+                const nombresMap = new Map<string, { apellidos: string; nombres: string }>();
+                for (const item of (Array.isArray(empleadosApi) ? empleadosApi : [])) {
+                    const payload = (item as Record<string, unknown>)?.json ?? item as Record<string, unknown>;
+                    const p = payload as Record<string, unknown>;
+                    const cedula = String(p.CEDULA || p.DOCI_MFEMP || '').trim();
+                    const apellidos = String(p.APELLIDOS || '').trim();
+                    const nombres = String(p.NOMBRES || '').trim();
+                    if (cedula && (apellidos || nombres)) {
+                        nombresMap.set(cedula, { apellidos, nombres });
+                    }
+                }
+                for (const emp of empleadosFinal) {
+                    const encontrado = nombresMap.get(emp.cedula);
+                    if (encontrado) {
+                        emp.apellidos = encontrado.apellidos;
+                        emp.nombres = encontrado.nombres;
+                    } else {
+                        // Fallback: el nombre del archivo viene en formato NOMBRES APELLIDOS
+                        // Reordenar: últimas 2 palabras → apellidos, primeras 2 → nombres
+                        const partes = `${emp.apellidos} ${emp.nombres}`.trim().split(/\s+/).filter(Boolean);
+                        if (partes.length >= 4) {
+                            emp.apellidos = partes.slice(-2).join(' ');
+                            emp.nombres = partes.slice(0, -2).join(' ');
+                        } else if (partes.length === 3) {
+                            emp.apellidos = partes.slice(-2).join(' ');
+                            emp.nombres = partes[0];
+                        }
+                        // 1-2 palabras: se deja como está
+                    }
+                }
+            } catch (e) {
+                console.warn('No se pudo obtener nombres desde API, se usarán los del archivo:', e);
+            }
+
             console.log(`\n📊 RESUMEN FINAL ANTES DE GUARDAR:`);
             console.log(`   facturaResult.totalTitularesExcel: ${facturaResult.totalTitularesExcel}`);
             console.log(`   facturaResult.personasSubidas: ${facturaResult.personasSubidas}`);
@@ -1196,7 +1235,7 @@ const ProveedorHumanaView = () => {
                         emp.prima = 0;
                         emp.humanaAssist = 0;
                         emp.seguroCampesino = 0;
-                        emp.totalUrbapark = ajuste - 7.5;
+                        emp.totalUrbapark = ajuste;
                     } else {
                         const trabajadorBase = calcularTrabajadorPorTarifa(emp.tarifa || '');
                         const porcentajeExento = Math.max(0, Math.min(100, exentosPagoSeguro.get(emp.cedula) || 0));
@@ -1225,6 +1264,7 @@ const ProveedorHumanaView = () => {
 
                         if (sinAjuste && sinExento) {
                             emp.totalUrbapark = totalUrbaparkBasePlan5TarifaT as number;
+                            emp.trabajador = (emp.prima || 0) + emp.seguroCampesino + ajuste + (emp.humanaAssist || 0) - emp.totalUrbapark;
                         }
                     });
                 }

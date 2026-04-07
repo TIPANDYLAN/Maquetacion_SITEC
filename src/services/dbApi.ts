@@ -9,8 +9,8 @@ export const DB_API_CATALOG = {
   valetsAdicionalesLista: '/api/valets/adicionales/lista',
   descuentosIncidentesCajaChica: '/api/descuentos/incidentes-caja-chica',
   descuentosExentosPagoSeguro: '/api/descuentos/exentos-pago-seguro',
-  distribucionCentroCosto: '/api/nomina/distribucion-centro-costo',
-  distribucionEmpleadoCentroCosto: '/api/nomina/empleado-distribucion-centro-costo',
+  distribucionPlantillas: '/api/nomina/distribucion-plantillas',
+  distribucionPlantillasEmpleados: '/api/nomina/distribucion-plantillas-empleados',
 } as const;
 
 interface PeriodSummary {
@@ -233,36 +233,43 @@ export const dbApi = {
     },
   },
 
-  distribucionCentroCosto: {
+  distribucionPlantillas: {
     list: async <T = unknown>(): Promise<T> => {
-      return await requireData(dbApiFetch<T>({ endpoint: DB_API_CATALOG.distribucionCentroCosto }));
+      return await requireData(dbApiFetch<T>({ endpoint: DB_API_CATALOG.distribucionPlantillas }));
     },
 
     save: async <T = unknown>(payload: unknown): Promise<T> => {
       return await requireData(dbApiFetch<T>({
-        endpoint: DB_API_CATALOG.distribucionCentroCosto,
+        endpoint: DB_API_CATALOG.distribucionPlantillas,
         method: 'POST',
         body: payload,
+      }));
+    },
+
+    delete: async <T = unknown>(plantillaId: number): Promise<T> => {
+      return await requireData(dbApiFetch<T>({
+        endpoint: `${DB_API_CATALOG.distribucionPlantillas}/${encodeURIComponent(String(plantillaId))}`,
+        method: 'DELETE',
       }));
     },
   },
 
-  distribucionEmpleadoCentroCosto: {
+  distribucionPlantillasEmpleados: {
     list: async <T = unknown>(): Promise<T> => {
-      return await requireData(dbApiFetch<T>({ endpoint: DB_API_CATALOG.distribucionEmpleadoCentroCosto }));
+      return await requireData(dbApiFetch<T>({ endpoint: DB_API_CATALOG.distribucionPlantillasEmpleados }));
     },
 
     save: async <T = unknown>(payload: unknown): Promise<T> => {
       return await requireData(dbApiFetch<T>({
-        endpoint: DB_API_CATALOG.distribucionEmpleadoCentroCosto,
+        endpoint: DB_API_CATALOG.distribucionPlantillasEmpleados,
         method: 'POST',
         body: payload,
       }));
     },
 
-    delete: async <T = unknown>(empleadoId: string): Promise<T> => {
+    delete: async <T = unknown>(plantillaId: number, empleadoId: string): Promise<T> => {
       return await requireData(dbApiFetch<T>({
-        endpoint: `${DB_API_CATALOG.distribucionEmpleadoCentroCosto}/${encodeURIComponent(empleadoId)}`,
+        endpoint: `${DB_API_CATALOG.distribucionPlantillasEmpleados}/${encodeURIComponent(String(plantillaId))}/${encodeURIComponent(empleadoId)}`,
         method: 'DELETE',
       }));
     },

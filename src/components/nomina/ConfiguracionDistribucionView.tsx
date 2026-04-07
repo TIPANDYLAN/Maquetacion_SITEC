@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Building2, ChevronLeft, Clock3, Pencil, Plus, Save, Search, Trash2, Users, Settings } from 'lucide-react';
-import { getNominaCostCenters, getEmpleadosDistribucion, type NominaCostCenter, type EmpleadoDistribucionApiItem } from '../../services/n8nApi';
+import { Building2, ChevronLeft, Plus, Save, Settings, Trash2, Users } from 'lucide-react';
+import { getNominaEmployeesActive, getNominaCostCenters, type NominaCostCenter } from '../../services/n8nApi';
+import type { EmpleadoNominaApiItem } from '../../types/nomina';
 import { dbApi } from '../../services/dbApi';
 
-type TabDistribucion = 'empleados' | 'centros' | 'distribucion_empleados';
-type VistaDistribucion = 'inicio' | TabDistribucion;
+type VistaDistribucion = 'inicio' | 'plantillas' | 'asignaciones';
 
 interface EmpleadoDistribucion {
   idEmpleado: string;
@@ -12,186 +12,180 @@ interface EmpleadoDistribucion {
   codigoEmpleado: string;
   nombres: string;
   apellidos: string;
-  centroCostoCodigo: string;
-  centroCostoDescripcion: string;
-  departamentoCodigo: string;
-  departamentoDescripcion: string;
-  plan: string;
-  ingreso: string;
 }
 
-interface DistribucionTemporal {
+interface PlantillaCentro {
   centroCostoId: string;
   centroCostoNombre: string;
   porcentaje: number;
 }
 
-interface DistribucionEmpleadoTemporal {
+interface PlantillaDistribucion {
+  id: number;
+  nombre: string;
+  centros: PlantillaCentro[];
+  totalEmpleados: number;
+}
+
+interface EmpleadoPlantilla {
   empleadoId: string;
   empleadoDocumento: string;
   empleadoNombreCompleto: string;
-  centros: DistribucionTemporal[];
 }
 
-interface DistribucionCentroCostoApiItem {
-  id?: number;
+interface PlantillaConEmpleados {
+  plantillaId: number;
+  plantillaNombre: string;
+  empleados: EmpleadoPlantilla[];
+}
+
+interface PlantillaCentroApiItem {
   centroCostoId?: string;
   centroCostoNombre?: string;
   porcentaje?: number | string;
-  fechaCreacion?: string;
-  fechaActualizacion?: string;
   centro_costo_id?: string;
   centro_costo_nombre?: string;
 }
 
-interface DistribucionCentroCostoResponse {
+interface PlantillaApiItem {
+  id?: number | string;
+  nombre?: string;
+  centros?: PlantillaCentroApiItem[];
+  totalEmpleados?: number | string;
+}
+
+interface PlantillasResponse {
   ok?: boolean;
-  centros?: DistribucionCentroCostoApiItem[];
+  plantillas?: PlantillaApiItem[];
 }
 
-interface DistribucionEmpleadoCentroCostoApiCentroItem {
-  centroCostoId?: string;
-  centroCostoNombre?: string;
-  porcentaje?: number | string;
-  centro_costo_id?: string;
-  centro_costo_nombre?: string;
+interface PlantillaSaveResponse {
+  ok?: boolean;
+  plantilla?: PlantillaApiItem;
 }
 
-interface DistribucionEmpleadoCentroCostoApiItem {
-  id?: number;
+interface EmpleadoPlantillaApiItem {
   empleadoId?: string;
   empleadoDocumento?: string;
   empleadoNombreCompleto?: string;
-  centros?: DistribucionEmpleadoCentroCostoApiCentroItem[];
-  porcentajeTotal?: number | string;
-  fechaCreacion?: string;
-  fechaActualizacion?: string;
   empleado_id?: string;
   empleado_documento?: string;
   empleado_nombre_completo?: string;
-  porcentaje_total?: number | string;
 }
 
-interface DistribucionEmpleadoCentroCostoResponse {
+interface PlantillaConEmpleadosApiItem {
+  plantillaId?: number | string;
+  plantillaNombre?: string;
+  empleados?: EmpleadoPlantillaApiItem[];
+  plantilla_id?: number | string;
+  plantilla_nombre?: string;
+}
+
+interface PlantillasEmpleadosResponse {
   ok?: boolean;
-  empleado?: DistribucionEmpleadoCentroCostoApiItem;
-  empleados?: DistribucionEmpleadoCentroCostoApiItem[];
+  plantillas?: PlantillaConEmpleadosApiItem[];
 }
 
-interface EstadoGuardadoDistribucionCentros {
+interface EstadoGuardado {
   tipo: 'exito' | 'error';
   mensaje: string;
 }
 
-interface EstadoGuardadoDistribucionEmpleados {
-  tipo: 'exito' | 'error';
-  mensaje: string;
-}
+const normalizarEmpleadoDistribucion = (item: EmpleadoNominaApiItem): EmpleadoDistribucion => {
+  const payload = (item?.json ?? item ?? {}) as Record<string, unknown>;
+  const cedula = String(payload?.CEDULA || payload?.DOCI_MFEMP || '').trim();
+  return {
+    idEmpleado: cedula,
+    documento: cedula,
+    codigoEmpleado: cedula,
+    nombres: String(payload?.NOMBRES || '').trim(),
+    apellidos: String(payload?.APELLIDOS || '').trim(),
+  };
+};
 
-const normalizarDistribucionCentroCosto = (item: DistribucionCentroCostoApiItem): DistribucionTemporal => ({
-  centroCostoId: String(item?.centroCostoId || item?.centro_costo_id || '').trim(),
-  centroCostoNombre: String(item?.centroCostoNombre || item?.centro_costo_nombre || '').trim(),
-  porcentaje: Number(item?.porcentaje || 0),
-});
-
-const normalizarDistribucionEmpleadoCentroCosto = (item: DistribucionEmpleadoCentroCostoApiItem): DistribucionEmpleadoTemporal => {
-  const centrosFuente = Array.isArray(item?.centros) ? item.centros : [];
+const normalizarPlantilla = (item: PlantillaApiItem): PlantillaDistribucion => {
+  const centrosRaw = Array.isArray(item?.centros) ? item.centros : [];
 
   return {
-    empleadoId: String(item?.empleadoId || item?.empleado_id || '').trim(),
-    empleadoDocumento: String(item?.empleadoDocumento || item?.empleado_documento || '').trim(),
-    empleadoNombreCompleto: String(item?.empleadoNombreCompleto || item?.empleado_nombre_completo || '').trim(),
-    centros: centrosFuente
+    id: Number(item?.id || 0),
+    nombre: String(item?.nombre || '').trim(),
+    centros: centrosRaw
       .map((centro) => ({
         centroCostoId: String(centro?.centroCostoId || centro?.centro_costo_id || '').trim(),
         centroCostoNombre: String(centro?.centroCostoNombre || centro?.centro_costo_nombre || '').trim(),
         porcentaje: Number(centro?.porcentaje || 0),
       }))
-      .filter((centro) => centro.centroCostoId && centro.centroCostoNombre),
+      .filter((centro) => centro.centroCostoId && centro.centroCostoNombre)
+      .sort((a, b) => a.centroCostoNombre.localeCompare(b.centroCostoNombre, 'es', { sensitivity: 'base' })),
+    totalEmpleados: Number(item?.totalEmpleados || 0),
   };
 };
 
-const normalizarEmpleadoDistribucion = (item: EmpleadoDistribucionApiItem): EmpleadoDistribucion & { codigoDistribucion: string } => {
+const normalizarPlantillaConEmpleados = (item: PlantillaConEmpleadosApiItem): PlantillaConEmpleados => {
+  const empleadosRaw = Array.isArray(item?.empleados) ? item.empleados : [];
+
   return {
-    idEmpleado: String(item.DOCI_MFEMP || item.COD_MFEMP || '').trim(),
-    documento: String(item.DOCI_MFEMP || '').trim(),
-    codigoEmpleado: String(item.COD_MFEMP || '').trim(),
-    nombres: String(item.NOMBRES || '').trim(),
-    apellidos: String(item.APELLIDOS || '').trim(),
-    centroCostoCodigo: String(item.COD_MFCC || '').trim(),
-    centroCostoDescripcion: String(item.DSC_MFCC || '').trim(),
-    departamentoCodigo: '',
-    departamentoDescripcion: String(item.DSC_MFDPT || '').trim(),
-    plan: '',
-    ingreso: '',
-    codigoDistribucion: String(item.COD_DISTRIBUCION || '').trim(),
+    plantillaId: Number(item?.plantillaId || item?.plantilla_id || 0),
+    plantillaNombre: String(item?.plantillaNombre || item?.plantilla_nombre || '').trim(),
+    empleados: empleadosRaw
+      .map((empleado) => ({
+        empleadoId: String(empleado?.empleadoId || empleado?.empleado_id || '').trim(),
+        empleadoDocumento: String(empleado?.empleadoDocumento || empleado?.empleado_documento || '').trim(),
+        empleadoNombreCompleto: String(empleado?.empleadoNombreCompleto || empleado?.empleado_nombre_completo || '').trim(),
+      }))
+      .filter((empleado) => empleado.empleadoId && empleado.empleadoNombreCompleto)
+      .sort((a, b) => a.empleadoNombreCompleto.localeCompare(b.empleadoNombreCompleto, 'es', { sensitivity: 'base' })),
   };
 };
 
 const ConfiguracionDistribucionView = () => {
   const [vistaActiva, setVistaActiva] = useState<VistaDistribucion>('inicio');
+
   const [empleados, setEmpleados] = useState<EmpleadoDistribucion[]>([]);
   const [centrosCosto, setCentrosCosto] = useState<NominaCostCenter[]>([]);
-  const [distribucionesTemporales, setDistribucionesTemporales] = useState<DistribucionTemporal[]>([]);
-  const [distribucionesEmpleadoTemporales, setDistribucionesEmpleadoTemporales] = useState<DistribucionEmpleadoTemporal[]>([]);
-  const [modalCentroAbierto, setModalCentroAbierto] = useState(false);
-  const [modalEmpleadoAbierto, setModalEmpleadoAbierto] = useState(false);
-  const [centroCostoSeleccionado, setCentroCostoSeleccionado] = useState('');
-  const [porcentajeDistribucion, setPorcentajeDistribucion] = useState('');
-  const [centroCostoEditandoId, setCentroCostoEditandoId] = useState<string | null>(null);
-  const [empleadoSeleccionadoId, setEmpleadoSeleccionadoId] = useState('');
-  const [centroCostoEmpleadoSeleccionado, setCentroCostoEmpleadoSeleccionado] = useState('');
-  const [porcentajeEmpleadoDistribucion, setPorcentajeEmpleadoDistribucion] = useState('');
-  const [centrosEmpleadoBorrador, setCentrosEmpleadoBorrador] = useState<DistribucionTemporal[]>([]);
-  const [centroCostoEmpleadoEditandoId, setCentroCostoEmpleadoEditandoId] = useState<string | null>(null);
-  const [porcentajeCentroEmpleadoEditando, setPorcentajeCentroEmpleadoEditando] = useState('');
-  const [empleadoDistribucionEditandoId, setEmpleadoDistribucionEditandoId] = useState<string | null>(null);
+  const [plantillas, setPlantillas] = useState<PlantillaDistribucion[]>([]);
+  const [plantillasConEmpleados, setPlantillasConEmpleados] = useState<PlantillaConEmpleados[]>([]);
+
   const [cargandoEmpleados, setCargandoEmpleados] = useState(false);
   const [cargandoCentros, setCargandoCentros] = useState(false);
-  const [, setCargandoDistribucionCentros] = useState(false);
-  const [cargandoDistribucionEmpleados, setCargandoDistribucionEmpleados] = useState(false);
-  const [guardandoDistribucionCentros, setGuardandoDistribucionCentros] = useState(false);
-  const [guardandoDistribucionEmpleados, setGuardandoDistribucionEmpleados] = useState(false);
+  const [cargandoPlantillas, setCargandoPlantillas] = useState(false);
+  const [cargandoAsignaciones, setCargandoAsignaciones] = useState(false);
+
   const [errorEmpleados, setErrorEmpleados] = useState<string | null>(null);
   const [errorCentros, setErrorCentros] = useState<string | null>(null);
-  const [errorDistribucionCentros, setErrorDistribucionCentros] = useState<string | null>(null);
-  const [errorDistribucionEmpleados, setErrorDistribucionEmpleados] = useState<string | null>(null);
-  const [estadoGuardadoDistribucionCentros, setEstadoGuardadoDistribucionCentros] = useState<EstadoGuardadoDistribucionCentros | null>(null);
-  const [estadoGuardadoDistribucionEmpleados, setEstadoGuardadoDistribucionEmpleados] = useState<EstadoGuardadoDistribucionEmpleados | null>(null);
+  const [errorPlantillas, setErrorPlantillas] = useState<string | null>(null);
+  const [errorAsignaciones, setErrorAsignaciones] = useState<string | null>(null);
+
+  const [estadoPlantillas, setEstadoPlantillas] = useState<EstadoGuardado | null>(null);
+  const [estadoAsignaciones, setEstadoAsignaciones] = useState<EstadoGuardado | null>(null);
+
+  const [guardandoPlantilla, setGuardandoPlantilla] = useState(false);
+  const [guardandoAsignacion, setGuardandoAsignacion] = useState(false);
+
+  const [modalPlantillaAbierto, setModalPlantillaAbierto] = useState(false);
+  const [plantillaEditandoId, setPlantillaEditandoId] = useState<number | null>(null);
+  const [nombrePlantilla, setNombrePlantilla] = useState('');
+  const [centrosPlantillaBorrador, setCentrosPlantillaBorrador] = useState<PlantillaCentro[]>([]);
+  const [centroCostoSeleccionado, setCentroCostoSeleccionado] = useState('');
+  const [porcentajeCentroSeleccionado, setPorcentajeCentroSeleccionado] = useState('');
+
+  const [plantillaAsignacionSeleccionada, setPlantillaAsignacionSeleccionada] = useState('');
+  const [empleadoAsignacionInput, setEmpleadoAsignacionInput] = useState('');
 
   useEffect(() => {
     void cargarEmpleados();
     void cargarCentrosCosto();
-    void cargarDistribucionCentroCosto();
-    void cargarDistribucionEmpleadoCentroCosto();
+    void cargarPlantillas();
+    void cargarAsignaciones();
   }, []);
-
-  useEffect(() => {
-    if (!modalCentroAbierto && !modalEmpleadoAbierto) return;
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        if (modalEmpleadoAbierto) {
-          cerrarModalEmpleado();
-          return;
-        }
-
-        cerrarModalCentro();
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [modalCentroAbierto, modalEmpleadoAbierto]);
 
   const cargarEmpleados = async () => {
     setCargandoEmpleados(true);
     setErrorEmpleados(null);
 
     try {
-      const data = await getEmpleadosDistribucion<EmpleadoDistribucionApiItem[]>();
+      const data = await getNominaEmployeesActive<EmpleadoNominaApiItem[]>();
       const empleadosApi = Array.isArray(data) ? data : [];
-
 
       const empleadosNormalizados = empleadosApi
         .map(normalizarEmpleadoDistribucion)
@@ -226,7 +220,7 @@ const ConfiguracionDistribucionView = () => {
           .sort((a, b) => a.CENTROCOSTO.localeCompare(b.CENTROCOSTO, 'es', { sensitivity: 'base' })),
       );
     } catch (error) {
-      console.error('Error cargando centros de costo para configuracion de distribucion:', error);
+      console.error('Error cargando centros de costo para plantillas:', error);
       setCentrosCosto([]);
       setErrorCentros('No se pudo cargar la lista de centros de costo.');
     } finally {
@@ -234,481 +228,382 @@ const ConfiguracionDistribucionView = () => {
     }
   };
 
-  const cargarDistribucionCentroCosto = async () => {
-    setCargandoDistribucionCentros(true);
-    setErrorDistribucionCentros(null);
-    setEstadoGuardadoDistribucionCentros(null);
+  const cargarPlantillas = async () => {
+    setCargandoPlantillas(true);
+    setErrorPlantillas(null);
 
     try {
-      const data = await dbApi.distribucionCentroCosto.list<DistribucionCentroCostoResponse>();
-      const centros = Array.isArray(data?.centros) ? data.centros : [];
+      const data = await dbApi.distribucionPlantillas.list<PlantillasResponse>();
+      const plantillasApi = Array.isArray(data?.plantillas) ? data.plantillas : [];
 
-      setDistribucionesTemporales(
-        centros
-          .map(normalizarDistribucionCentroCosto)
-          .filter((item) => item.centroCostoId && item.centroCostoNombre)
-          .sort((a, b) => a.centroCostoNombre.localeCompare(b.centroCostoNombre, 'es', { sensitivity: 'base' })),
+      setPlantillas(
+        plantillasApi
+          .map(normalizarPlantilla)
+          .filter((plantilla) => plantilla.id > 0 && plantilla.nombre)
+          .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es', { sensitivity: 'base' })),
       );
     } catch (error) {
-      console.error('Error cargando distribucion de centros de costo:', error);
-      setDistribucionesTemporales([]);
-      setErrorDistribucionCentros('No se pudo cargar la configuracion de centros de costo.');
+      console.error('Error cargando plantillas de distribucion:', error);
+      setPlantillas([]);
+      setErrorPlantillas('No se pudieron cargar las plantillas de distribución.');
     } finally {
-      setCargandoDistribucionCentros(false);
+      setCargandoPlantillas(false);
     }
   };
 
-  const cargarDistribucionEmpleadoCentroCosto = async () => {
-    setCargandoDistribucionEmpleados(true);
-    setErrorDistribucionEmpleados(null);
-    setEstadoGuardadoDistribucionEmpleados(null);
+  const cargarAsignaciones = async () => {
+    setCargandoAsignaciones(true);
+    setErrorAsignaciones(null);
 
     try {
-      const data = await dbApi.distribucionEmpleadoCentroCosto.list<DistribucionEmpleadoCentroCostoResponse>();
-      const empleadosGuardados = Array.isArray(data?.empleados) ? data.empleados : [];
+      const data = await dbApi.distribucionPlantillasEmpleados.list<PlantillasEmpleadosResponse>();
+      const plantillasApi = Array.isArray(data?.plantillas) ? data.plantillas : [];
 
-      setDistribucionesEmpleadoTemporales(
-        empleadosGuardados
-          .map(normalizarDistribucionEmpleadoCentroCosto)
-          .filter((item) => item.empleadoId && item.empleadoNombreCompleto)
-          .sort((a, b) => a.empleadoNombreCompleto.localeCompare(b.empleadoNombreCompleto, 'es', { sensitivity: 'base' })),
+      setPlantillasConEmpleados(
+        plantillasApi
+          .map(normalizarPlantillaConEmpleados)
+          .filter((item) => item.plantillaId > 0)
+          .sort((a, b) => a.plantillaNombre.localeCompare(b.plantillaNombre, 'es', { sensitivity: 'base' })),
       );
     } catch (error) {
-      console.error('Error cargando distribucion por empleado:', error);
-      setDistribucionesEmpleadoTemporales([]);
-      setErrorDistribucionEmpleados('No se pudo cargar la distribucion por empleado.');
+      console.error('Error cargando empleados por plantilla:', error);
+      setPlantillasConEmpleados([]);
+      setErrorAsignaciones('No se pudieron cargar las asignaciones de empleados por plantilla.');
     } finally {
-      setCargandoDistribucionEmpleados(false);
+      setCargandoAsignaciones(false);
     }
   };
 
-  const limpiarFormularioCentro = () => {
+  const totalPlantillaBorrador = useMemo(
+    () => centrosPlantillaBorrador.reduce((acumulado, item) => acumulado + item.porcentaje, 0),
+    [centrosPlantillaBorrador],
+  );
+
+  const plantillaValidaParaGuardar = useMemo(() => {
+    return nombrePlantilla.trim().length > 0
+      && centrosPlantillaBorrador.length > 0
+      && Math.abs(totalPlantillaBorrador - 100) <= 0.01;
+  }, [nombrePlantilla, centrosPlantillaBorrador.length, totalPlantillaBorrador]);
+
+  const resumenAsignacionesPorPlantilla = useMemo(() => {
+    const map = new Map<number, EmpleadoPlantilla[]>();
+
+    for (const item of plantillasConEmpleados) {
+      map.set(item.plantillaId, item.empleados);
+    }
+
+    return plantillas
+      .map((plantilla) => ({
+        ...plantilla,
+        empleados: map.get(plantilla.id) || [],
+      }))
+      .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es', { sensitivity: 'base' }));
+  }, [plantillas, plantillasConEmpleados]);
+
+  const centrosDisponiblesParaBorrador = useMemo(() => {
+    const usados = new Set(centrosPlantillaBorrador.map((item) => item.centroCostoId));
+    return centrosCosto.filter((centro) => !usados.has(centro.IDCENTROCOSTO));
+  }, [centrosCosto, centrosPlantillaBorrador]);
+
+  const empleadosDisponiblesParaAsignacion = useMemo(() => {
+    const asignados = new Set(resumenAsignacionesPorPlantilla.flatMap((p) => p.empleados.map((emp) => emp.empleadoId)));
+    return empleados.filter((emp) => !asignados.has(emp.idEmpleado));
+  }, [empleados, resumenAsignacionesPorPlantilla]);
+
+  const empleadoAsignacionResuelto = useMemo(() => {
+    const valor = empleadoAsignacionInput.trim();
+    if (!valor) return null;
+    const porId = empleadosDisponiblesParaAsignacion.find((emp) => emp.idEmpleado === valor || emp.documento === valor);
+    if (porId) return porId;
+    return empleadosDisponiblesParaAsignacion.find((emp) => {
+      const etiqueta = `${emp.documento || emp.codigoEmpleado} - ${emp.apellidos} ${emp.nombres}`.toLowerCase();
+      return etiqueta === valor.toLowerCase();
+    }) ?? null;
+  }, [empleadoAsignacionInput, empleadosDisponiblesParaAsignacion]);
+
+  const limpiarBorradorPlantilla = () => {
+    setPlantillaEditandoId(null);
+    setNombrePlantilla('');
+    setCentrosPlantillaBorrador([]);
     setCentroCostoSeleccionado('');
-    setPorcentajeDistribucion('');
-    setCentroCostoEditandoId(null);
+    setPorcentajeCentroSeleccionado('');
   };
 
-  const limpiarFormularioEmpleado = () => {
-    setEmpleadoSeleccionadoId('');
-    setCentroCostoEmpleadoSeleccionado('');
-    setPorcentajeEmpleadoDistribucion('');
-    setCentrosEmpleadoBorrador([]);
-    setCentroCostoEmpleadoEditandoId(null);
-    setPorcentajeCentroEmpleadoEditando('');
-    setEmpleadoDistribucionEditandoId(null);
+  const abrirModalNuevaPlantilla = () => {
+    limpiarBorradorPlantilla();
+    setEstadoPlantillas(null);
+    setErrorPlantillas(null);
+    setModalPlantillaAbierto(true);
   };
 
-  const abrirModalNuevoCentro = () => {
-    limpiarFormularioCentro();
-    setModalCentroAbierto(true);
+  const abrirModalEditarPlantilla = (plantilla: PlantillaDistribucion) => {
+    setPlantillaEditandoId(plantilla.id);
+    setNombrePlantilla(plantilla.nombre);
+    setCentrosPlantillaBorrador(plantilla.centros.map((centro) => ({ ...centro })));
+    setCentroCostoSeleccionado('');
+    setPorcentajeCentroSeleccionado('');
+    setEstadoPlantillas(null);
+    setErrorPlantillas(null);
+    setModalPlantillaAbierto(true);
   };
 
-  const abrirModalEditarCentro = (centroCostoId: string) => {
-    const registro = distribucionesTemporales.find((item) => item.centroCostoId === centroCostoId);
-    if (!registro) return;
-
-    setCentroCostoEditandoId(registro.centroCostoId);
-    setCentroCostoSeleccionado(registro.centroCostoId);
-    setPorcentajeDistribucion(String(registro.porcentaje));
-    setModalCentroAbierto(true);
-    setVistaActiva('centros');
+  const cerrarModalPlantilla = () => {
+    limpiarBorradorPlantilla();
+    setModalPlantillaAbierto(false);
   };
 
-  const cerrarModalCentro = () => {
-    limpiarFormularioCentro();
-    setModalCentroAbierto(false);
-  };
-
-  const abrirModalNuevoEmpleado = () => {
-    limpiarFormularioEmpleado();
-    setErrorDistribucionEmpleados(null);
-    setEstadoGuardadoDistribucionEmpleados(null);
-    setModalEmpleadoAbierto(true);
-  };
-
-  const abrirModalEditarEmpleado = (empleadoId: string) => {
-    const registro = distribucionesEmpleadoTemporales.find((item) => item.empleadoId === empleadoId);
-    if (!registro) return;
-
-    setEmpleadoDistribucionEditandoId(registro.empleadoId);
-    setEmpleadoSeleccionadoId(registro.empleadoId);
-    setCentrosEmpleadoBorrador(registro.centros.map((centro) => ({ ...centro })));
-    setErrorDistribucionEmpleados(null);
-    setEstadoGuardadoDistribucionEmpleados(null);
-    setModalEmpleadoAbierto(true);
-    setVistaActiva('distribucion_empleados');
-  };
-
-  const cerrarModalEmpleado = () => {
-    setModalEmpleadoAbierto(false);
-  };
-
-  const agregarCentroEmpleadoBorrador = () => {
-    const centro = centrosCosto.find((item) => item.IDCENTROCOSTO === centroCostoEmpleadoSeleccionado);
-    if (!centro) {
-      alert('Selecciona un centro de costo para el empleado');
-      return;
-    }
-
-    const porcentaje = Number(String(porcentajeEmpleadoDistribucion).replace(',', '.'));
-    if (!Number.isFinite(porcentaje) || porcentaje <= 0 || porcentaje > 100) {
-      alert('Ingresa un porcentaje valido entre 0 y 100');
-      return;
-    }
-
-    setCentrosEmpleadoBorrador((prev) => {
-      const sinDuplicado = prev.filter((item) => item.centroCostoId !== centro.IDCENTROCOSTO);
-      return [
-        ...sinDuplicado,
-        {
-          centroCostoId: centro.IDCENTROCOSTO,
-          centroCostoNombre: centro.CENTROCOSTO,
-          porcentaje,
-        },
-      ];
-    });
-
-    setCentroCostoEmpleadoSeleccionado('');
-    setPorcentajeEmpleadoDistribucion('');
-  };
-
-  const editarCentroEmpleadoBorrador = (centroCostoId: string) => {
-    const registro = centrosEmpleadoBorrador.find((item) => item.centroCostoId === centroCostoId);
-    if (!registro) return;
-
-    setCentroCostoEmpleadoEditandoId(registro.centroCostoId);
-    setPorcentajeCentroEmpleadoEditando(String(registro.porcentaje));
-  };
-
-  const cancelarEdicionCentroEmpleado = () => {
-    setCentroCostoEmpleadoEditandoId(null);
-    setPorcentajeCentroEmpleadoEditando('');
-  };
-
-  const guardarCentroEmpleadoEditado = () => {
-    if (!centroCostoEmpleadoEditandoId) return;
-
-    const porcentaje = Number(String(porcentajeCentroEmpleadoEditando).replace(',', '.'));
-    if (!Number.isFinite(porcentaje) || porcentaje <= 0 || porcentaje > 100) {
-      alert('Ingresa un porcentaje valido entre 0 y 100');
-      return;
-    }
-
-    setCentrosEmpleadoBorrador((prev) =>
-      prev.map((item) =>
-        item.centroCostoId === centroCostoEmpleadoEditandoId
-          ? {
-              ...item,
-              porcentaje,
-            }
-          : item,
-      ),
-    );
-
-    cancelarEdicionCentroEmpleado();
-  };
-
-  const eliminarCentroEmpleadoBorrador = (centroCostoId: string) => {
-    setCentrosEmpleadoBorrador((prev) => prev.filter((item) => item.centroCostoId !== centroCostoId));
-    if (centroCostoEmpleadoEditandoId === centroCostoId) {
-      cancelarEdicionCentroEmpleado();
-    }
-  };
-
-  const guardarEmpleadoTemporal = async () => {
-    const empleado = empleadosFiltrados.find((item) => item.idEmpleado === empleadoSeleccionadoId);
-    if (!empleado) {
-      alert('Selecciona un empleado a distribuir');
-      return;
-    }
-
-    if (centrosEmpleadoBorrador.length === 0) {
-      alert('Agrega al menos un centro de costo');
-      return;
-    }
-
-    const totalEmpleado = centrosEmpleadoBorrador.reduce((acumulado, item) => acumulado + item.porcentaje, 0);
-    if (Math.abs(totalEmpleado - 100) > 0.01) {
-      return;
-    }
-
-    setGuardandoDistribucionEmpleados(true);
-    setErrorDistribucionEmpleados(null);
-    setEstadoGuardadoDistribucionEmpleados(null);
-
-    try {
-      const data = await dbApi.distribucionEmpleadoCentroCosto.save<DistribucionEmpleadoCentroCostoResponse>({
-        empleadoId: empleado.idEmpleado,
-        empleadoDocumento: empleado.documento || empleado.codigoEmpleado,
-        empleadoNombreCompleto: `${empleado.apellidos} ${empleado.nombres}`.trim(),
-        centros: centrosEmpleadoBorrador.map((centro) => ({ ...centro })),
-      });
-
-      const empleadoGuardado = normalizarDistribucionEmpleadoCentroCosto(
-        data?.empleado || {
-          empleadoId: empleado.idEmpleado,
-          empleadoDocumento: empleado.documento || empleado.codigoEmpleado,
-          empleadoNombreCompleto: `${empleado.apellidos} ${empleado.nombres}`.trim(),
-          centros: centrosEmpleadoBorrador.map((centro) => ({ ...centro })),
-        },
-      );
-
-      setDistribucionesEmpleadoTemporales((prev) => {
-        const sinDuplicado = prev.filter((item) => item.empleadoId !== empleadoGuardado.empleadoId);
-
-        return [
-          ...sinDuplicado,
-          empleadoGuardado,
-        ].sort((a, b) => a.empleadoNombreCompleto.localeCompare(b.empleadoNombreCompleto, 'es', { sensitivity: 'base' }));
-      });
-
-      setEstadoGuardadoDistribucionEmpleados({
-        tipo: 'exito',
-        mensaje: 'La distribución por empleado se guardó correctamente.',
-      });
-      cerrarModalEmpleado();
-    } catch (error) {
-      console.error('Error guardando distribucion por empleado:', error);
-      setErrorDistribucionEmpleados('No se pudo guardar la distribucion por empleado.');
-      setEstadoGuardadoDistribucionEmpleados({
-        tipo: 'error',
-        mensaje: 'No se pudo guardar la distribución por empleado.',
-      });
-    } finally {
-      setGuardandoDistribucionEmpleados(false);
-    }
-  };
-
-  const guardarCentroTemporal = () => {
+  const agregarCentroBorrador = () => {
     const centro = centrosCosto.find((item) => item.IDCENTROCOSTO === centroCostoSeleccionado);
     if (!centro) {
-      alert('Selecciona un centro de costo');
+      alert('Selecciona un centro de costo.');
       return;
     }
 
-    const porcentaje = Number(String(porcentajeDistribucion).replace(',', '.'));
+    const porcentaje = Number(String(porcentajeCentroSeleccionado).replace(',', '.'));
     if (!Number.isFinite(porcentaje) || porcentaje <= 0 || porcentaje > 100) {
-      alert('Ingresa un porcentaje valido entre 0 y 100');
+      alert('Ingresa un porcentaje válido entre 0 y 100.');
       return;
     }
 
-    setDistribucionesTemporales((prev) => {
-      const sinDuplicado = prev.filter((item) => item.centroCostoId !== centro.IDCENTROCOSTO);
-      return [
-        ...sinDuplicado,
-        {
-          centroCostoId: centro.IDCENTROCOSTO,
-          centroCostoNombre: centro.CENTROCOSTO,
-          porcentaje,
-        },
-      ];
-    });
+    setCentrosPlantillaBorrador((prev) => [
+      ...prev,
+      {
+        centroCostoId: centro.IDCENTROCOSTO,
+        centroCostoNombre: centro.CENTROCOSTO,
+        porcentaje,
+      },
+    ]);
 
-    cerrarModalCentro();
+    setCentroCostoSeleccionado('');
+    setPorcentajeCentroSeleccionado('');
   };
 
-  const guardarDistribucionCentroCosto = async () => {
-    if (distribucionesTemporales.length === 0) {
-      alert('Agrega al menos un centro de costo');
+  const eliminarCentroBorrador = (centroCostoId: string) => {
+    setCentrosPlantillaBorrador((prev) => prev.filter((item) => item.centroCostoId !== centroCostoId));
+  };
+
+  const actualizarPorcentajeCentroBorrador = (centroCostoId: string, nuevoValor: string) => {
+    const porcentaje = Number(String(nuevoValor).replace(',', '.'));
+
+    setCentrosPlantillaBorrador((prev) => prev.map((item) => {
+      if (item.centroCostoId !== centroCostoId) {
+        return item;
+      }
+
+      if (!Number.isFinite(porcentaje) || porcentaje < 0 || porcentaje > 100) {
+        return { ...item, porcentaje: 0 };
+      }
+
+      return { ...item, porcentaje };
+    }));
+  };
+
+  const guardarPlantilla = async () => {
+    if (!plantillaValidaParaGuardar) {
+      alert('La plantilla debe tener nombre, al menos un centro y total de 100%.');
       return;
     }
 
-    if (Math.abs(totalDistribucion - 100) > 0.01) {
-      alert('La suma de los porcentajes de los centros de costo debe ser 100%');
-      return;
-    }
-
-    setGuardandoDistribucionCentros(true);
-    setErrorDistribucionCentros(null);
-    setEstadoGuardadoDistribucionCentros(null);
+    setGuardandoPlantilla(true);
+    setEstadoPlantillas(null);
+    setErrorPlantillas(null);
 
     try {
-      const data = await dbApi.distribucionCentroCosto.save<DistribucionCentroCostoResponse>({
-        centros: distribucionesTemporales.map((item) => ({
+      const payload = {
+        plantillaId: plantillaEditandoId ?? undefined,
+        nombre: nombrePlantilla.trim(),
+        centros: centrosPlantillaBorrador.map((item) => ({
           centroCostoId: item.centroCostoId,
           centroCostoNombre: item.centroCostoNombre,
           porcentaje: item.porcentaje,
         })),
+      };
+
+      const data = await dbApi.distribucionPlantillas.save<PlantillaSaveResponse>(payload);
+      const plantillaGuardada = data?.plantilla ? normalizarPlantilla(data.plantilla) : null;
+
+      if (!plantillaGuardada || !plantillaGuardada.id) {
+        throw new Error('La API no devolvió la plantilla guardada.');
+      }
+
+      setPlantillas((prev) => {
+        const sinDuplicado = prev.filter((item) => item.id !== plantillaGuardada.id);
+        return [...sinDuplicado, plantillaGuardada].sort((a, b) => a.nombre.localeCompare(b.nombre, 'es', { sensitivity: 'base' }));
       });
 
-      const centrosGuardados = Array.isArray(data?.centros)
-        ? data.centros.map(normalizarDistribucionCentroCosto)
-        : distribucionesTemporales;
-      setDistribucionesTemporales(
-        centrosGuardados
-          .filter((item) => item.centroCostoId && item.centroCostoNombre)
-          .sort((a, b) => a.centroCostoNombre.localeCompare(b.centroCostoNombre, 'es', { sensitivity: 'base' })),
-      );
-      setEstadoGuardadoDistribucionCentros({
+      setEstadoPlantillas({
         tipo: 'exito',
-        mensaje: 'La configuración de centros de costo se guardó correctamente.',
+        mensaje: plantillaEditandoId
+          ? 'La plantilla se actualizó correctamente.'
+          : 'La plantilla se creó correctamente.',
       });
+
+      await cargarAsignaciones();
+      cerrarModalPlantilla();
     } catch (error) {
-      console.error('Error guardando distribucion de centros de costo:', error);
-      setErrorDistribucionCentros('No se pudo guardar la configuracion de centros de costo.');
-      setEstadoGuardadoDistribucionCentros({
+      console.error('Error guardando plantilla:', error);
+      setErrorPlantillas('No se pudo guardar la plantilla.');
+      setEstadoPlantillas({
         tipo: 'error',
-        mensaje: 'No se pudo guardar la configuración de centros de costo.',
+        mensaje: 'No se pudo guardar la plantilla.',
       });
     } finally {
-      setGuardandoDistribucionCentros(false);
+      setGuardandoPlantilla(false);
     }
   };
 
-  const eliminarCentroTemporal = (centroCostoId: string) => {
-    setDistribucionesTemporales((prev) => prev.filter((item) => item.centroCostoId !== centroCostoId));
-    if (centroCostoEditandoId === centroCostoId) {
-      limpiarFormularioCentro();
+  const eliminarPlantilla = async (plantillaId: number) => {
+    if (!window.confirm('¿Seguro que quieres eliminar esta plantilla?')) {
+      return;
     }
-  };
 
-  const eliminarDistribucionEmpleado = async (empleadoId: string) => {
+    setEstadoPlantillas(null);
+    setErrorPlantillas(null);
+
     try {
-      await dbApi.distribucionEmpleadoCentroCosto.delete(empleadoId);
-      setDistribucionesEmpleadoTemporales((prev) => prev.filter((item) => item.empleadoId !== empleadoId));
-      setEstadoGuardadoDistribucionEmpleados({
-        tipo: 'exito',
-        mensaje: 'La distribución por empleado se eliminó correctamente.',
-      });
+      await dbApi.distribucionPlantillas.delete(plantillaId);
 
-      if (empleadoDistribucionEditandoId === empleadoId) {
-        cerrarModalEmpleado();
-      }
+      setPlantillas((prev) => prev.filter((item) => item.id !== plantillaId));
+      setPlantillasConEmpleados((prev) => prev.filter((item) => item.plantillaId !== plantillaId));
+
+      setEstadoPlantillas({
+        tipo: 'exito',
+        mensaje: 'La plantilla se eliminó correctamente.',
+      });
     } catch (error) {
-      console.error('Error eliminando distribucion por empleado:', error);
-      setErrorDistribucionEmpleados('No se pudo eliminar la distribucion por empleado.');
-      setEstadoGuardadoDistribucionEmpleados({
+      console.error('Error eliminando plantilla:', error);
+      setErrorPlantillas('No se pudo eliminar la plantilla.');
+      setEstadoPlantillas({
         tipo: 'error',
-        mensaje: 'No se pudo eliminar la distribución por empleado.',
+        mensaje: 'No se pudo eliminar la plantilla.',
       });
     }
   };
 
-  const totalDistribucion = useMemo(
-    () => distribucionesTemporales.reduce((acumulado, item) => acumulado + item.porcentaje, 0),
-    [distribucionesTemporales],
-  );
+  const agregarEmpleadoAPlantilla = async () => {
+    const plantillaId = Number(plantillaAsignacionSeleccionada);
+    const empleado = empleadoAsignacionResuelto;
 
-  const distribucionCentroCostoValida = useMemo(
-    () => distribucionesTemporales.length > 0 && Math.abs(totalDistribucion - 100) <= 0.01,
-    [distribucionesTemporales.length, totalDistribucion],
-  );
+    if (!Number.isFinite(plantillaId) || plantillaId <= 0) {
+      alert('Selecciona una plantilla.');
+      return;
+    }
 
-  const totalDistribucionEmpleadoBorrador = useMemo(
-    () => centrosEmpleadoBorrador.reduce((acumulado, item) => acumulado + item.porcentaje, 0),
-    [centrosEmpleadoBorrador],
-  );
+    if (!empleado) {
+      alert('Selecciona un empleado.');
+      return;
+    }
 
-  const empleadoDistribucionValida = useMemo(
-    () => centrosEmpleadoBorrador.length > 0 && Math.abs(totalDistribucionEmpleadoBorrador - 100) <= 0.01,
-    [centrosEmpleadoBorrador.length, totalDistribucionEmpleadoBorrador],
-  );
+    setGuardandoAsignacion(true);
+    setEstadoAsignaciones(null);
+    setErrorAsignaciones(null);
 
-  const empleadosFiltrados = useMemo(() => empleados, [empleados]);
+    try {
+      await dbApi.distribucionPlantillasEmpleados.save({
+        plantillaId,
+        empleadoId: empleado.idEmpleado,
+        empleadoDocumento: empleado.documento || empleado.codigoEmpleado,
+        empleadoNombreCompleto: `${empleado.apellidos} ${empleado.nombres}`.trim(),
+      });
 
-  const empleadosParaDistribuir = useMemo(() => {
-    const empleadosAsignados = new Set(distribucionesEmpleadoTemporales.map((item) => item.empleadoId));
-    return empleadosFiltrados
-      .filter((empleado) => !empleadosAsignados.has(empleado.idEmpleado))
-      .map((empleado) => ({
-        ...empleado,
-        codigoDistribucion: (empleado as any).codigoDistribucion ?? '',
-      }));
-  }, [empleadosFiltrados, distribucionesEmpleadoTemporales]);
+      await Promise.all([cargarAsignaciones(), cargarPlantillas()]);
 
-  const empleadosDisponiblesParaSelectorDistribucion = useMemo(() => {
-    const empleadosAsignados = new Set(distribucionesEmpleadoTemporales.map((item) => item.empleadoId));
+      setEmpleadoAsignacionInput('');
+      setEstadoAsignaciones({
+        tipo: 'exito',
+        mensaje: 'El empleado se asignó correctamente a la plantilla.',
+      });
+    } catch (error) {
+      console.error('Error asignando empleado a plantilla:', error);
+      setErrorAsignaciones('No se pudo guardar la asignación del empleado.');
+      setEstadoAsignaciones({
+        tipo: 'error',
+        mensaje: 'No se pudo guardar la asignación del empleado.',
+      });
+    } finally {
+      setGuardandoAsignacion(false);
+    }
+  };
 
-    return empleadosFiltrados.filter(
-      (empleado) => !empleadosAsignados.has(empleado.idEmpleado) || empleado.idEmpleado === empleadoDistribucionEditandoId,
+  const quitarEmpleadoDePlantilla = async (plantillaId: number, empleadoId: string) => {
+    try {
+      await dbApi.distribucionPlantillasEmpleados.delete(plantillaId, empleadoId);
+      await Promise.all([cargarAsignaciones(), cargarPlantillas()]);
+      setEstadoAsignaciones({
+        tipo: 'exito',
+        mensaje: 'El empleado se eliminó de la plantilla.',
+      });
+    } catch (error) {
+      console.error('Error eliminando empleado de plantilla:', error);
+      setErrorAsignaciones('No se pudo eliminar el empleado de la plantilla.');
+      setEstadoAsignaciones({
+        tipo: 'error',
+        mensaje: 'No se pudo eliminar el empleado de la plantilla.',
+      });
+    }
+  };
+
+  const renderEstado = (estado: EstadoGuardado | null) => {
+    if (!estado) return null;
+
+    return (
+      <div
+        className={
+          estado.tipo === 'exito'
+            ? 'rounded-2xl border border-emerald-200 bg-emerald-50 px-6 py-4 text-sm text-emerald-800'
+            : 'rounded-2xl border border-rose-200 bg-rose-50 px-6 py-4 text-sm text-rose-800'
+        }
+      >
+        {estado.mensaje}
+      </div>
     );
-  }, [empleadosFiltrados, distribucionesEmpleadoTemporales, empleadoDistribucionEditandoId]);
-
-  const centrosCostoDisponibles = useMemo(() => {
-    const centrosAgregados = new Set(distribucionesTemporales.map((item) => item.centroCostoId));
-
-    return centrosCosto.filter((centro) => {
-      if (centro.IDCENTROCOSTO === centroCostoEditandoId) {
-        return true;
-      }
-
-      return !centrosAgregados.has(centro.IDCENTROCOSTO);
-    });
-  }, [centrosCosto, centroCostoEditandoId, distribucionesTemporales]);
-
-  const centrosCostoDisponiblesEmpleado = useMemo(() => {
-    const centrosAgregados = new Set(centrosEmpleadoBorrador.map((item) => item.centroCostoId));
-
-    return centrosCosto.filter((centro) => !centrosAgregados.has(centro.IDCENTROCOSTO));
-  }, [centrosCosto, centrosEmpleadoBorrador]);
+  };
 
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
       {vistaActiva === 'inicio' ? (
-        <section className="grid gap-6 lg:grid-cols-3">
-          <article className="flex min-h-[260px] flex-col justify-between rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-            <div className="space-y-4">
-              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-50 text-blue-600">
-                <Users size={24} />
-              </div>
-              <div>
-                <h2 className="text-xl font-bold text-slate-800">Empleados para distribuir</h2>
-                <p className="mt-2 text-sm leading-relaxed text-slate-500">
-                  Lista de empleados disponibles para aplicarles la distribución por porcentaje de centros de costo.
-                </p>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => setVistaActiva('empleados')}
-              className="mt-6 inline-flex items-center justify-center gap-2 rounded-2xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
-            >
-              <Search size={18} />
-              Detalle
-            </button>
-          </article>
-
+        <section className="grid gap-6 lg:grid-cols-2">
           <article className="flex min-h-[260px] flex-col justify-between rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
             <div className="space-y-4">
               <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-100 text-slate-700">
                 <Building2 size={24} />
               </div>
               <div>
-                <h2 className="text-xl font-bold text-slate-800">Centros de costo</h2>
+                <h2 className="text-xl font-bold text-slate-800">Generar plantillas</h2>
                 <p className="mt-2 text-sm leading-relaxed text-slate-500">
-                  Agrega, edita y elimina centros con porcentaje de distribución.
+                  Crea una o varias plantillas con nombre, centros de costo y porcentajes que sumen exactamente 100%.
                 </p>
               </div>
             </div>
             <button
               type="button"
-              onClick={() => setVistaActiva('centros')}
+              onClick={() => setVistaActiva('plantillas')}
               className="mt-6 inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-800 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-900"
             >
               <Settings size={18} />
-              Configurar
+              Configurar plantillas
             </button>
           </article>
 
           <article className="flex min-h-[260px] flex-col justify-between rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
             <div className="space-y-4">
               <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-600">
-                <Clock3 size={24} />
+                <Users size={24} />
               </div>
               <div>
-                <h2 className="text-xl font-bold text-slate-800">Distribución por empleado</h2>
+                <h2 className="text-xl font-bold text-slate-800">Configurar personas por plantilla</h2>
                 <p className="mt-2 text-sm leading-relaxed text-slate-500">
-                  Asigna uno o varios centros de costo a cada empleado con su porcentaje.
+                  Selecciona la plantilla y agrega empleados desde la API para que pertenezcan a esa configuración.
                 </p>
               </div>
             </div>
             <button
               type="button"
-              onClick={() => setVistaActiva('distribucion_empleados')}
+              onClick={() => setVistaActiva('asignaciones')}
               className="mt-6 inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700"
             >
-              <Settings size={18} />
-              Configurar
+              <Users size={18} />
+              Configurar personas
             </button>
           </article>
         </section>
@@ -718,10 +613,7 @@ const ConfiguracionDistribucionView = () => {
             <div className="flex items-center gap-3">
               <button
                 type="button"
-                onClick={() => {
-                  setVistaActiva('inicio');
-                  limpiarFormularioCentro();
-                }}
+                onClick={() => setVistaActiva('inicio')}
                 className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
               >
                 <ChevronLeft size={16} />
@@ -729,77 +621,18 @@ const ConfiguracionDistribucionView = () => {
               </button>
               <div>
                 <h2 className="text-lg font-bold text-slate-800">
-                  {vistaActiva === 'empleados'
-                    ? 'Empleados para distribuir'
-                    : vistaActiva === 'centros'
-                      ? 'Centros de costo'
-                      : 'Distribución por empleado'}
+                  {vistaActiva === 'plantillas' ? 'Plantillas de distribución' : 'Personas por plantilla'}
                 </h2>
                 <p className="text-xs text-slate-500">
-                  {vistaActiva === 'empleados'
-                    ? 'Lista de empleados disponibles para distribuir.'
-                    : vistaActiva === 'centros'
-                      ? 'Gestion de centros de costo y porcentajes.'
-                      : 'Distribuye empleados por uno o varios centros de costo.'}
+                  {vistaActiva === 'plantillas'
+                    ? 'Define centros y porcentajes por plantilla.'
+                    : 'Asigna empleados a una plantilla existente.'}
                 </p>
               </div>
             </div>
           </div>
 
-          {vistaActiva === 'empleados' && (
-            <article className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
-
-              <div className="px-6 py-5">
-                <div className="mb-4 flex items-center gap-3 text-sm text-slate-500">
-                  <Clock3 size={16} />
-                  <span>{empleadosParaDistribuir.length} registros visibles</span>
-                </div>
-
-                {cargandoEmpleados ? (
-                  <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-6 py-10 text-center text-slate-500">
-                    Cargando empleados para distribuir...
-                  </div>
-                ) : errorEmpleados ? (
-                  <div className="rounded-2xl border border-amber-200 bg-amber-50 px-6 py-4 text-sm text-amber-800">
-                    {errorEmpleados}
-                  </div>
-                ) : empleadosParaDistribuir.length === 0 ? (
-                  <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-6 py-10 text-center text-slate-500">
-                    No se encontraron empleados para distribuir.
-                  </div>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="min-w-full text-left text-sm">
-                      <thead className="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-400">
-                        <tr>
-                          <th className="px-4 py-3">Documento</th>
-                          <th className="px-4 py-3">Apellidos</th>
-                          <th className="px-4 py-3">Nombres</th>
-                          <th className="px-4 py-3">Centro costo</th>
-                          <th className="px-4 py-3">Departamento</th>
-                          <th className="px-4 py-3">Cod. Distribución</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {empleadosParaDistribuir.map((empleado) => (
-                          <tr key={empleado.idEmpleado} className="align-top">
-                            <td className="px-4 py-3 font-semibold text-slate-700">{empleado.documento || '-'}</td>
-                            <td className="px-4 py-3 text-slate-600">{empleado.apellidos || '-'}</td>
-                            <td className="px-4 py-3 text-slate-600">{empleado.nombres || '-'}</td>
-                            <td className="px-4 py-3 text-slate-600">{empleado.centroCostoDescripcion || empleado.centroCostoCodigo || '-'}</td>
-                            <td className="px-4 py-3 text-slate-600">{empleado.departamentoDescripcion || empleado.departamentoCodigo || '-'}</td>
-                            <td className="px-4 py-3 text-slate-600">{empleado.codigoDistribucion || '-'}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            </article>
-          )}
-
-          {vistaActiva === 'centros' && (
+          {vistaActiva === 'plantillas' ? (
             <article className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
               <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-6 py-5">
                 <div className="flex items-center gap-3">
@@ -807,135 +640,109 @@ const ConfiguracionDistribucionView = () => {
                     <Building2 size={20} />
                   </div>
                   <div>
-                    <h2 className="text-lg font-bold text-slate-800">Centros de costo</h2>
-                    <p className="text-sm text-slate-500">Agrega, edita y elimina centros con porcentaje de distribución.</p>
+                    <h2 className="text-lg font-bold text-slate-800">Plantillas</h2>
+                    <p className="text-sm text-slate-500">Resumen flexible por plantilla y detalle de centros de costo.</p>
                   </div>
                 </div>
 
                 <button
                   type="button"
-                  onClick={abrirModalNuevoCentro}
+                  onClick={abrirModalNuevaPlantilla}
                   className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
                 >
                   <Plus size={16} />
-                  Añadir centro de costo
+                  Crear plantilla
                 </button>
               </div>
 
               <div className="space-y-5 px-6 py-5">
-
-                {errorDistribucionCentros ? (
+                {errorPlantillas ? (
                   <div className="rounded-2xl border border-amber-200 bg-amber-50 px-6 py-4 text-sm text-amber-800">
-                    {errorDistribucionCentros}
+                    {errorPlantillas}
                   </div>
                 ) : null}
 
-                {estadoGuardadoDistribucionCentros ? (
-                  <div
-                    className={
-                      estadoGuardadoDistribucionCentros.tipo === 'exito'
-                        ? 'rounded-2xl border border-emerald-200 bg-emerald-50 px-6 py-4 text-sm text-emerald-800'
-                        : 'rounded-2xl border border-rose-200 bg-rose-50 px-6 py-4 text-sm text-rose-800'
-                    }
-                  >
-                    {estadoGuardadoDistribucionCentros.mensaje}
-                  </div>
-                ) : null}
+                {renderEstado(estadoPlantillas)}
 
-                {cargandoCentros ? (
+                {cargandoPlantillas ? (
                   <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-6 py-10 text-center text-slate-500">
-                    Cargando centros de costo...
+                    Cargando plantillas...
                   </div>
-                ) : errorCentros ? (
-                  <div className="rounded-2xl border border-amber-200 bg-amber-50 px-6 py-4 text-sm text-amber-800">
-                    {errorCentros}
-                  </div>
-                ) : centrosCosto.length === 0 ? (
+                ) : plantillas.length === 0 ? (
                   <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-6 py-10 text-center text-slate-500">
-                    No se encontraron centros de costo.
+                    No hay plantillas creadas todavía.
                   </div>
                 ) : (
                   <div className="space-y-4">
-                    <div className="overflow-x-auto rounded-2xl border border-slate-100">
-                      <table className="min-w-full text-left text-sm">
-                        <thead className="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-400">
-                          <tr>
-                            <th className="px-4 py-3">Centro de costo</th>
-                            <th className="px-4 py-3">Porcentaje</th>
-                            <th className="px-4 py-3 text-right">Acciones</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100">
-                          {distribucionesTemporales.length === 0 ? (
-                            <tr>
-                              <td className="px-4 py-6 text-center text-slate-500" colSpan={3}>
-                                Todavía no has agregado centros de costo.
-                              </td>
-                            </tr>
-                          ) : (
-                            distribucionesTemporales.map((item) => (
-                              <tr key={item.centroCostoId}>
-                                <td className="px-4 py-3 text-slate-700">
-                                  <div className="font-semibold">{item.centroCostoNombre}</div>
-                                  <div className="text-xs text-slate-400">{item.centroCostoId}</div>
-                                </td>
-                                <td className="px-4 py-3 font-semibold text-slate-700">{item.porcentaje.toFixed(2)}%</td>
-                                <td className="px-4 py-3 text-right">
-                                  <div className="inline-flex gap-2">
-                                    <button
-                                      type="button"
-                                      onClick={() => abrirModalEditarCentro(item.centroCostoId)}
-                                      className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
-                                    >
-                                      <Pencil size={14} />
-                                      Editar
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => eliminarCentroTemporal(item.centroCostoId)}
-                                      className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
-                                    >
-                                      <Trash2 size={14} />
-                                      Eliminar
-                                    </button>
-                                  </div>
-                                </td>
-                              </tr>
-                            ))
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
+                    {plantillas.map((plantilla) => (
+                      <details key={plantilla.id} className="rounded-2xl border border-slate-200 bg-white">
+                        <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-3 px-4 py-4">
+                          <div>
+                            <div className="font-semibold text-slate-800">{plantilla.nombre}</div>
+                            <div className="text-xs text-slate-500">
+                              {plantilla.centros.length} centros configurados
+                            </div>
+                          </div>
 
-                    <div className="flex flex-wrap gap-3 text-sm text-slate-500">
-                      <span className="rounded-full bg-slate-100 px-3 py-1">Centros agregados: {distribucionesTemporales.length}</span>
-                      <span className="rounded-full bg-slate-100 px-3 py-1">Total: {totalDistribucion.toFixed(2)}%</span>
-                    </div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">
+                              Total: {plantilla.centros.reduce((sum, item) => sum + item.porcentaje, 0).toFixed(2)}%
+                            </span>
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.preventDefault();
+                                abrirModalEditarPlantilla(plantilla);
+                              }}
+                              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
+                            >
+                              <Settings size={14} />
+                              Editar
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.preventDefault();
+                                void eliminarPlantilla(plantilla.id);
+                              }}
+                              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
+                            >
+                              <Trash2 size={14} />
+                              Eliminar
+                            </button>
+                          </div>
+                        </summary>
 
-                    <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-slate-50 px-4 py-4">
-                      <div className="text-sm text-slate-600">
-                        {distribucionCentroCostoValida
-                          ? 'La configuracion esta lista para guardarse en la base de datos.'
-                          : 'La suma debe quedar exactamente en 100% para poder guardar.'}
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={guardarDistribucionCentroCosto}
-                        disabled={!distribucionCentroCostoValida || guardandoDistribucionCentros}
-                        className="inline-flex items-center gap-2 rounded-2xl bg-slate-800 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-900 disabled:cursor-not-allowed disabled:bg-slate-300"
-                      >
-                        <Save size={16} />
-                        {guardandoDistribucionCentros ? 'Guardando...' : 'Guardar configuración'}
-                      </button>
-                    </div>
+                        <div className="border-t border-slate-100 px-4 py-4">
+                          <div className="overflow-x-auto rounded-2xl border border-slate-100">
+                            <table className="min-w-full text-left text-sm">
+                              <thead className="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-400">
+                                <tr>
+                                  <th className="px-4 py-3">Centro de costo</th>
+                                  <th className="px-4 py-3">Porcentaje</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-100">
+                                {plantilla.centros.map((centro) => (
+                                  <tr key={`${plantilla.id}-${centro.centroCostoId}`}>
+                                    <td className="px-4 py-3 text-slate-700">
+                                      <div className="font-semibold">{centro.centroCostoNombre}</div>
+                                      <div className="text-xs text-slate-400">{centro.centroCostoId}</div>
+                                    </td>
+                                    <td className="px-4 py-3 font-semibold text-slate-700">{centro.porcentaje.toFixed(2)}%</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      </details>
+                    ))}
                   </div>
                 )}
               </div>
             </article>
-          )}
-
-          {vistaActiva === 'distribucion_empleados' && (
+          ) : (
             <article className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
               <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-6 py-5">
                 <div className="flex items-center gap-3">
@@ -943,129 +750,175 @@ const ConfiguracionDistribucionView = () => {
                     <Users size={20} />
                   </div>
                   <div>
-                    <h2 className="text-lg font-bold text-slate-800">Distribución por empleado</h2>
-                    <p className="text-sm text-slate-500">Asigna varios centros de costo y porcentajes a cada empleado seleccionado.</p>
+                    <h2 className="text-lg font-bold text-slate-800">Personas por plantilla</h2>
+                    <p className="text-sm text-slate-500">Selecciona plantilla y empleado para registrar la pertenencia.</p>
                   </div>
                 </div>
-
-                <button
-                  type="button"
-                  onClick={abrirModalNuevoEmpleado}
-                  className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
-                >
-                  <Plus size={16} />
-                  Agregar a distribución
-                </button>
               </div>
 
               <div className="space-y-5 px-6 py-5">
-
-                {errorDistribucionEmpleados ? (
+                {errorAsignaciones ? (
                   <div className="rounded-2xl border border-amber-200 bg-amber-50 px-6 py-4 text-sm text-amber-800">
-                    {errorDistribucionEmpleados}
+                    {errorAsignaciones}
                   </div>
                 ) : null}
 
-                {estadoGuardadoDistribucionEmpleados ? (
-                  <div
-                    className={
-                      estadoGuardadoDistribucionEmpleados.tipo === 'exito'
-                        ? 'rounded-2xl border border-emerald-200 bg-emerald-50 px-6 py-4 text-sm text-emerald-800'
-                        : 'rounded-2xl border border-rose-200 bg-rose-50 px-6 py-4 text-sm text-rose-800'
-                    }
-                  >
-                    {estadoGuardadoDistribucionEmpleados.mensaje}
+                {errorEmpleados ? (
+                  <div className="rounded-2xl border border-amber-200 bg-amber-50 px-6 py-4 text-sm text-amber-800">
+                    {errorEmpleados}
                   </div>
                 ) : null}
 
-                {cargandoDistribucionEmpleados ? (
+                {renderEstado(estadoAsignaciones)}
+
+                <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
+                  <div className="grid gap-4 md:grid-cols-[1fr_1.4fr_auto] md:items-end">
+                    <label className="space-y-2 text-sm font-medium text-slate-600">
+                      <span>Plantilla</span>
+                      <select
+                        value={plantillaAsignacionSeleccionada}
+                        onChange={(event) => {
+                          setPlantillaAsignacionSeleccionada(event.target.value);
+                          setEmpleadoAsignacionInput('');
+                        }}
+                        className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 outline-none transition focus:border-blue-400"
+                      >
+                        <option value="">Selecciona una plantilla</option>
+                        {plantillas.map((plantilla) => (
+                          <option key={plantilla.id} value={plantilla.id}>
+                            {plantilla.nombre}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="space-y-2 text-sm font-medium text-slate-600">
+                      <span>Empleado</span>
+                      <input
+                        type="text"
+                        list="distribucion-plantilla-empleados"
+                        placeholder={cargandoEmpleados ? 'Cargando empleados...' : 'Escribe cédula o nombre'}
+                        value={empleadoAsignacionInput}
+                        onChange={(event) => setEmpleadoAsignacionInput(event.target.value)}
+                        disabled={cargandoEmpleados}
+                        className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 outline-none transition focus:border-blue-400"
+                      />
+                      <datalist id="distribucion-plantilla-empleados">
+                        {empleadosDisponiblesParaAsignacion.map((empleado) => {
+                          const nombreCompleto = `${empleado.apellidos} ${empleado.nombres}`.trim();
+                          return (
+                            <option
+                              key={empleado.idEmpleado}
+                              value={`${empleado.documento || empleado.codigoEmpleado} - ${nombreCompleto}`}
+                            />
+                          );
+                        })}
+                      </datalist>
+                    </label>
+
+                    <button
+                      type="button"
+                      onClick={() => void agregarEmpleadoAPlantilla()}
+                      disabled={guardandoAsignacion || cargandoEmpleados || plantillas.length === 0}
+                      className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-emerald-300"
+                    >
+                      <Plus size={16} />
+                      {guardandoAsignacion ? 'Guardando...' : 'Agregar empleado'}
+                    </button>
+                  </div>
+                </div>
+
+                {cargandoAsignaciones ? (
                   <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-6 py-10 text-center text-slate-500">
-                    Cargando distribuciones por empleado...
+                    Cargando asignaciones de empleados...
                   </div>
-                ) : null}
+                ) : resumenAsignacionesPorPlantilla.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-6 py-10 text-center text-slate-500">
+                    No hay plantillas para mostrar asignaciones.
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {resumenAsignacionesPorPlantilla.map((plantilla) => (
+                      <details key={plantilla.id} className="rounded-2xl border border-slate-200 bg-white">
+                        <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-3 px-4 py-4">
+                          <div>
+                            <div className="font-semibold text-slate-800">{plantilla.nombre}</div>
+                            <div className="text-xs text-slate-500">
+                              {plantilla.empleados.length} empleado(s) en esta plantilla
+                            </div>
+                          </div>
 
-                {!cargandoDistribucionEmpleados ? (
-                  <div className="overflow-x-auto rounded-2xl border border-slate-100">
-                  <table className="min-w-full text-left text-sm">
-                    <thead className="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-400">
-                      <tr>
-                        <th className="px-4 py-3">Empleado</th>
-                        <th className="px-4 py-3">Centros de costo</th>
-                        <th className="px-4 py-3 text-right">Acciones</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {distribucionesEmpleadoTemporales.length === 0 ? (
-                        <tr>
-                          <td className="px-4 py-6 text-center text-slate-500" colSpan={3}>
-                            Todavía no has agregado empleados para distribuir.
-                          </td>
-                        </tr>
-                      ) : (
-                        distribucionesEmpleadoTemporales.map((item) => (
-                          <tr key={item.empleadoId} className="align-top">
-                            <td className="px-4 py-3 text-slate-700">
-                              <div className="font-semibold">{item.empleadoNombreCompleto}</div>
-                              <div className="text-xs text-slate-400">{item.empleadoDocumento}</div>
-                            </td>
-                            <td className="px-4 py-3">
-                              <div className="space-y-2">
-                                {item.centros.map((centro) => (
-                                  <div key={centro.centroCostoId} className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-600">
-                                    <span className="font-medium text-slate-700">{centro.centroCostoNombre}</span>
-                                    <span className="font-semibold text-slate-700">{centro.porcentaje.toFixed(2)}%</span>
-                                  </div>
-                                ))}
-                              </div>
-                            </td>
-                            <td className="px-4 py-3 text-right">
-                              <div className="inline-flex gap-2">
-                                <button
-                                  type="button"
-                                  onClick={() => abrirModalEditarEmpleado(item.empleadoId)}
-                                  className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
-                                >
-                                  <Pencil size={14} />
-                                  Editar
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => eliminarDistribucionEmpleado(item.empleadoId)}
-                                  className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
-                                >
-                                  <Trash2 size={14} />
-                                  Eliminar
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
+                          <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+                            {plantilla.empleados.length} asignados
+                          </span>
+                        </summary>
+
+                        <div className="border-t border-slate-100 px-4 py-4">
+                          <div className="overflow-x-auto rounded-2xl border border-slate-100">
+                            <table className="min-w-full text-left text-sm">
+                              <thead className="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-400">
+                                <tr>
+                                  <th className="px-4 py-3">Documento</th>
+                                  <th className="px-4 py-3">Empleado</th>
+                                  <th className="px-4 py-3 text-right">Acciones</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-100">
+                                {plantilla.empleados.length === 0 ? (
+                                  <tr>
+                                    <td className="px-4 py-6 text-center text-slate-500" colSpan={3}>
+                                      Esta plantilla aún no tiene empleados asignados.
+                                    </td>
+                                  </tr>
+                                ) : (
+                                  plantilla.empleados.map((empleado) => (
+                                    <tr key={`${plantilla.id}-${empleado.empleadoId}`}>
+                                      <td className="px-4 py-3 font-semibold text-slate-700">
+                                        {empleado.empleadoDocumento || '-'}
+                                      </td>
+                                      <td className="px-4 py-3 text-slate-700">{empleado.empleadoNombreCompleto}</td>
+                                      <td className="px-4 py-3 text-right">
+                                        <button
+                                          type="button"
+                                          onClick={() => void quitarEmpleadoDePlantilla(plantilla.id, empleado.empleadoId)}
+                                          className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
+                                        >
+                                          <Trash2 size={14} />
+                                          Quitar
+                                        </button>
+                                      </td>
+                                    </tr>
+                                  ))
+                                )}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      </details>
+                    ))}
                   </div>
-                ) : null}
+                )}
               </div>
             </article>
           )}
         </div>
       )}
 
-      {modalCentroAbierto ? (
+      {modalPlantillaAbierto ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 px-4 py-6 backdrop-blur-sm">
-          <div className="w-full max-w-2xl overflow-hidden rounded-3xl bg-white shadow-2xl">
+          <div className="flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
             <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-6 py-5">
               <div>
                 <h3 className="text-lg font-bold text-slate-800">
-                  {centroCostoEditandoId ? 'Editar centro de costo' : 'Agregar centro de costo'}
+                  {plantillaEditandoId ? 'Editar plantilla' : 'Crear plantilla'}
                 </h3>
                 <p className="mt-1 text-sm text-slate-500">
-                  Usa el mismo formulario para crear o actualizar un registro temporal.
+                  Define nombre, centros y porcentajes. El total debe ser 100%.
                 </p>
               </div>
               <button
                 type="button"
-                onClick={cerrarModalCentro}
+                onClick={cerrarModalPlantilla}
                 className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 text-slate-500 transition hover:bg-slate-50 hover:text-slate-700"
                 aria-label="Cerrar modal"
               >
@@ -1073,109 +926,28 @@ const ConfiguracionDistribucionView = () => {
               </button>
             </div>
 
-            <div className="space-y-5 px-6 py-6">
-              <div className="grid gap-4 md:grid-cols-[1.2fr_0.8fr] md:items-end">
-                <label className="space-y-2 text-sm font-medium text-slate-600">
-                  <span>Centro de costo</span>
-                  <select
-                    value={centroCostoSeleccionado}
-                    onChange={(event) => setCentroCostoSeleccionado(event.target.value)}
-                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 outline-none transition focus:border-blue-400"
-                  >
-                    <option value="">Selecciona un centro</option>
-                    {centrosCostoDisponibles.map((centro) => (
-                      <option key={centro.IDCENTROCOSTO} value={centro.IDCENTROCOSTO}>
-                        {centro.IDCENTROCOSTO} - {centro.CENTROCOSTO}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+            <div className="flex-1 min-h-0 space-y-6 overflow-y-auto px-6 py-6">
+              {errorCentros ? (
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 px-6 py-4 text-sm text-amber-800">
+                  {errorCentros}
+                </div>
+              ) : null}
 
+              <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-end">
                 <label className="space-y-2 text-sm font-medium text-slate-600">
-                  <span>Porcentaje de distribución</span>
+                  <span>Nombre de la plantilla</span>
                   <input
-                    type="number"
-                    min="0"
-                    max="100"
-                    step="0.01"
-                    value={porcentajeDistribucion}
-                    onChange={(event) => setPorcentajeDistribucion(event.target.value)}
+                    type="text"
+                    value={nombrePlantilla}
+                    onChange={(event) => setNombrePlantilla(event.target.value)}
                     className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 outline-none transition focus:border-blue-400"
-                    placeholder="0.00"
+                    placeholder="Ejemplo: Operaciones nocturnas"
                   />
-                </label>
-              </div>
-
-              <div className="flex flex-wrap items-center justify-end gap-3 border-t border-slate-100 pt-5">
-                <button
-                  type="button"
-                  onClick={cerrarModalCentro}
-                  className="inline-flex items-center justify-center rounded-2xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="button"
-                  onClick={guardarCentroTemporal}
-                  className="inline-flex items-center justify-center gap-2 rounded-2xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
-                >
-                  <Plus size={18} />
-                  {centroCostoEditandoId ? 'Actualizar centro' : 'Añadir centro'}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {modalEmpleadoAbierto ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 px-4 py-6 backdrop-blur-sm">
-          <div className="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
-            <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-6 py-5">
-              <div>
-                <h3 className="text-lg font-bold text-slate-800">
-                  {empleadoDistribucionEditandoId ? 'Editar distribución del empleado' : 'Agregar distribución por empleado'}
-                </h3>
-                <p className="mt-1 text-sm text-slate-500">
-                  Selecciona un empleado para distribuir y agrega uno o varios centros de costo con sus porcentajes.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={cerrarModalEmpleado}
-                className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 text-slate-500 transition hover:bg-slate-50 hover:text-slate-700"
-                aria-label="Cerrar modal"
-              >
-                <ChevronLeft size={18} className="rotate-90" />
-              </button>
-            </div>
-
-            <div className="flex-1 min-h-0 space-y-6 px-6 py-6">
-              <div className="grid gap-4 md:grid-cols-[1.3fr_0.7fr] md:items-end">
-                <label className="space-y-2 text-sm font-medium text-slate-600">
-                  <span>Empleado</span>
-                  <select
-                    value={empleadoSeleccionadoId}
-                    onChange={(event) => setEmpleadoSeleccionadoId(event.target.value)}
-                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 outline-none transition focus:border-blue-400"
-                  >
-                    <option value="">Selecciona un empleado a distribuir</option>
-                    {empleadosDisponiblesParaSelectorDistribucion.map((empleado) => (
-                      <option key={empleado.idEmpleado} value={empleado.idEmpleado}>
-                        {empleado.documento || empleado.codigoEmpleado} - {empleado.apellidos} {empleado.nombres}
-                      </option>
-                    ))}
-                  </select>
                 </label>
 
                 <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 text-sm text-slate-600">
                   <div className="font-semibold text-slate-700">Total acumulado</div>
-                  <div className="mt-1 text-lg font-bold text-slate-800">{totalDistribucionEmpleadoBorrador.toFixed(2)}%</div>
-                  <div className="mt-1 text-xs text-slate-500">
-                    {Math.abs(totalDistribucionEmpleadoBorrador - 100) > 0.01
-                      ? 'Debe sumar exactamente 100% antes de guardar.'
-                      : 'La distribución está lista para guardar.'}
-                  </div>
+                  <div className="mt-1 text-lg font-bold text-slate-800">{totalPlantillaBorrador.toFixed(2)}%</div>
                 </div>
               </div>
 
@@ -1183,12 +955,13 @@ const ConfiguracionDistribucionView = () => {
                 <label className="space-y-2 text-sm font-medium text-slate-600">
                   <span>Centro de costo</span>
                   <select
-                    value={centroCostoEmpleadoSeleccionado}
-                    onChange={(event) => setCentroCostoEmpleadoSeleccionado(event.target.value)}
+                    value={centroCostoSeleccionado}
+                    onChange={(event) => setCentroCostoSeleccionado(event.target.value)}
                     className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 outline-none transition focus:border-blue-400"
+                    disabled={cargandoCentros}
                   >
                     <option value="">Selecciona un centro</option>
-                    {centrosCostoDisponiblesEmpleado.map((centro) => (
+                    {centrosDisponiblesParaBorrador.map((centro) => (
                       <option key={centro.IDCENTROCOSTO} value={centro.IDCENTROCOSTO}>
                         {centro.IDCENTROCOSTO} - {centro.CENTROCOSTO}
                       </option>
@@ -1197,14 +970,14 @@ const ConfiguracionDistribucionView = () => {
                 </label>
 
                 <label className="space-y-2 text-sm font-medium text-slate-600">
-                  <span>Porcentaje de distribución</span>
+                  <span>Porcentaje</span>
                   <input
                     type="number"
                     min="0"
                     max="100"
                     step="0.01"
-                    value={porcentajeEmpleadoDistribucion}
-                    onChange={(event) => setPorcentajeEmpleadoDistribucion(event.target.value)}
+                    value={porcentajeCentroSeleccionado}
+                    onChange={(event) => setPorcentajeCentroSeleccionado(event.target.value)}
                     className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 outline-none transition focus:border-blue-400"
                     placeholder="0.00"
                   />
@@ -1212,15 +985,15 @@ const ConfiguracionDistribucionView = () => {
 
                 <button
                   type="button"
-                  onClick={agregarCentroEmpleadoBorrador}
+                  onClick={agregarCentroBorrador}
                   className="inline-flex items-center justify-center gap-2 rounded-2xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
                 >
-                  <Plus size={18} />
+                  <Plus size={16} />
                   Agregar centro
                 </button>
               </div>
 
-              <div className="max-h-[24vh] overflow-y-auto rounded-2xl border border-slate-100">
+              <div className="overflow-x-auto rounded-2xl border border-slate-100">
                 <table className="min-w-full text-left text-sm">
                   <thead className="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-400">
                     <tr>
@@ -1230,118 +1003,75 @@ const ConfiguracionDistribucionView = () => {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {centrosEmpleadoBorrador.length === 0 ? (
+                    {centrosPlantillaBorrador.length === 0 ? (
                       <tr>
                         <td className="px-4 py-6 text-center text-slate-500" colSpan={3}>
-                          Todavía no has agregado centros de costo para este empleado.
+                          Agrega al menos un centro de costo para esta plantilla.
                         </td>
                       </tr>
                     ) : (
-                      centrosEmpleadoBorrador.map((centro) => {
-                        const enEdicion = centro.centroCostoId === centroCostoEmpleadoEditandoId;
-
-                        return (
-                          <tr key={centro.centroCostoId}>
-                            <td className="px-4 py-3 text-slate-700">
-                              <div className="font-semibold">{centro.centroCostoNombre}</div>
-                              <div className="text-xs text-slate-400">{centro.centroCostoId}</div>
-                            </td>
-                            <td className="px-4 py-3">
-                              {enEdicion ? (
-                                <input
-                                  type="number"
-                                  min="0"
-                                  max="100"
-                                  step="0.01"
-                                  value={porcentajeCentroEmpleadoEditando}
-                                  onChange={(event) => setPorcentajeCentroEmpleadoEditando(event.target.value)}
-                                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 outline-none transition focus:border-blue-400"
-                                  placeholder="0.00"
-                                />
-                              ) : (
-                                <span className="font-semibold text-slate-700">{centro.porcentaje.toFixed(2)}%</span>
-                              )}
-                            </td>
-                            <td className="px-4 py-3 text-right">
-                              {enEdicion ? (
-                                <div className="inline-flex gap-2">
-                                  <button
-                                    type="button"
-                                    onClick={guardarCentroEmpleadoEditado}
-                                    className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
-                                  >
-                                    <Plus size={14} />
-                                    Guardar
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={cancelarEdicionCentroEmpleado}
-                                    className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
-                                  >
-                                    <ChevronLeft size={14} />
-                                    Cancelar
-                                  </button>
-                                </div>
-                              ) : (
-                                <div className="inline-flex gap-2">
-                                  <button
-                                    type="button"
-                                    onClick={() => editarCentroEmpleadoBorrador(centro.centroCostoId)}
-                                    className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
-                                  >
-                                    <Pencil size={14} />
-                                    Editar
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => eliminarCentroEmpleadoBorrador(centro.centroCostoId)}
-                                    className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
-                                  >
-                                    <Trash2 size={14} />
-                                    Eliminar
-                                  </button>
-                                </div>
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })
+                      centrosPlantillaBorrador.map((centro) => (
+                        <tr key={centro.centroCostoId}>
+                          <td className="px-4 py-3 text-slate-700">
+                            <div className="font-semibold">{centro.centroCostoNombre}</div>
+                            <div className="text-xs text-slate-400">{centro.centroCostoId}</div>
+                          </td>
+                          <td className="px-4 py-3">
+                            <input
+                              type="number"
+                              min="0"
+                              max="100"
+                              step="0.01"
+                              value={Number.isFinite(centro.porcentaje) ? centro.porcentaje : 0}
+                              onChange={(event) => actualizarPorcentajeCentroBorrador(centro.centroCostoId, event.target.value)}
+                              className="w-32 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 outline-none transition focus:border-blue-400"
+                            />
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            <button
+                              type="button"
+                              onClick={() => eliminarCentroBorrador(centro.centroCostoId)}
+                              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
+                            >
+                              <Trash2 size={14} />
+                              Eliminar
+                            </button>
+                          </td>
+                        </tr>
+                      ))
                     )}
                   </tbody>
                 </table>
               </div>
 
+              <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                {Math.abs(totalPlantillaBorrador - 100) > 0.01
+                  ? 'La suma de porcentajes debe ser exactamente 100% para guardar la plantilla.'
+                  : 'La suma está correcta. Puedes guardar la plantilla.'}
+              </div>
             </div>
 
             <div className="flex flex-wrap items-center justify-between gap-4 border-t border-slate-100 px-6 py-5">
-              <div className="min-h-[1.25rem] text-sm font-medium text-red-700">
-                {errorDistribucionEmpleados || (!empleadoDistribucionValida ? 'La suma de los porcentajes debe ser 100% antes de guardar.' : '')}
+              <div className="text-sm text-slate-500">
+                Plantilla: {centrosPlantillaBorrador.length} centro(s) configurado(s)
               </div>
 
               <div className="flex flex-wrap items-center justify-end gap-3">
                 <button
                   type="button"
-                  onClick={cerrarModalEmpleado}
+                  onClick={cerrarModalPlantilla}
                   className="inline-flex items-center justify-center rounded-2xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
                 >
                   Cancelar
                 </button>
                 <button
                   type="button"
-                  onClick={guardarEmpleadoTemporal}
-                  disabled={!empleadoDistribucionValida || guardandoDistribucionEmpleados}
-                  className={`inline-flex items-center justify-center gap-2 rounded-2xl px-5 py-3 text-sm font-semibold text-white shadow-sm transition ${
-                    empleadoDistribucionValida && !guardandoDistribucionEmpleados
-                      ? 'bg-emerald-600 hover:bg-emerald-700'
-                      : 'cursor-not-allowed bg-emerald-300'
-                  }`}
+                  onClick={() => void guardarPlantilla()}
+                  disabled={!plantillaValidaParaGuardar || guardandoPlantilla}
+                  className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-800 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-900 disabled:cursor-not-allowed disabled:bg-slate-300"
                 >
-                  <Plus size={18} />
-                  {guardandoDistribucionEmpleados
-                    ? 'Guardando...'
-                    : empleadoDistribucionEditandoId
-                      ? 'Actualizar distribución'
-                      : 'Guardar distribución'}
+                  <Save size={16} />
+                  {guardandoPlantilla ? 'Guardando...' : plantillaEditandoId ? 'Actualizar plantilla' : 'Guardar plantilla'}
                 </button>
               </div>
             </div>
