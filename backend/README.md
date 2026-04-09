@@ -1,4 +1,4 @@
-# Backend (Express + PostgreSQL)
+# Backend (Express + PostgreSQL + SQL Server opcional)
 
 Servicio API para:
 
@@ -12,6 +12,7 @@ Servicio API para:
 
 - Node.js 18+
 - PostgreSQL accesible desde la maquina local
+- SQL Server opcional (solo si deseas habilitar segunda conexion)
 
 ## Variables de entorno
 
@@ -21,6 +22,20 @@ Servicio API para:
 - `PGDATABASE` (default: `postgres`)
 - `PGUSER` (default: `postgres`)
 - `PGPASSWORD` (default: `postgres`)
+
+Variables opcionales para SQL Server (segunda conexion):
+
+- `SQLSERVER_ENABLED` (default: `false`)
+- `SQLSERVER_HOST` (default: `localhost`)
+- `SQLSERVER_PORT` (default: `1433`)
+- `SQLSERVER_DATABASE` (default: `master`)
+- `SQLSERVER_USER` (default: `sa`)
+- `SQLSERVER_PASSWORD`
+- `SQLSERVER_ENCRYPT` (default: `false`)
+- `SQLSERVER_TRUST_CERT` (default: `true`)
+- `SQLSERVER_POOL_MAX` (default: `10`)
+- `SQLSERVER_POOL_MIN` (default: `0`)
+- `SQLSERVER_POOL_IDLE_MS` (default: `30000`)
 
 ## Levantar backend
 
@@ -34,6 +49,12 @@ Salud del servicio:
 
 ```txt
 GET http://localhost:4000/health
+```
+
+Salud detallada de conexiones de base de datos:
+
+```txt
+GET http://localhost:4000/health/databases
 ```
 
 ## SQL y tablas

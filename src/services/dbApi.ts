@@ -11,6 +11,10 @@ export const DB_API_CATALOG = {
   descuentosExentosPagoSeguro: '/api/descuentos/exentos-pago-seguro',
   distribucionPlantillas: '/api/nomina/distribucion-plantillas',
   distribucionPlantillasEmpleados: '/api/nomina/distribucion-plantillas-empleados',
+  contabilidadPygEjecutarSp: '/api/contabilidad/pyg/ejecutar-sp',
+  contabilidadPygConfiguracionCuenta: '/api/contabilidad/pyg/configuracion-cuenta',
+  contabilidadPygRubrosPeriodo: '/api/contabilidad/pyg/rubros-periodo',
+  contabilidadPygSaveConfiguracionCentroCosto: '/api/contabilidad/pyg/configuracion-centro-costo',
 } as const;
 
 interface PeriodSummary {
@@ -129,6 +133,78 @@ const withDbContextError = async <T>(operation: () => Promise<T>, prefix: string
 };
 
 export const dbApi = {
+  contabilidad: {
+    pyg: {
+      getConfiguracionCuenta: async <T = unknown>(codigoCuenta: string): Promise<T> => {
+        return await withDbContextError(
+          async () => await listResource<T>(withQuery(DB_API_CATALOG.contabilidadPygConfiguracionCuenta, { codigoCuenta })),
+          'No se pudo cargar configuracion de cuenta de PyG',
+        );
+      },
+
+      getRubrosPeriodo: async <T = unknown>(payload: {
+        centroCosto: string;
+        periodo: string;
+        tipo: 'ingresos' | 'gastos';
+      }): Promise<T> => {
+        return await withDbContextError(
+          async () => await listResource<T>(withQuery(DB_API_CATALOG.contabilidadPygRubrosPeriodo, {
+            centroCosto: payload.centroCosto,
+            periodo: payload.periodo,
+            tipo: payload.tipo,
+          })),
+          'No se pudo cargar rubros de PyG por periodo',
+        );
+      },
+
+      saveConfiguracionCentroCosto: async <T = unknown>(payload: {
+        centroCosto: string;
+        periodo: string;
+        tipoCalculo?: string;
+        configuraciones: Array<{
+          codigo: string;
+          nombre: string;
+          grupoCuenta: string;
+          nombreGrupoCuenta: string;
+          tipoCalculo?: 'V' | 'P';
+          valor: number;
+        }>;
+      }): Promise<T> => {
+        return await withDbContextError(
+          async () => await saveResource<T>(DB_API_CATALOG.contabilidadPygSaveConfiguracionCentroCosto, payload),
+          'No se pudo guardar configuracion de PyG',
+        );
+      },
+
+      getConfiguracionCentroCosto: async <T = unknown>(payload: {
+        centroCosto: string;
+        periodo: string;
+        tipo: 'ingresos' | 'gastos';
+      }): Promise<T> => {
+        return await withDbContextError(
+          async () => await listResource<T>(withQuery(DB_API_CATALOG.contabilidadPygSaveConfiguracionCentroCosto, {
+            centroCosto: payload.centroCosto,
+            periodo: payload.periodo,
+            tipo: payload.tipo,
+          })),
+          'No se pudo cargar configuracion de PyG por centro de costo',
+        );
+      },
+
+      ejecutarSpFiltrado: async <T = unknown>(payload: {
+        centroCosto: string;
+        fechaIni: string;
+        fechaFin: string;
+        anio: string;
+      }): Promise<T> => {
+        return await withDbContextError(
+          async () => await saveResource<T>(DB_API_CATALOG.contabilidadPygEjecutarSp, payload),
+          'No se pudo ejecutar SP de PyG',
+        );
+      },
+    },
+  },
+
   humana: {
     saveData: async (anio: number, mes: string, empleados: HumanaEmployeeData[], archivo: string) => {
       return await withDbContextError(

@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, BarChart3, Building, Calendar, ChevronDown, Download, Edit, Filter, List, Pencil, Plus, Save, Settings2, Trash2, X } from 'lucide-react';
 import type { CuentaPyG, FiltrosPyG } from '../../types';
-import { INITIAL_PYG_INGRESOS, INITIAL_PYG_GASTOS, PARKING_LOTS } from '../../data/pygMockData';
+import { dbApi } from '../../services/dbApi';
+import { getNominaCostCenters, type NominaCostCenter } from '../../services/n8nApi';
 
 interface PyGReportTableProps {
     periodo: string;
@@ -14,9 +15,11 @@ interface PyGReportTableProps {
 
 interface PyGDetalleViewProps {
     periodo: string;
+    centroCosto: string;
     ingresosData: CuentaPyG[];
     gastosData: CuentaPyG[];
     onBack?: () => void;
+    onConfiguracionSaved?: () => void;
 }
 
 interface PyGCuentasViewProps {
@@ -28,6 +31,30 @@ interface PyGCuentasViewProps {
     setGastosData: (data: CuentaPyG[]) => void;
 }
 
+interface RubroPeriodoOption {
+    codigoCuenta: string;
+    nombreCuenta: string;
+    valor: number;
+}
+
+interface CuentaConfiguracionOption {
+    codigoAgrupacion: string;
+    nombreAgrupacion: string;
+    codigoGrupoCuenta: string;
+    nombreGrupoCuenta: string;
+    codigoCuenta: string;
+    nombreCuenta: string;
+}
+
+interface ConfiguracionCentroCostoOption {
+    codigo: string;
+    nombre: string;
+    grupoCuenta: string;
+    nombreGrupoCuenta: string;
+    tipoCalculo: 'V' | 'P';
+    valor: number;
+}
+
 export default function PyGView() {
     const [filtros, setFiltros] = useState<FiltrosPyG>({
         periodo: '2026-03',
@@ -35,12 +62,228 @@ export default function PyGView() {
         centroCosto: ''
     });
 
-    const [ingresosData] = useState<CuentaPyG[]>(INITIAL_PYG_INGRESOS);
-    const [gastosData] = useState<CuentaPyG[]>(INITIAL_PYG_GASTOS);
+    const [ingresosData, setIngresosData] = useState<CuentaPyG[]>([]);
+    const [gastosData, setGastosData] = useState<CuentaPyG[]>([]);
     const [showDetailView, setShowDetailView] = useState(false);
+    const [centrosCosto, setCentrosCosto] = useState<NominaCostCenter[]>([]);
+    const [loadingCentros, setLoadingCentros] = useState(false);
+    const [configRefreshKey, setConfigRefreshKey] = useState(0);
+
+    useEffect(() => {
+        setLoadingCentros(true);
+        getNominaCostCenters()
+            .then((data) => {
+                console.log('[PyG] Centros de costo cargados desde n8n:', data.length);
+                setCentrosCosto(data);
+            })
+            .catch((error) => {
+                console.error('[PyG] Error al cargar centros de costo desde n8n:', error instanceof Error ? error.message : error);
+            })
+            .finally(() => setLoadingCentros(false));
+    }, []);
 
     const isGeneralReport = filtros.tipoReporte === 'general';
     const canShowProjectReport = Boolean(filtros.periodo && filtros.tipoReporte === 'por_proyecto' && filtros.centroCosto);
+
+    const formatMonto = (val: number) => {
+        if (!Number.isFinite(val)) return '-';
+        if (val === 0) return '-';
+        return val.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    };
+
+    const mapRubrosToCuentas = (rubros: RubroPeriodoOption[], tipo: 'ingresos' | 'gastos'): CuentaPyG[] => {
+        const rowTipo: CuentaPyG['tipo'] = tipo === 'ingresos' ? 'cuenta' : 'grupo';
+
+        const mapped: CuentaPyG[] = rubros
+            .map((item) => ({
+                codigo: String(item.codigoCuenta || '').trim(),
+                descripcion: String(item.nombreCuenta || '').trim(),
+                tipo: rowTipo,
+                total: formatMonto(Number(item.valor || 0)),
+            }))
+            .filter((item) => item.codigo);
+
+        mapped.sort((a, b) => a.codigo.localeCompare(b.codigo, 'es', { numeric: true, sensitivity: 'base' }));
+        return mapped;
+    };
+
+    const mergeRubrosWithConfiguracion = (
+        baseRows: CuentaPyG[],
+        configuraciones: ConfiguracionCentroCostoOption[],
+        tipo: 'ingresos' | 'gastos',
+    ): CuentaPyG[] => {
+        const rowTipo: CuentaPyG['tipo'] = tipo === 'ingresos' ? 'cuenta' : 'grupo';
+        const mergedByCodigo = new Map<string, CuentaPyG>();
+
+        baseRows.forEach((row) => {
+            const codigo = String(row.codigo || '').trim();
+            if (!codigo) return;
+            mergedByCodigo.set(codigo, row);
+        });
+
+        configuraciones.forEach((item) => {
+            const codigo = String(item.grupoCuenta || '').trim();
+            if (!codigo) return;
+
+            const baseRow = mergedByCodigo.get(codigo);
+            mergedByCodigo.set(codigo, {
+                codigo,
+                descripcion: String(item.nombre || '').trim() || baseRow?.descripcion || '',
+                tipo: baseRow?.tipo || rowTipo,
+                total: formatMonto(Number(item.valor || 0)),
+            });
+        });
+
+        return Array.from(mergedByCodigo.values()).sort((a, b) =>
+            a.codigo.localeCompare(b.codigo, 'es', { numeric: true, sensitivity: 'base' })
+        );
+    };
+
+    useEffect(() => {
+        if (!canShowProjectReport) {
+            setIngresosData([]);
+            setGastosData([]);
+            return;
+        }
+
+        let isCancelled = false;
+
+        void Promise.all([
+            dbApi.contabilidad.pyg.getRubrosPeriodo<{
+                ok?: boolean;
+                rubros?: RubroPeriodoOption[];
+            }>({
+                centroCosto: filtros.centroCosto,
+                periodo: filtros.periodo,
+                tipo: 'ingresos',
+            }),
+            dbApi.contabilidad.pyg.getRubrosPeriodo<{
+                ok?: boolean;
+                rubros?: RubroPeriodoOption[];
+            }>({
+                centroCosto: filtros.centroCosto,
+                periodo: filtros.periodo,
+                tipo: 'gastos',
+            }),
+            dbApi.contabilidad.pyg.getConfiguracionCentroCosto<{
+                ok?: boolean;
+                configuraciones?: ConfiguracionCentroCostoOption[];
+            }>({
+                centroCosto: filtros.centroCosto,
+                periodo: filtros.periodo,
+                tipo: 'ingresos',
+            }),
+            dbApi.contabilidad.pyg.getConfiguracionCentroCosto<{
+                ok?: boolean;
+                configuraciones?: ConfiguracionCentroCostoOption[];
+            }>({
+                centroCosto: filtros.centroCosto,
+                periodo: filtros.periodo,
+                tipo: 'gastos',
+            }),
+        ])
+            .then(([ingresosRubrosResponse, gastosRubrosResponse, ingresosConfigResponse, gastosConfigResponse]) => {
+                if (isCancelled) return;
+
+                const ingresosRubros = Array.isArray(ingresosRubrosResponse?.rubros)
+                    ? ingresosRubrosResponse.rubros
+                    : [];
+                const gastosRubros = Array.isArray(gastosRubrosResponse?.rubros)
+                    ? gastosRubrosResponse.rubros
+                    : [];
+                const ingresosConfiguraciones = Array.isArray(ingresosConfigResponse?.configuraciones)
+                    ? ingresosConfigResponse.configuraciones
+                    : [];
+                const gastosConfiguraciones = Array.isArray(gastosConfigResponse?.configuraciones)
+                    ? gastosConfigResponse.configuraciones
+                    : [];
+
+                setIngresosData(
+                    mergeRubrosWithConfiguracion(
+                        mapRubrosToCuentas(ingresosRubros, 'ingresos'),
+                        ingresosConfiguraciones,
+                        'ingresos',
+                    ),
+                );
+                setGastosData(
+                    mergeRubrosWithConfiguracion(
+                        mapRubrosToCuentas(gastosRubros, 'gastos'),
+                        gastosConfiguraciones,
+                        'gastos',
+                    ),
+                );
+            })
+            .catch((error) => {
+                if (isCancelled) return;
+
+                setIngresosData([]);
+                setGastosData([]);
+                console.error('[PyG] Error al cargar rubros/configuraciones de PyG desde BD:', error instanceof Error ? error.message : error);
+            });
+
+        return () => {
+            isCancelled = true;
+        };
+    }, [canShowProjectReport, filtros.centroCosto, filtros.periodo, configRefreshKey]);
+
+    useEffect(() => {
+        if (filtros.tipoReporte !== 'por_proyecto') return;
+        if (!filtros.periodo || !filtros.centroCosto) return;
+
+        const [yearRaw, monthRaw] = filtros.periodo.split('-');
+        const year = Number(yearRaw || 0);
+        const month = Number(monthRaw || 0);
+
+        if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
+            console.warn('[PyG] Periodo invalido para ejecutar SP:', filtros.periodo);
+            return;
+        }
+
+        const firstDay = new Date(year, month - 1, 1);
+        const firstDayNextMonth = new Date(year, month, 1);
+        const toIsoLocal = (date: Date) => {
+            const y = date.getFullYear();
+            const m = String(date.getMonth() + 1).padStart(2, '0');
+            const d = String(date.getDate()).padStart(2, '0');
+            return `${y}-${m}-${d}`;
+        };
+
+        const fechaIni = toIsoLocal(firstDay);
+        const fechaFin = toIsoLocal(firstDayNextMonth);
+        const anio = String(year);
+        const centroCosto = String(filtros.centroCosto || '').trim();
+
+        console.log('[PyG] Ejecutando SP sp_reporte_pyg_filtrado con filtros', {
+            centroCosto,
+            fechaIni,
+            fechaFin,
+            anio,
+        });
+
+        void dbApi.contabilidad.pyg.ejecutarSpFiltrado({
+            centroCosto,
+            fechaIni,
+            fechaFin,
+            anio,
+        })
+            .then((response) => {
+                const estado = String((response as { message?: string; mode?: string })?.message || (response as { message?: string; mode?: string })?.mode || '').trim().toLowerCase();
+                if (estado === 'ya registrado') {
+                    console.log('[PyG] ya registrado');
+                    return;
+                }
+
+                if (estado === 'sp utilizado' || estado === 'sp_utilizado') {
+                    console.log('[PyG] sp utilizado');
+                    return;
+                }
+
+                console.log('[PyG] Estado de ejecucion:', response);
+            })
+            .catch((error) => {
+                console.error('[PyG] Error al ejecutar SP de PyG', error instanceof Error ? error.message : error);
+            });
+    }, [filtros.periodo, filtros.tipoReporte, filtros.centroCosto]);
 
     const handleDownloadExcel = () => {
         alert(`Descargando Excel para ${filtros.centroCosto || 'Reporte General'} - ${filtros.periodo}`);
@@ -56,9 +299,11 @@ export default function PyGView() {
             <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
                 <PyGDetalleView
                     periodo={filtros.periodo}
+                    centroCosto={filtros.centroCosto}
                     ingresosData={ingresosData}
                     gastosData={gastosData}
                     onBack={() => setShowDetailView(false)}
+                    onConfiguracionSaved={() => setConfigRefreshKey((prev) => prev + 1)}
                 />
             </div>
         );
@@ -121,14 +366,17 @@ export default function PyGView() {
                             <div className="relative">
                                 <Building className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
                                 <select
-                                    className="w-full pl-12 pr-10 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none text-slate-700 cursor-pointer font-medium focus:border-[#001F3F] transition-all"
+                                    className="w-full pl-12 pr-10 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none text-slate-700 cursor-pointer font-medium focus:border-[#001F3F] transition-all disabled:opacity-50"
                                     value={filtros.centroCosto}
                                     onChange={(e) => setFiltros({ ...filtros, centroCosto: e.target.value })}
+                                    disabled={loadingCentros}
                                 >
-                                    <option value="">Seleccione proyecto...</option>
-                                    {PARKING_LOTS.map((lot, idx) => (
-                                        <option key={idx} value={lot}>
-                                            {lot}
+                                    <option value="">
+                                        {loadingCentros ? 'Cargando...' : 'Seleccione proyecto...'}
+                                    </option>
+                                    {centrosCosto.map((cc) => (
+                                        <option key={cc.IDCENTROCOSTO} value={cc.IDCENTROCOSTO}>
+                                            {cc.CENTROCOSTO}
                                         </option>
                                     ))}
                                 </select>
@@ -143,7 +391,7 @@ export default function PyGView() {
             {canShowProjectReport ? (
                 <PyGReportTable
                     periodo={filtros.periodo}
-                    centroCosto={filtros.centroCosto || 'Consolidado General'}
+                    centroCosto={centrosCosto.find(cc => cc.IDCENTROCOSTO === filtros.centroCosto)?.CENTROCOSTO || filtros.centroCosto || 'Consolidado General'}
                     ingresosData={ingresosData}
                     gastosData={gastosData}
                     onViewDetail={handleViewDetail}
@@ -189,8 +437,8 @@ function PyGReportTable({
         return val.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     };
 
-    const ingresosValidos = ingresosData.filter(c => c.tipo === 'cuenta' && c.descripcion.trim() !== '');
-    const gastosValidos = gastosData.filter(c => c.tipo === 'grupo' && c.descripcion.trim() !== '');
+    const ingresosValidos = ingresosData.filter(c => c.tipo === 'cuenta');
+    const gastosValidos = gastosData.filter(c => c.tipo === 'grupo');
     const gastosOperacion = gastosValidos.filter(g => g.codigo !== '5.13');
     const gastosAdmin = gastosValidos.find(g => g.codigo === '5.13');
 
@@ -250,7 +498,7 @@ function PyGReportTable({
                         const valDic = valEne * 0.95;
                         return (
                             <tr key={idx} className="hover:bg-slate-50 transition-colors">
-                                <td className="px-4 py-2 border-b border-l border-slate-200 text-[11px] font-medium text-slate-700">{ingreso.descripcion}</td>
+                                <td className="px-4 py-2 border-b border-l border-slate-200 text-[11px] font-medium text-slate-700">{ingreso.descripcion || 'Sin nombre asignado'}</td>
                                 <CurrencyCell value={formatC(valDic)} />
                                 <CurrencyCell value={formatC(valEne)} />
                                 <td className="bg-white border-none"></td>
@@ -276,7 +524,7 @@ function PyGReportTable({
                         const valDic = valEne * 0.85;
                         return (
                             <tr key={idx} className="hover:bg-slate-50 transition-colors">
-                                <td className="px-4 py-2 border-b border-l border-slate-200 text-[11px] font-medium text-slate-700">{gasto.descripcion}</td>
+                                <td className="px-4 py-2 border-b border-l border-slate-200 text-[11px] font-medium text-slate-700">{gasto.descripcion || 'Sin nombre asignado'}</td>
                                 <CurrencyCell value={formatC(valDic)} />
                                 <CurrencyCell value={formatC(valEne)} />
                                 <td className="bg-white border-none"></td>
@@ -355,9 +603,11 @@ function PyGReportTable({
 
 function PyGDetalleView({
     periodo,
+    centroCosto,
     ingresosData,
     gastosData,
-    onBack
+    onBack,
+    onConfiguracionSaved
 }: PyGDetalleViewProps) {
     const [cuentasTipo, setCuentasTipo] = useState<'ingresos' | 'gastos' | null>(null);
     const [showConfigModal, setShowConfigModal] = useState(false);
@@ -367,7 +617,15 @@ function PyGDetalleView({
     const [originalTotalVal, setOriginalTotalVal] = useState(0);
     const [configAgrupaciones, setConfigAgrupaciones] = useState<Record<string, string>>({});
     const [configGrupos, setConfigGrupos] = useState<Record<string, string>>({});
+    const [configCuentas, setConfigCuentas] = useState<Record<string, string>>({});
+    const [tipoCalculoByRubro, setTipoCalculoByRubro] = useState<Record<string, 'V' | 'P'>>({});
     const [cuentasModalData, setCuentasModalData] = useState<CuentaPyG[]>([]);
+    const [configuracionByCodigoCuenta, setConfiguracionByCodigoCuenta] = useState<Record<string, CuentaConfiguracionOption>>({});
+    const [loadingConfiguracionByCodigoCuenta, setLoadingConfiguracionByCodigoCuenta] = useState<Record<string, boolean>>({});
+    const [rubrosPeriodo, setRubrosPeriodo] = useState<RubroPeriodoOption[]>([]);
+    const [loadingRubrosPeriodo, setLoadingRubrosPeriodo] = useState(false);
+    const [configuracionCentroCostoIngresos, setConfiguracionCentroCostoIngresos] = useState<ConfiguracionCentroCostoOption[]>([]);
+    const [configuracionCentroCostoGastos, setConfiguracionCentroCostoGastos] = useState<ConfiguracionCentroCostoOption[]>([]);
 
     const getFormattedPeriod = (p: string) => {
         if (!p) return 'Enero-2026';
@@ -384,18 +642,198 @@ function PyGDetalleView({
     };
 
     const formatC = (val: number) => {
-        if (val === 0) return '0,00';
         return val.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     };
 
-    const ingresosValidos = ingresosData.filter(c => c.tipo === 'cuenta' && c.descripcion.trim() !== '');
-    const gastosValidos = gastosData.filter(c => c.tipo === 'grupo' && c.descripcion.trim() !== '');
-    const cuentasData = cuentasTipo === 'ingresos' ? ingresosData : gastosData;
+    const applyConfiguracionDb = (baseData: CuentaPyG[], configuraciones: ConfiguracionCentroCostoOption[]) => {
+        const byGrupoCuenta = new Map<string, ConfiguracionCentroCostoOption>();
+        configuraciones.forEach((cfg) => {
+            const key = String(cfg.grupoCuenta || '').trim();
+            if (key) byGrupoCuenta.set(key, cfg);
+        });
+
+        return baseData.map((row) => {
+            if (row.tipo === 'titulo') return row;
+
+            const cfg = byGrupoCuenta.get(String(row.codigo || '').trim());
+
+            if (!cfg) {
+                return row;
+            }
+
+            const hasValor = cfg.valor !== null && cfg.valor !== undefined;
+            return {
+                ...row,
+                descripcion: String(cfg.nombre || '').trim() || row.descripcion,
+                total: hasValor ? formatC(Number(cfg.valor)) : row.total,
+            };
+        });
+    };
+
+    const detalleIngresosData = useMemo(
+        () => applyConfiguracionDb(ingresosData, configuracionCentroCostoIngresos),
+        [ingresosData, configuracionCentroCostoIngresos],
+    );
+
+    const detalleGastosData = useMemo(
+        () => applyConfiguracionDb(gastosData, configuracionCentroCostoGastos),
+        [gastosData, configuracionCentroCostoGastos],
+    );
+
+    const ingresosValidos = detalleIngresosData.filter(c => c.tipo === 'cuenta');
+    const gastosValidos = detalleGastosData.filter(c => c.tipo === 'grupo');
+    const cuentasData = cuentasTipo === 'ingresos' ? detalleIngresosData : detalleGastosData;
+
+    const configuracionActiva = cuentasTipo === 'ingresos'
+        ? configuracionCentroCostoIngresos
+        : configuracionCentroCostoGastos;
 
     useEffect(() => {
         if (!cuentasTipo) return;
-        setCuentasModalData([...(cuentasTipo === 'ingresos' ? ingresosData : gastosData)]);
-    }, [cuentasTipo, ingresosData, gastosData]);
+        setCuentasModalData([...(cuentasTipo === 'ingresos' ? detalleIngresosData : detalleGastosData)]);
+    }, [cuentasTipo, detalleIngresosData, detalleGastosData]);
+
+    useEffect(() => {
+        if (!periodo || !centroCosto) {
+            setConfiguracionCentroCostoIngresos([]);
+            setConfiguracionCentroCostoGastos([]);
+            return;
+        }
+
+        let isCancelled = false;
+
+        void Promise.all([
+            dbApi.contabilidad.pyg.getConfiguracionCentroCosto<{
+                ok?: boolean;
+                configuraciones?: ConfiguracionCentroCostoOption[];
+            }>({
+                centroCosto,
+                periodo,
+                tipo: 'ingresos',
+            }),
+            dbApi.contabilidad.pyg.getConfiguracionCentroCosto<{
+                ok?: boolean;
+                configuraciones?: ConfiguracionCentroCostoOption[];
+            }>({
+                centroCosto,
+                periodo,
+                tipo: 'gastos',
+            }),
+        ])
+            .then(([responseIngresos, responseGastos]) => {
+                if (isCancelled) return;
+
+                const ingresosRows = Array.isArray(responseIngresos?.configuraciones)
+                    ? responseIngresos.configuraciones
+                    : [];
+                const gastosRows = Array.isArray(responseGastos?.configuraciones)
+                    ? responseGastos.configuraciones
+                    : [];
+
+                setConfiguracionCentroCostoIngresos(ingresosRows);
+                setConfiguracionCentroCostoGastos(gastosRows);
+            })
+            .catch((error) => {
+                if (isCancelled) return;
+
+                setConfiguracionCentroCostoIngresos([]);
+                setConfiguracionCentroCostoGastos([]);
+                console.error('[PyG] Error al precargar configuracion persistida por centro de costo:', error instanceof Error ? error.message : error);
+            });
+
+        return () => {
+            isCancelled = true;
+        };
+    }, [periodo, centroCosto]);
+
+    useEffect(() => {
+        if (!cuentasTipo) return;
+
+        const nextConfigCuentas: Record<string, string> = {};
+        const nextTipoCalculo: Record<string, 'V' | 'P'> = {};
+
+        configuracionActiva.forEach((cfg) => {
+            const rubro = String(cfg.grupoCuenta || '').trim();
+            if (!rubro) return;
+            nextConfigCuentas[rubro] = String(cfg.codigo || '').trim();
+            nextTipoCalculo[rubro] = cfg.tipoCalculo === 'P' ? 'P' : 'V';
+        });
+
+        setConfigCuentas(nextConfigCuentas);
+        setTipoCalculoByRubro(nextTipoCalculo);
+    }, [cuentasTipo, configuracionActiva]);
+
+    useEffect(() => {
+        if (!cuentasTipo) return;
+        if (!periodo || !centroCosto) {
+            setRubrosPeriodo([]);
+            return;
+        }
+
+        setLoadingRubrosPeriodo(true);
+        void dbApi.contabilidad.pyg.getRubrosPeriodo<{
+            ok?: boolean;
+            rubros?: RubroPeriodoOption[];
+        }>({
+            centroCosto,
+            periodo,
+            tipo: cuentasTipo,
+        })
+            .then((response) => {
+                const items = Array.isArray(response?.rubros) ? response.rubros : [];
+                setRubrosPeriodo(items);
+                console.log('[PyG] Rubros por periodo cargados', {
+                    tipo: cuentasTipo,
+                    periodo,
+                    centroCosto,
+                    total: items.length,
+                });
+            })
+            .catch((error) => {
+                setRubrosPeriodo([]);
+                console.error('[PyG] Error al cargar rubros por periodo:', error instanceof Error ? error.message : error);
+            })
+            .finally(() => setLoadingRubrosPeriodo(false));
+    }, [cuentasTipo, periodo, centroCosto]);
+
+    const loadConfiguracionCuenta = (codigoCuenta: string, rubroCodigo: string) => {
+        const codigo = String(codigoCuenta || '').trim();
+        if (!codigo) return;
+
+        const cached = configuracionByCodigoCuenta[codigo];
+        if (cached) {
+            setConfigAgrupaciones(prev => ({ ...prev, [rubroCodigo]: cached.codigoAgrupacion }));
+            setConfigGrupos(prev => ({ ...prev, [rubroCodigo]: cached.codigoGrupoCuenta }));
+            return;
+        }
+
+        setLoadingConfiguracionByCodigoCuenta(prev => ({ ...prev, [codigo]: true }));
+        void dbApi.contabilidad.pyg.getConfiguracionCuenta<{
+            ok?: boolean;
+            codigoCuenta?: string;
+            configuracion?: CuentaConfiguracionOption | null;
+        }>(codigo)
+            .then((response) => {
+                const config = response?.configuracion;
+                if (!config) {
+                    setConfigAgrupaciones(prev => ({ ...prev, [rubroCodigo]: '' }));
+                    setConfigGrupos(prev => ({ ...prev, [rubroCodigo]: '' }));
+                    return;
+                }
+
+                setConfiguracionByCodigoCuenta(prev => ({ ...prev, [codigo]: config }));
+                setConfigAgrupaciones(prev => ({ ...prev, [rubroCodigo]: config.codigoAgrupacion }));
+                setConfigGrupos(prev => ({ ...prev, [rubroCodigo]: config.codigoGrupoCuenta }));
+            })
+            .catch((error) => {
+                setConfigAgrupaciones(prev => ({ ...prev, [rubroCodigo]: '' }));
+                setConfigGrupos(prev => ({ ...prev, [rubroCodigo]: '' }));
+                console.error('[PyG] Error al cargar configuracion de cuenta:', error instanceof Error ? error.message : error);
+            })
+            .finally(() => {
+                setLoadingConfiguracionByCodigoCuenta(prev => ({ ...prev, [codigo]: false }));
+            });
+    };
 
     const handleAddRubro = () => {
         if (!cuentasTipo) return;
@@ -418,6 +856,73 @@ function PyGDetalleView({
 
     const handleDeleteRubro = (codigo: string) => {
         setCuentasModalData(prev => prev.filter(c => c.codigo !== codigo));
+    };
+
+    const handleSaveConfiguracion = async () => {
+        if (!cuentasTipo || !centroCosto || !periodo) {
+            console.error('[PyG] No se puede guardar configuracion: centroCosto o periodo vacio');
+            return;
+        }
+
+        const configuraciones = cuentasModalData
+            .filter((item) => item.tipo !== 'titulo')
+            .map((item) => {
+                const codigoCuenta = String(configCuentas[item.codigo] || '').trim();
+                const codigoRubro = String(item.codigo || '').trim();
+                const codigoPersistencia = codigoCuenta || codigoRubro;
+                const configuracionCuenta = codigoCuenta ? configuracionByCodigoCuenta[codigoCuenta] : undefined;
+                return {
+                    codigo: codigoPersistencia,
+                    // El nombre debe salir del rubro editable en la fila.
+                    nombre: String(item.descripcion || '').trim(),
+                    // GRUPO_CUENTA debe representar la asignacion del rubro (4.1, 4.2, 4.3, etc.).
+                    grupoCuenta: codigoRubro,
+                    nombreGrupoCuenta: configuracionCuenta?.nombreGrupoCuenta || '',
+                    tipoCalculo: tipoCalculoByRubro[item.codigo] || 'V',
+                    valor: parseC(String(item.total || '0')),
+                };
+            })
+            .filter((item) => item.codigo);
+
+        if (configuraciones.length === 0) {
+            console.warn('[PyG] No hay configuraciones validas para guardar');
+            return;
+        }
+
+        try {
+            console.log('[PyG] Guardando configuracion Cfg_PyG_CentroCosto', {
+                centroCosto,
+                periodo,
+                total: configuraciones.length,
+            });
+
+            const response = await dbApi.contabilidad.pyg.saveConfiguracionCentroCosto({
+                centroCosto,
+                periodo,
+                configuraciones,
+            });
+
+            console.log('[PyG] Configuracion guardada correctamente', response);
+            const refresh = await dbApi.contabilidad.pyg.getConfiguracionCentroCosto<{
+                ok?: boolean;
+                configuraciones?: ConfiguracionCentroCostoOption[];
+            }>({
+                centroCosto,
+                periodo,
+                tipo: cuentasTipo,
+            });
+
+            const rows = Array.isArray(refresh?.configuraciones) ? refresh.configuraciones : [];
+            if (cuentasTipo === 'ingresos') {
+                setConfiguracionCentroCostoIngresos(rows);
+            } else {
+                setConfiguracionCentroCostoGastos(rows);
+            }
+            setShowConfigModal(false);
+            onConfiguracionSaved?.();
+        } catch (error) {
+            console.error('[PyG] Error al guardar configuracion de PyG', error instanceof Error ? error.message : error);
+        }
     };
 
     const GastoCard = ({ title, amount }: { title: string; amount: string }) => (
@@ -506,6 +1011,8 @@ function PyGDetalleView({
                                 <button
                                     onClick={() => {
                                         setCuentasModalData(prev => prev.map(c => c.codigo === editingCuentaValue.codigo ? { ...c, total: editingCuentaValue.total } : c));
+                                        const tipoCalculo = porcentajeAplicado && Number(porcentajeAplicado) > 0 ? 'P' : 'V';
+                                        setTipoCalculoByRubro(prev => ({ ...prev, [editingCuentaValue.codigo]: tipoCalculo }));
                                         setEditingCuentaValue(null);
                                     }}
                                     className="px-8 py-2.5 rounded-xl bg-[#001F3F] text-white font-bold hover:bg-blue-900 transition-all text-sm shadow-md active:scale-95 flex items-center gap-2"
@@ -548,11 +1055,18 @@ function PyGDetalleView({
                                             {cuentasModalData.filter(c => c.tipo !== 'titulo').map((cuenta, idx) => {
                                                 const currentAgrup = configAgrupaciones[cuenta.codigo] !== undefined
                                                     ? configAgrupaciones[cuenta.codigo]
-                                                    : (cuenta.codigo.startsWith('4.') ? 'ingreso_operacion' : '');
+                                                    : '';
 
                                                 const currentGrupo = configGrupos[cuenta.codigo] !== undefined
                                                     ? configGrupos[cuenta.codigo]
-                                                    : (cuenta.codigo.startsWith('4.') ? 'ventas_operacion' : '');
+                                                    : '';
+
+                                                const currentCuenta = configCuentas[cuenta.codigo] !== undefined
+                                                    ? configCuentas[cuenta.codigo]
+                                                    : '';
+
+                                                const configuracionCuenta = currentCuenta ? configuracionByCodigoCuenta[currentCuenta] : undefined;
+                                                const loadingConfiguracion = Boolean(currentCuenta && loadingConfiguracionByCodigoCuenta[currentCuenta]);
 
                                                 return (
                                                     <tr key={`${cuenta.codigo}-${idx}`} className="hover:bg-slate-50 transition-colors">
@@ -572,13 +1086,17 @@ function PyGDetalleView({
                                                             <div className="relative">
                                                                 <select
                                                                     value={currentAgrup}
-                                                                    onChange={(e) => setConfigAgrupaciones(prev => ({ ...prev, [cuenta.codigo]: e.target.value }))}
-                                                                    className="w-full pl-3 pr-8 py-2 bg-white border border-slate-200 rounded-lg outline-none text-slate-700 text-[11px] font-medium appearance-none focus:border-[#001F3F] cursor-pointer"
+                                                                    className="w-full pl-3 pr-8 py-2 bg-white border border-slate-200 rounded-lg outline-none text-slate-700 text-[11px] font-medium appearance-none focus:border-[#001F3F] cursor-pointer disabled:opacity-50"
+                                                                    disabled={!currentCuenta || loadingConfiguracion}
                                                                 >
-                                                                    <option value="">Seleccione agrupación...</option>
-                                                                    <option value="ingreso_operacion">INGRESO OPERACION</option>
-                                                                    <option value="ingreso_no_operaciones">INGRESO NO OPERACIONES</option>
-                                                                    <option value="costos_venta">COSTOS DE VENTA</option>
+                                                                    <option value="">
+                                                                        {!currentCuenta ? 'Seleccione cuenta primero...' : loadingConfiguracion ? 'Cargando...' : 'Sin agrupación configurada'}
+                                                                    </option>
+                                                                    {configuracionCuenta && (
+                                                                        <option value={configuracionCuenta.codigoAgrupacion}>
+                                                                            {`${configuracionCuenta.codigoAgrupacion} - ${configuracionCuenta.nombreAgrupacion}`}
+                                                                        </option>
+                                                                    )}
                                                                 </select>
                                                                 <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
                                                             </div>
@@ -587,28 +1105,16 @@ function PyGDetalleView({
                                                             <div className="relative">
                                                                 <select
                                                                     value={currentGrupo}
-                                                                    onChange={(e) => setConfigGrupos(prev => ({ ...prev, [cuenta.codigo]: e.target.value }))}
-                                                                    className="w-full pl-3 pr-8 py-2 bg-white border border-slate-200 rounded-lg outline-none text-slate-700 text-[11px] font-medium appearance-none focus:border-[#001F3F] cursor-pointer"
+                                                                    className="w-full pl-3 pr-8 py-2 bg-white border border-slate-200 rounded-lg outline-none text-slate-700 text-[11px] font-medium appearance-none focus:border-[#001F3F] cursor-pointer disabled:opacity-50"
+                                                                    disabled={!currentCuenta || loadingConfiguracion}
                                                                 >
-                                                                    {currentAgrup === 'ingreso_operacion' ? (
-                                                                        <>
-                                                                            <option value="">Seleccione grupo...</option>
-                                                                            <option value="ventas_operacion">VENTAS OPERACIÓN PARQUEADEROS</option>
-                                                                            <option value="ventas_equipos">VENTAS EQUIPOS Y SUMINISTROS</option>
-                                                                            <option value="venta_servicios">VENTAS DE SERVICIO</option>
-                                                                        </>
-                                                                    ) : currentAgrup === 'ingreso_no_operaciones' ? (
-                                                                        <>
-                                                                            <option value="">Seleccione grupo...</option>
-                                                                            <option value="otros_ingresos_gravados">OTROS INGRESOS GRAVADOS</option>
-                                                                            <option value="otros_ingresos_danos">OTROS INGRESOS DAÑOS TERCEROS</option>
-                                                                        </>
-                                                                    ) : (
-                                                                        <>
-                                                                            <option value="">Seleccione grupo...</option>
-                                                                            <option value="servicios_adicionales">SERVICIOS ADICIONALES</option>
-                                                                            <option value="nomina">NÓMINA Y RRHH</option>
-                                                                        </>
+                                                                    <option value="">
+                                                                        {!currentCuenta ? 'Seleccione cuenta primero...' : loadingConfiguracion ? 'Cargando...' : 'Sin grupo configurado'}
+                                                                    </option>
+                                                                    {configuracionCuenta && (
+                                                                        <option value={configuracionCuenta.codigoGrupoCuenta}>
+                                                                            {`${configuracionCuenta.codigoGrupoCuenta} - ${configuracionCuenta.nombreGrupoCuenta}`}
+                                                                        </option>
                                                                     )}
                                                                 </select>
                                                                 <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
@@ -616,11 +1122,38 @@ function PyGDetalleView({
                                                         </td>
                                                         <td className="px-4 py-2">
                                                             <div className="relative">
-                                                                <select className="w-full pl-3 pr-8 py-2 bg-white border border-slate-200 rounded-lg outline-none text-slate-700 text-[11px] font-medium appearance-none focus:border-[#001F3F] cursor-pointer">
-                                                                    <option value="">Seleccione cuenta...</option>
-                                                                    <option value="cuenta_1">Cuenta 1</option>
-                                                                    <option value="cuenta_2">Cuenta 2</option>
-                                                                    <option value="cuenta_3">Cuenta 3</option>
+                                                                <select
+                                                                    value={currentCuenta}
+                                                                    onChange={(e) => {
+                                                                        const selectedCodigoCuenta = e.target.value;
+                                                                        setConfigCuentas(prev => ({ ...prev, [cuenta.codigo]: selectedCodigoCuenta }));
+                                                                        setConfigAgrupaciones(prev => ({ ...prev, [cuenta.codigo]: '' }));
+                                                                        setConfigGrupos(prev => ({ ...prev, [cuenta.codigo]: '' }));
+
+                                                                        const selectedRubro = rubrosPeriodo.find((item) => item.codigoCuenta === selectedCodigoCuenta);
+                                                                        if (selectedRubro) {
+                                                                            setCuentasModalData(prev => prev.map((row) => (
+                                                                                row.codigo === cuenta.codigo
+                                                                                    ? { ...row, total: formatC(Number(selectedRubro.valor || 0)) }
+                                                                                    : row
+                                                                            )));
+                                                                        }
+
+                                                                        if (selectedCodigoCuenta) {
+                                                                            loadConfiguracionCuenta(selectedCodigoCuenta, cuenta.codigo);
+                                                                        }
+                                                                    }}
+                                                                    className="w-full pl-3 pr-8 py-2 bg-white border border-slate-200 rounded-lg outline-none text-slate-700 text-[11px] font-medium appearance-none focus:border-[#001F3F] cursor-pointer disabled:opacity-50"
+                                                                    disabled={loadingRubrosPeriodo}
+                                                                >
+                                                                    <option value="">
+                                                                        {loadingRubrosPeriodo ? 'Cargando...' : 'Seleccione cuenta...'}
+                                                                    </option>
+                                                                    {rubrosPeriodo.map((rubro) => (
+                                                                        <option key={rubro.codigoCuenta} value={rubro.codigoCuenta}>
+                                                                            {`${rubro.codigoCuenta} - ${rubro.nombreCuenta}`}
+                                                                        </option>
+                                                                    ))}
                                                                 </select>
                                                                 <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
                                                             </div>
@@ -663,7 +1196,7 @@ function PyGDetalleView({
 
                             <div className="p-6 border-t border-slate-100 bg-white flex justify-end gap-3 shrink-0">
                                 <button onClick={() => setShowConfigModal(false)} className="px-6 py-3 rounded-xl font-bold text-slate-500 hover:bg-slate-100 transition-colors text-sm">Cancelar</button>
-                                <button onClick={() => setShowConfigModal(false)} className="px-8 py-3 rounded-xl bg-[#001F3F] text-white font-bold hover:bg-blue-900 shadow-lg shadow-blue-900/20 active:scale-95 transition-all flex items-center gap-2 text-sm"><Save size={18} />Guardar Configuración</button>
+                                <button onClick={() => void handleSaveConfiguracion()} className="px-8 py-3 rounded-xl bg-[#001F3F] text-white font-bold hover:bg-blue-900 shadow-lg shadow-blue-900/20 active:scale-95 transition-all flex items-center gap-2 text-sm"><Save size={18} />Guardar Configuración</button>
                             </div>
                         </div>
                     </div>
@@ -770,8 +1303,8 @@ function PyGDetalleView({
                         {ingresosValidos.length > 0 ? (
                             ingresosValidos.map((ingreso) => (
                                 <div key={ingreso.codigo} className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
-                                    <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">{ingreso.descripcion}</p>
-                                    <p className="text-2xl font-black text-slate-800">$ {ingreso.total !== '-' ? ingreso.total : '0,00'}</p>
+                                    <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">{ingreso.descripcion || 'Sin nombre asignado'}</p>
+                                    <p className="text-2xl font-black text-slate-800">$ {ingreso.total !== '-' ? ingreso.total : '-'}</p>
                                 </div>
                             ))
                         ) : (
@@ -798,7 +1331,7 @@ function PyGDetalleView({
                             gastosValidos.map((gasto) => (
                                 <GastoCard
                                     key={gasto.codigo}
-                                    title={gasto.descripcion}
+                                    title={gasto.descripcion || 'Sin nombre asignado'}
                                     amount={gasto.total !== '-' ? gasto.total : '-'}
                                 />
                             ))

@@ -1,5 +1,5 @@
 import express from 'express';
-import { pool } from './db.js';
+import { checkPostgresConnection, checkSqlServerConnection, getSqlServerPool, isSqlServerEnabled, pool } from './db.js';
 
 const app = express();
 const PORT = Number(process.env.BACKEND_PORT || 4000);
@@ -468,10 +468,515 @@ const mapDbRowToEmpleado = (row) => ({
 
 app.get('/health', async (_req, res) => {
   try {
-    await pool.query('SELECT 1');
+    await checkPostgresConnection();
     res.status(200).json({ ok: true, service: 'humana-backend' });
   } catch (error) {
     res.status(500).json({ ok: false, error: error instanceof Error ? error.message : 'Unknown error' });
+  }
+});
+
+app.get('/health/databases', async (_req, res) => {
+  const status = {
+    postgresql: { ok: false },
+    sqlserver: { ok: false, enabled: isSqlServerEnabled() },
+  };
+
+  try {
+    await checkPostgresConnection();
+    status.postgresql = { ok: true };
+  } catch (error) {
+    status.postgresql = {
+      ok: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+
+  try {
+    const sqlStatus = await checkSqlServerConnection();
+    status.sqlserver = {
+      ...status.sqlserver,
+      ...sqlStatus,
+    };
+  } catch (error) {
+    status.sqlserver = {
+      ...status.sqlserver,
+      ok: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+
+  const ok = status.postgresql.ok && (status.sqlserver.ok || status.sqlserver.enabled === false);
+  res.status(ok ? 200 : 500).json({ ok, service: 'humana-backend', databases: status });
+});
+
+app.get('/api/contabilidad/pyg/configuracion-cuenta', async (req, res) => {
+  const codigoCuenta = String(req.query.codigoCuenta || '').trim();
+
+  if (!isSqlServerEnabled()) {
+    res.status(503).json({ error: 'SQL Server no esta habilitado. Configure SQLSERVER_ENABLED=true' });
+    return;
+  }
+
+  if (!codigoCuenta) {
+    res.status(400).json({ error: 'El parametro codigoCuenta es requerido' });
+    return;
+  }
+
+  try {
+    const sqlServerPool = await getSqlServerPool();
+
+    const result = await sqlServerPool
+      .request()
+      .input('codigo_cuenta', codigoCuenta)
+      .query(`
+        SELECT TOP (1)
+          CAST([codigoAgrupacion] AS varchar(50)) AS codigoAgrupacion,
+          CAST([nombreAgrupacion] AS varchar(255)) AS nombreAgrupacion,
+          CAST([codigoGrupoCuenta] AS varchar(50)) AS codigoGrupoCuenta,
+          CAST([nombreGrupoCuenta] AS varchar(255)) AS nombreGrupoCuenta,
+          CAST([codigoCuenta] AS varchar(50)) AS codigoCuenta,
+          CAST([nombreCuenta] AS varchar(255)) AS nombreCuenta
+        FROM [BONES].[dbo].[cuentaConfiguracionGrupoCC]
+        WHERE CAST([codigoCuenta] AS varchar(50)) = @codigo_cuenta
+      `);
+
+    const row = Array.isArray(result.recordset) && result.recordset.length > 0
+      ? result.recordset[0]
+      : null;
+
+    const configuracion = row
+      ? {
+          codigoAgrupacion: String(row.codigoAgrupacion || '').trim(),
+          nombreAgrupacion: String(row.nombreAgrupacion || '').trim(),
+          codigoGrupoCuenta: String(row.codigoGrupoCuenta || '').trim(),
+          nombreGrupoCuenta: String(row.nombreGrupoCuenta || '').trim(),
+          codigoCuenta: String(row.codigoCuenta || '').trim(),
+          nombreCuenta: String(row.nombreCuenta || '').trim(),
+        }
+      : null;
+
+    console.log('[GET /api/contabilidad/pyg/configuracion-cuenta] configuracion cargada', {
+      codigoCuenta,
+      encontrada: Boolean(configuracion),
+    });
+
+    res.status(200).json({ ok: true, codigoCuenta, configuracion });
+  } catch (error) {
+    console.error('[GET /api/contabilidad/pyg/configuracion-cuenta] Error:', error instanceof Error ? error.message : String(error));
+    res.status(500).json({
+      error: 'No se pudo cargar cuentaConfiguracionGrupoCC',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+app.get('/api/contabilidad/pyg/rubros-periodo', async (req, res) => {
+  const centroCostoRaw = String(req.query.centroCosto || '').trim();
+  const periodo = String(req.query.periodo || '').trim();
+  const tipo = String(req.query.tipo || '').trim().toLowerCase();
+
+  const centroCosto = centroCostoRaw.includes('-')
+    ? String(centroCostoRaw.split('-')[0] || '').trim()
+    : centroCostoRaw;
+
+  if (!isSqlServerEnabled()) {
+    res.status(503).json({ error: 'SQL Server no esta habilitado. Configure SQLSERVER_ENABLED=true' });
+    return;
+  }
+
+  if (!centroCosto || !periodo || (tipo !== 'ingresos' && tipo !== 'gastos')) {
+    res.status(400).json({ error: 'Los parametros centroCosto, periodo y tipo (ingresos|gastos) son requeridos' });
+    return;
+  }
+
+  const [anioRaw, mesRaw] = periodo.split('-');
+  const anio = String(anioRaw || '').trim();
+  const mes = String(mesRaw || '').trim();
+
+  if (!/^\d{4}$/.test(anio) || !/^\d{2}$/.test(mes)) {
+    res.status(400).json({ error: 'El parametro periodo debe tener formato YYYY-MM' });
+    return;
+  }
+
+  const codeRange = tipo === 'ingresos'
+    ? { min: 40, max: 49 }
+    : { min: 50, max: 59 };
+
+  try {
+    const sqlServerPool = await getSqlServerPool();
+
+    const result = await sqlServerPool
+      .request()
+      .input('cc_codigo', centroCosto)
+      .input('periodo', periodo)
+      .input('mes', mes)
+      .input('anio', anio)
+      .input('min_code', codeRange.min)
+      .input('max_code', codeRange.max)
+      .query(`
+        SELECT
+          CAST([cu_codigo] AS varchar(50)) AS cu_codigo,
+          MAX(CAST([cu_nombre] AS varchar(255))) AS cu_nombre,
+          SUM(TRY_CONVERT(decimal(18, 2), [Costo])) AS valor
+        FROM [BONES].[dbo].[PyG_Gastos_Data]
+        WHERE [cc_codigo] = @cc_codigo
+          AND (
+            CAST([periodo_Gasto] AS varchar(20)) = @periodo
+            OR (
+              RIGHT('0' + CAST([mes_Gasto] AS varchar(2)), 2) = @mes
+              AND CAST([AnioOrigen] AS varchar(4)) = @anio
+            )
+            OR CONVERT(varchar(7), TRY_CONVERT(date, [co_fecha]), 23) = @periodo
+          )
+          AND TRY_CONVERT(int, LEFT(CAST([cu_codigo] AS varchar(50)), 2)) BETWEEN @min_code AND @max_code
+        GROUP BY CAST([cu_codigo] AS varchar(50))
+        ORDER BY CAST([cu_codigo] AS varchar(50)) ASC
+      `);
+
+    const rubros = (Array.isArray(result.recordset) ? result.recordset : []).map((row) => ({
+      codigoCuenta: String(row.cu_codigo || '').trim(),
+      nombreCuenta: String(row.cu_nombre || '').trim(),
+      valor: Number(row.valor || 0),
+    }));
+
+    console.log('[GET /api/contabilidad/pyg/rubros-periodo] rubros cargados', {
+      centroCosto,
+      periodo,
+      tipo,
+      total: rubros.length,
+      rango: `${codeRange.min}-${codeRange.max}`,
+    });
+
+    res.status(200).json({ ok: true, centroCosto, periodo, tipo, rubros });
+  } catch (error) {
+    console.error('[GET /api/contabilidad/pyg/rubros-periodo] Error:', error instanceof Error ? error.message : String(error));
+    res.status(500).json({
+      error: 'No se pudo cargar rubros de PyG_Gastos_Data',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+app.post('/api/contabilidad/pyg/configuracion-centro-costo', async (req, res) => {
+  const centroCostoRaw = String(req.body?.centroCosto || '').trim();
+  const periodo = String(req.body?.periodo || '').trim();
+  const tipoCalculoRaw = String(req.body?.tipoCalculo || 'V').trim().toUpperCase();
+  const configuraciones = Array.isArray(req.body?.configuraciones) ? req.body.configuraciones : [];
+
+  const normalizeTipoCalculo = (value) => {
+    const normalized = String(value || '').trim().toUpperCase();
+    if (normalized === 'P') return 'P';
+    if (normalized === 'V') return 'V';
+    if (normalized === 'PORCENTAJE' || normalized === 'PERCENT' || normalized === '%') return 'P';
+    return 'V';
+  };
+
+  const tipoCalculoDefault = normalizeTipoCalculo(tipoCalculoRaw);
+
+  const centroCosto = centroCostoRaw.includes('-')
+    ? String(centroCostoRaw.split('-')[0] || '').trim()
+    : centroCostoRaw;
+
+  if (!isSqlServerEnabled()) {
+    res.status(503).json({ error: 'SQL Server no esta habilitado. Configure SQLSERVER_ENABLED=true' });
+    return;
+  }
+
+  if (!centroCosto || !periodo) {
+    res.status(400).json({ error: 'Los campos centroCosto y periodo son requeridos' });
+    return;
+  }
+
+  if (!/^\d{4}-\d{2}$/.test(periodo)) {
+    res.status(400).json({ error: 'El campo periodo debe tener formato YYYY-MM' });
+    return;
+  }
+
+  if (configuraciones.length === 0) {
+    res.status(400).json({ error: 'Debe enviar al menos una configuracion para guardar' });
+    return;
+  }
+
+  const fecha = `${periodo}-01`;
+
+  try {
+    const sqlServerPool = await getSqlServerPool();
+
+    let procesadas = 0;
+    for (const item of configuraciones) {
+      const codigo = String(item?.codigo || '').trim();
+      const nombre = String(item?.nombre || '').trim();
+      const grupoCuenta = String(item?.grupoCuenta || '').trim();
+      const nombreGrupoCuenta = String(item?.nombreGrupoCuenta || '').trim();
+      const valor = Number(item?.valor || 0);
+      const tipoCalculo = normalizeTipoCalculo(item?.tipoCalculo ?? tipoCalculoDefault);
+
+      if (!codigo) {
+        continue;
+      }
+
+      await sqlServerPool
+        .request()
+        .input('CENTRO_COSTO', centroCosto)
+        .input('FECHA', fecha)
+        .input('CODIGO', codigo)
+        .input('NOMBRE', nombre)
+        .input('GRUPO_CUENTA', grupoCuenta)
+        .input('NOMBRE_GRUPO_CUENTA', nombreGrupoCuenta)
+        .input('TIPO_CALCULO', tipoCalculo)
+        .input('VALOR', Number.isFinite(valor) ? valor : 0)
+        .query(`
+          IF EXISTS (
+            SELECT 1
+            FROM [BONES].[dbo].[Cfg_PyG_CentroCosto]
+            WHERE [CODIGO] = @CODIGO
+          )
+          BEGIN
+            UPDATE [BONES].[dbo].[Cfg_PyG_CentroCosto]
+            SET
+              [CENTRO_COSTO] = @CENTRO_COSTO,
+              [FECHA] = @FECHA,
+              [NOMBRE] = @NOMBRE,
+              [GRUPO_CUENTA] = @GRUPO_CUENTA,
+              [NOMBRE_GRUPO_CUENTA] = @NOMBRE_GRUPO_CUENTA,
+              [TIPO_CALCULO] = @TIPO_CALCULO,
+              [VALOR] = @VALOR
+            WHERE [CODIGO] = @CODIGO;
+          END
+          ELSE
+          BEGIN
+            INSERT INTO [BONES].[dbo].[Cfg_PyG_CentroCosto]
+            (
+              [CENTRO_COSTO],
+              [FECHA],
+              [CODIGO],
+              [NOMBRE],
+              [GRUPO_CUENTA],
+              [NOMBRE_GRUPO_CUENTA],
+              [TIPO_CALCULO],
+              [VALOR]
+            )
+            VALUES
+            (
+              @CENTRO_COSTO,
+              @FECHA,
+              @CODIGO,
+              @NOMBRE,
+              @GRUPO_CUENTA,
+              @NOMBRE_GRUPO_CUENTA,
+              @TIPO_CALCULO,
+              @VALOR
+            );
+          END
+        `);
+
+      procesadas += 1;
+    }
+
+    console.log('[POST /api/contabilidad/pyg/configuracion-centro-costo] configuraciones guardadas', {
+      centroCosto,
+      periodo,
+      totalRecibidas: configuraciones.length,
+      totalProcesadas: procesadas,
+    });
+
+    res.status(200).json({
+      ok: true,
+      centroCosto,
+      periodo,
+      totalRecibidas: configuraciones.length,
+      totalProcesadas: procesadas,
+    });
+  } catch (error) {
+    console.error('[POST /api/contabilidad/pyg/configuracion-centro-costo] Error:', error instanceof Error ? error.message : String(error));
+    res.status(500).json({
+      error: 'No se pudo guardar configuracion en Cfg_PyG_CentroCosto',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+app.get('/api/contabilidad/pyg/configuracion-centro-costo', async (req, res) => {
+  const centroCostoRaw = String(req.query.centroCosto || '').trim();
+  const periodo = String(req.query.periodo || '').trim();
+  const tipo = String(req.query.tipo || '').trim().toLowerCase();
+
+  const centroCosto = centroCostoRaw.includes('-')
+    ? String(centroCostoRaw.split('-')[0] || '').trim()
+    : centroCostoRaw;
+
+  if (!isSqlServerEnabled()) {
+    res.status(503).json({ error: 'SQL Server no esta habilitado. Configure SQLSERVER_ENABLED=true' });
+    return;
+  }
+
+  if (!centroCosto || !periodo || (tipo !== 'ingresos' && tipo !== 'gastos')) {
+    res.status(400).json({ error: 'Los parametros centroCosto, periodo y tipo (ingresos|gastos) son requeridos' });
+    return;
+  }
+
+  if (!/^\d{4}-\d{2}$/.test(periodo)) {
+    res.status(400).json({ error: 'El parametro periodo debe tener formato YYYY-MM' });
+    return;
+  }
+
+  const grupoPrefix = tipo === 'ingresos' ? '4.%' : '5.%';
+
+  try {
+    const sqlServerPool = await getSqlServerPool();
+
+    const result = await sqlServerPool
+      .request()
+      .input('CENTRO_COSTO', centroCosto)
+      .input('PERIODO', periodo)
+      .input('GRUPO_PREFIX', grupoPrefix)
+      .query(`
+        SELECT
+          CAST([CODIGO] AS varchar(50)) AS codigo,
+          CAST([NOMBRE] AS varchar(255)) AS nombre,
+          CAST([GRUPO_CUENTA] AS varchar(50)) AS grupoCuenta,
+          CAST([NOMBRE_GRUPO_CUENTA] AS varchar(255)) AS nombreGrupoCuenta,
+          CAST([TIPO_CALCULO] AS varchar(10)) AS tipoCalculo,
+          TRY_CONVERT(decimal(18, 4), [VALOR]) AS valor
+        FROM [BONES].[dbo].[Cfg_PyG_CentroCosto]
+        WHERE CAST([CENTRO_COSTO] AS varchar(50)) = @CENTRO_COSTO
+          AND CONVERT(varchar(7), TRY_CONVERT(date, [FECHA]), 23) = @PERIODO
+          AND CAST([GRUPO_CUENTA] AS varchar(50)) LIKE @GRUPO_PREFIX
+        ORDER BY CAST([GRUPO_CUENTA] AS varchar(50)) ASC
+      `);
+
+    const configuraciones = (Array.isArray(result.recordset) ? result.recordset : []).map((row) => ({
+      codigo: String(row.codigo || '').trim(),
+      nombre: String(row.nombre || '').trim(),
+      grupoCuenta: String(row.grupoCuenta || '').trim(),
+      nombreGrupoCuenta: String(row.nombreGrupoCuenta || '').trim(),
+      tipoCalculo: String(row.tipoCalculo || 'V').trim().toUpperCase() === 'P' ? 'P' : 'V',
+      valor: Number(row.valor || 0),
+    }));
+
+    console.log('[GET /api/contabilidad/pyg/configuracion-centro-costo] configuraciones cargadas', {
+      centroCosto,
+      periodo,
+      tipo,
+      total: configuraciones.length,
+    });
+
+    res.status(200).json({ ok: true, centroCosto, periodo, tipo, configuraciones });
+  } catch (error) {
+    console.error('[GET /api/contabilidad/pyg/configuracion-centro-costo] Error:', error instanceof Error ? error.message : String(error));
+    res.status(500).json({
+      error: 'No se pudo cargar configuracion en Cfg_PyG_CentroCosto',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+app.post('/api/contabilidad/pyg/ejecutar-sp', async (req, res) => {
+  const centroCostoRaw = String(req.body?.centroCosto || '').trim();
+  const fechaIni = String(req.body?.fechaIni || '').trim();
+  const fechaFin = String(req.body?.fechaFin || '').trim();
+  const anio = String(req.body?.anio || '').trim();
+  const periodoGasto = fechaIni.slice(0, 7);
+  const mesGasto = periodoGasto.includes('-') ? String(periodoGasto.split('-')[1] || '').trim() : '';
+
+  const centroCosto = centroCostoRaw.includes('-')
+    ? String(centroCostoRaw.split('-')[0] || '').trim()
+    : centroCostoRaw;
+
+  if (!isSqlServerEnabled()) {
+    res.status(503).json({ error: 'SQL Server no esta habilitado. Configure SQLSERVER_ENABLED=true' });
+    return;
+  }
+
+  if (!centroCosto || !fechaIni || !fechaFin || !anio) {
+    res.status(400).json({ error: 'Los campos centroCosto, fechaIni, fechaFin y anio son requeridos' });
+    return;
+  }
+
+  console.log('[POST /api/contabilidad/pyg/ejecutar-sp] Evaluando si el periodo ya esta registrado', {
+    centroCosto,
+    fechaIni,
+    fechaFin,
+    anio,
+    periodoGasto,
+    mesGasto,
+  });
+
+  try {
+    const sqlServerPool = await getSqlServerPool();
+
+    const existsResult = await sqlServerPool
+      .request()
+      .input('cc_codigo', centroCosto)
+      .input('fecha_ini', fechaIni)
+      .input('fecha_fin', fechaFin)
+      .input('periodo_gasto', periodoGasto)
+      .input('mes_gasto', mesGasto)
+      .input('anio_origen', anio)
+      .query(`
+        SELECT TOP (1) 1 AS existe
+        FROM [BONES].[dbo].[PyG_Gastos_Data]
+        WHERE cc_codigo = @cc_codigo
+          AND (
+            (TRY_CONVERT(date, co_fecha) >= TRY_CONVERT(date, @fecha_ini)
+              AND TRY_CONVERT(date, co_fecha) < TRY_CONVERT(date, @fecha_fin))
+            OR (CONVERT(varchar(7), TRY_CONVERT(date, co_fecha), 23) = @periodo_gasto)
+            OR (CAST(periodo_Gasto AS varchar(20)) = @periodo_gasto)
+            OR (
+              RIGHT('0' + CAST(mes_Gasto AS varchar(2)), 2) = @mes_gasto
+              AND CAST(AnioOrigen AS varchar(4)) = @anio_origen
+            )
+          )
+      `);
+
+    const yaRegistrado = Array.isArray(existsResult.recordset) && existsResult.recordset.length > 0;
+
+    if (yaRegistrado) {
+      console.log('[POST /api/contabilidad/pyg/ejecutar-sp] ya registrado', {
+        centroCosto,
+        periodoGasto,
+      });
+
+      res.status(200).json({
+        ok: true,
+        mode: 'ya_registrado',
+        message: 'ya registrado',
+      });
+      return;
+    }
+
+    const result = await sqlServerPool
+      .request()
+      .input('cc_codigo', centroCosto)
+      .input('fecha_ini', fechaIni)
+      .input('fecha_fin', fechaFin)
+      .input('anio', anio)
+      .execute('dbo.sp_reporte_pyg_filtrado');
+
+    const rowsCount = Array.isArray(result.recordset) ? result.recordset.length : 0;
+
+    console.log('[POST /api/contabilidad/pyg/ejecutar-sp] sp utilizado', {
+      centroCosto,
+      fechaIni,
+      fechaFin,
+      anio,
+      returnValue: result.returnValue,
+      rowsCount,
+    });
+
+    res.status(200).json({
+      ok: true,
+      mode: 'sp_utilizado',
+      message: 'sp utilizado',
+      returnValue: result.returnValue,
+      rowsCount,
+    });
+  } catch (error) {
+    console.error('[POST /api/contabilidad/pyg/ejecutar-sp] Error al ejecutar SP:', error instanceof Error ? error.message : String(error));
+    res.status(500).json({
+      error: 'No se pudo ejecutar sp_reporte_pyg_filtrado',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
   }
 });
 
@@ -1740,6 +2245,15 @@ app.delete('/api/nomina/distribucion-plantillas-empleados/:plantillaId/:empleado
 
 const startServer = async () => {
   try {
+    await checkPostgresConnection();
+
+    if (isSqlServerEnabled()) {
+      await checkSqlServerConnection();
+      console.log('Conexion SQL Server OK');
+    } else {
+      console.log('SQL Server deshabilitado (SQLSERVER_ENABLED=false)');
+    }
+
     await ensureHumanaCedulaColumn();
     await ensureDescuentosTable();
     await ensureExentosPagoSeguroTable();
