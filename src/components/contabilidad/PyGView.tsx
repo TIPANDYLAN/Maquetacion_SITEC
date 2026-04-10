@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, BarChart3, Building, Calendar, ChevronDown, Download, Edit, Filter, List, Loader2, Pencil, Plus, Save, Settings2, Trash2, X } from 'lucide-react';
+import ExcelJS from 'exceljs';
 import type { CuentaPyG, FiltrosPyG } from '../../types';
 import { dbApi } from '../../services/dbApi';
 import { getNominaCostCenters, type NominaCostCenter } from '../../services/n8nApi';
@@ -470,8 +471,134 @@ export default function PyGView() {
         };
     }, [canShowReport, centroCostoEfectivo, filtros.periodo, configRefreshKey]);
 
-    const handleDownloadExcel = () => {
-        alert(`Descargando Excel para ${centroCostoEfectivo || 'Reporte General'} - ${filtros.periodo}`);
+    const handleDownloadExcel = async () => {
+        const parseC = (val: string) => {
+            if (!val || val === '-') return 0;
+            return parseFloat(String(val).replace(/\./g, '').replace(',', '.'));
+        };
+
+        const formatMontoExcel = (val: number) => {
+            if (!Number.isFinite(val) || val === 0) return '-';
+            return val.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        };
+
+        const currentDate = new Date();
+        const [yearRaw, monthRaw] = String(filtros.periodo || '').split('-');
+        const periodYear = Number(yearRaw || currentDate.getFullYear());
+        const periodMonth = Number(monthRaw || (currentDate.getMonth() + 1));
+
+        const fechaActual = new Date(
+            Number.isInteger(periodYear) ? periodYear : currentDate.getFullYear(),
+            Number.isInteger(periodMonth) ? periodMonth - 1 : currentDate.getMonth(),
+            1,
+        );
+        const fechaAnterior = new Date(fechaActual.getFullYear(), fechaActual.getMonth() - 1, 1);
+
+        const labelActual = fechaActual.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' }).toUpperCase();
+        const labelAnterior = fechaAnterior.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' }).toUpperCase();
+
+        const ingresosActual = ingresosData.filter(c => c.tipo === 'cuenta');
+        const ingresosAnterior = ingresosPreviousData.filter(c => c.tipo === 'cuenta');
+        const gastosActual = gastosData.filter(c => c.tipo === 'grupo');
+        const gastosAnterior = gastosPreviousData.filter(c => c.tipo === 'grupo');
+
+        const ingresosAnteriorByCodigo = new Map<string, CuentaPyG>();
+        ingresosAnterior.forEach((r) => ingresosAnteriorByCodigo.set(r.codigo, r));
+
+        const gastosAnteriorByCodigo = new Map<string, CuentaPyG>();
+        gastosAnterior.forEach((r) => gastosAnteriorByCodigo.set(r.codigo, r));
+
+        const workbook = new ExcelJS.Workbook();
+        const worksheet = workbook.addWorksheet('PyG');
+
+        worksheet.columns = [
+            { header: 'CODIGO', key: 'codigo', width: 14 },
+            { header: 'RUBRO', key: 'rubro', width: 48 },
+            { header: labelAnterior, key: 'prev', width: 20 },
+            { header: labelActual, key: 'curr', width: 20 },
+            { header: 'ACUMULADO', key: 'acum', width: 20 },
+        ];
+
+        const headerRow = worksheet.getRow(1);
+        headerRow.font = { bold: true, size: 11 };
+        headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1C2938' } };
+        headerRow.alignment = { horizontal: 'center', vertical: 'middle' };
+        headerRow.eachCell((cell) => {
+            cell.font = { color: { argb: 'FFFFFFFF' }, bold: true, size: 11 };
+            cell.border = { top: { style: 'thin' }, bottom: { style: 'thin' }, left: { style: 'thin' }, right: { style: 'thin' } };
+        });
+
+        const addSectionTitle = (title: string) => {
+            const row = worksheet.addRow(['', title, '', '', '']);
+            row.font = { bold: true, size: 11 };
+            row.getCell(2).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2E8F0' } };
+            row.eachCell((cell) => {
+                cell.border = { top: { style: 'thin' }, bottom: { style: 'thin' }, left: { style: 'thin' }, right: { style: 'thin' } };
+            });
+        };
+
+        const addDataRow = (codigo: string, rubro: string, prev: number, curr: number, isTotal = false) => {
+            const row = worksheet.addRow([
+                codigo,
+                rubro,
+                formatMontoExcel(prev),
+                formatMontoExcel(curr),
+                formatMontoExcel(prev + curr),
+            ]);
+            row.eachCell((cell, idx) => {
+                cell.border = { top: { style: 'thin' }, bottom: { style: 'thin' }, left: { style: 'thin' }, right: { style: 'thin' } };
+                if (idx > 2) cell.alignment = { horizontal: 'right', vertical: 'middle' };
+                if (isTotal) cell.font = { bold: true };
+            });
+            if (isTotal) {
+                row.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } };
+                row.getCell(2).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } };
+            }
+        };
+
+        addSectionTitle('INGRESOS');
+        ingresosActual.forEach((item) => {
+            const curr = parseC(item.total);
+            const prev = parseC(ingresosAnteriorByCodigo.get(item.codigo)?.total || '-');
+            addDataRow(item.codigo, item.descripcion || 'Sin nombre asignado', prev, curr);
+        });
+
+        const totalIngPrev = ingresosAnterior.reduce((sum, item) => sum + parseC(item.total), 0);
+        const totalIngCurr = ingresosActual.reduce((sum, item) => sum + parseC(item.total), 0);
+        addDataRow('', 'TOTAL INGRESOS', totalIngPrev, totalIngCurr, true);
+
+        worksheet.addRow(['', '', '', '', '']);
+
+        addSectionTitle('GASTOS');
+        gastosActual.forEach((item) => {
+            const curr = parseC(item.total);
+            const prev = parseC(gastosAnteriorByCodigo.get(item.codigo)?.total || '-');
+            addDataRow(item.codigo, item.descripcion || 'Sin nombre asignado', prev, curr);
+        });
+
+        const totalGasPrev = gastosAnterior.reduce((sum, item) => sum + parseC(item.total), 0);
+        const totalGasCurr = gastosActual.reduce((sum, item) => sum + parseC(item.total), 0);
+        addDataRow('', 'TOTAL GASTOS', totalGasPrev, totalGasCurr, true);
+
+        worksheet.addRow(['', '', '', '', '']);
+        addDataRow('', 'UTILIDAD / PERDIDA', totalIngPrev - totalGasPrev, totalIngCurr - totalGasCurr, true);
+
+        const nombreCentro = isGeneralReport
+            ? 'Consolidado_General'
+            : (centrosCosto.find(cc => cc.IDCENTROCOSTO === centroCostoEfectivo)?.CENTROCOSTO || centroCostoEfectivo || 'Proyecto');
+        const fileName = `PyG_${String(nombreCentro).replace(/\s+/g, '_')}_${filtros.periodo}.xlsx`;
+        const buffer = await workbook.xlsx.writeBuffer();
+        const blob = new Blob([buffer], {
+            type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = fileName;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
     };
 
     const handleViewDetail = () => {
