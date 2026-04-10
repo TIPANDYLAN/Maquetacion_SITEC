@@ -1,35 +1,50 @@
 import pg from 'pg';
 import sql from 'mssql';
 import * as dotenv from 'dotenv';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-dotenv.config();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const projectRoot = path.resolve(__dirname, '..');
+
+// Carga .env por ruta absoluta para evitar problemas cuando el backend se ejecuta desde otra carpeta.
+dotenv.config({ path: path.join(projectRoot, '.env') });
+dotenv.config({ path: path.join(projectRoot, '.env.local'), override: true });
+
+const envValue = (name, fallback = '') => {
+  const value = process.env[name];
+  if (typeof value !== 'string') return fallback;
+  const trimmed = value.trim();
+  return trimmed === '' ? fallback : trimmed;
+};
 
 const { Pool } = pg;
 
 export const pool = new Pool({
-  host: process.env.PGHOST || 'localhost',
-  port: Number(process.env.PGPORT || 5432),
-  database: process.env.PGDATABASE || 'postgres',
-  user: process.env.PGUSER || 'postgres',
-  password: process.env.PGPASSWORD || 'postgres',
+  host: envValue('PGHOST', 'localhost'),
+  port: Number(envValue('PGPORT', '5432')),
+  database: envValue('PGDATABASE', 'postgres'),
+  user: envValue('PGUSER', 'postgres'),
+  password: envValue('PGPASSWORD', 'postgres'),
 });
 
-const SQLSERVER_ENABLED = String(process.env.SQLSERVER_ENABLED || 'false').toLowerCase() === 'true';
+const SQLSERVER_ENABLED = envValue('SQLSERVER_ENABLED', 'false').toLowerCase() === 'true';
 
 const SQLSERVER_CONFIG = {
-  server: process.env.SQLSERVER_HOST || 'localhost',
-  port: Number(process.env.SQLSERVER_PORT || 1433),
-  database: process.env.SQLSERVER_DATABASE || 'master',
-  user: process.env.SQLSERVER_USER || 'sa',
-  password: process.env.SQLSERVER_PASSWORD || '',
+  server: envValue('SQLSERVER_HOST', 'localhost'),
+  port: Number(envValue('SQLSERVER_PORT', '1433')),
+  database: envValue('SQLSERVER_DATABASE', 'master'),
+  user: envValue('SQLSERVER_USER', 'sa'),
+  password: envValue('SQLSERVER_PASSWORD', ''),
   options: {
-    encrypt: String(process.env.SQLSERVER_ENCRYPT || 'false').toLowerCase() === 'true',
-    trustServerCertificate: String(process.env.SQLSERVER_TRUST_CERT || 'true').toLowerCase() === 'true',
+    encrypt: envValue('SQLSERVER_ENCRYPT', 'false').toLowerCase() === 'true',
+    trustServerCertificate: envValue('SQLSERVER_TRUST_CERT', 'true').toLowerCase() === 'true',
   },
   pool: {
-    max: Number(process.env.SQLSERVER_POOL_MAX || 10),
-    min: Number(process.env.SQLSERVER_POOL_MIN || 0),
-    idleTimeoutMillis: Number(process.env.SQLSERVER_POOL_IDLE_MS || 30000),
+    max: Number(envValue('SQLSERVER_POOL_MAX', '10')),
+    min: Number(envValue('SQLSERVER_POOL_MIN', '0')),
+    idleTimeoutMillis: Number(envValue('SQLSERVER_POOL_IDLE_MS', '30000')),
   },
 };
 
