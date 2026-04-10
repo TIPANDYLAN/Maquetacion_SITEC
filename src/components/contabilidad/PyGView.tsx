@@ -18,6 +18,8 @@ interface PyGDetalleViewProps {
     centroCosto: string;
     ingresosData: CuentaPyG[];
     gastosData: CuentaPyG[];
+    ingresosBaseCuentaMap: Record<string, string>;
+    gastosBaseCuentaMap: Record<string, string>;
     onBack?: () => void;
     onConfiguracionSaved?: () => void;
 }
@@ -68,6 +70,8 @@ export default function PyGView() {
     const [centrosCosto, setCentrosCosto] = useState<NominaCostCenter[]>([]);
     const [loadingCentros, setLoadingCentros] = useState(false);
     const [configRefreshKey, setConfigRefreshKey] = useState(0);
+    const [ingresosBaseCuentaMap, setIngresosBaseCuentaMap] = useState<Record<string, string>>({});
+    const [gastosBaseCuentaMap, setGastosBaseCuentaMap] = useState<Record<string, string>>({});
 
     useEffect(() => {
         setLoadingCentros(true);
@@ -91,28 +95,48 @@ export default function PyGView() {
         return val.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     };
 
-    const mapRubrosToCuentas = (rubros: RubroPeriodoOption[], tipo: 'ingresos' | 'gastos'): CuentaPyG[] => {
+    const buildBaseRubros = (rubros: RubroPeriodoOption[], tipo: 'ingresos' | 'gastos') => {
         const rowTipo: CuentaPyG['tipo'] = tipo === 'ingresos' ? 'cuenta' : 'grupo';
+        const prefix = tipo === 'ingresos' ? '4' : '5';
 
-        const mapped: CuentaPyG[] = rubros
-            .map((item) => ({
-                codigo: String(item.codigoCuenta || '').trim(),
+        const sortedRubros = [...rubros].sort((a, b) =>
+            String(a.codigoCuenta || '').localeCompare(String(b.codigoCuenta || ''), 'es', {
+                numeric: true,
+                sensitivity: 'base',
+            }),
+        );
+
+        const cuentaToRubroCodigo = new Map<string, string>();
+        const rows: CuentaPyG[] = sortedRubros.map((item, index) => {
+            const rubroCodigo = `${prefix}.${index + 1}`;
+            const cuentaCodigo = String(item.codigoCuenta || '').trim();
+            if (cuentaCodigo) {
+                cuentaToRubroCodigo.set(cuentaCodigo, rubroCodigo);
+            }
+
+            return {
+                codigo: rubroCodigo,
                 descripcion: String(item.nombreCuenta || '').trim(),
                 tipo: rowTipo,
                 total: formatMonto(Number(item.valor || 0)),
-            }))
-            .filter((item) => item.codigo);
+            };
+        });
 
-        mapped.sort((a, b) => a.codigo.localeCompare(b.codigo, 'es', { numeric: true, sensitivity: 'base' }));
-        return mapped;
+        return {
+            rows,
+            cuentaToRubroCodigo,
+        };
     };
 
     const mergeRubrosWithConfiguracion = (
         baseRows: CuentaPyG[],
+        cuentaToRubroCodigo: Map<string, string>,
         configuraciones: ConfiguracionCentroCostoOption[],
         tipo: 'ingresos' | 'gastos',
     ): CuentaPyG[] => {
         const rowTipo: CuentaPyG['tipo'] = tipo === 'ingresos' ? 'cuenta' : 'grupo';
+        const prefix = tipo === 'ingresos' ? '4' : '5';
+        const rubroPattern = new RegExp(`^${prefix}\\.\\d+$`);
         const mergedByCodigo = new Map<string, CuentaPyG>();
 
         baseRows.forEach((row) => {
@@ -122,14 +146,28 @@ export default function PyGView() {
         });
 
         configuraciones.forEach((item) => {
-            const codigo = String(item.grupoCuenta || '').trim();
-            if (!codigo) return;
+            const cuentaCodigo = String(item.codigo || '').trim();
+            const rubroCodigo = String(item.grupoCuenta || '').trim();
+            const mappedRubroCodigo = cuentaCodigo ? cuentaToRubroCodigo.get(cuentaCodigo) : undefined;
+            const targetCodigo = rubroPattern.test(rubroCodigo)
+                ? rubroCodigo
+                : (mappedRubroCodigo || rubroCodigo || cuentaCodigo);
+            if (!targetCodigo) return;
 
-            const baseRow = mergedByCodigo.get(codigo);
-            mergedByCodigo.set(codigo, {
-                codigo,
-                descripcion: String(item.nombre || '').trim() || baseRow?.descripcion || '',
-                tipo: baseRow?.tipo || rowTipo,
+            // Compatibilidad: si una configuracion antigua guardo GRUPO_CUENTA con codigo largo,
+            // se reemplaza por el rubro secuencial correspondiente.
+            const sourceCodigo = mappedRubroCodigo;
+            const sourceRow = sourceCodigo ? mergedByCodigo.get(sourceCodigo) : undefined;
+            const existingTargetRow = mergedByCodigo.get(targetCodigo);
+
+            if (sourceCodigo && sourceCodigo !== targetCodigo) {
+                mergedByCodigo.delete(sourceCodigo);
+            }
+
+            mergedByCodigo.set(targetCodigo, {
+                codigo: targetCodigo,
+                descripcion: String(item.nombre || '').trim() || existingTargetRow?.descripcion || sourceRow?.descripcion || '',
+                tipo: existingTargetRow?.tipo || sourceRow?.tipo || rowTipo,
                 total: formatMonto(Number(item.valor || 0)),
             });
         });
@@ -198,26 +236,46 @@ export default function PyGView() {
                     ? gastosConfigResponse.configuraciones
                     : [];
 
+                const ingresosBase = buildBaseRubros(ingresosRubros, 'ingresos');
+                const gastosBase = buildBaseRubros(gastosRubros, 'gastos');
+
                 setIngresosData(
                     mergeRubrosWithConfiguracion(
-                        mapRubrosToCuentas(ingresosRubros, 'ingresos'),
+                        ingresosBase.rows,
+                        ingresosBase.cuentaToRubroCodigo,
                         ingresosConfiguraciones,
                         'ingresos',
                     ),
                 );
                 setGastosData(
                     mergeRubrosWithConfiguracion(
-                        mapRubrosToCuentas(gastosRubros, 'gastos'),
+                        gastosBase.rows,
+                        gastosBase.cuentaToRubroCodigo,
                         gastosConfiguraciones,
                         'gastos',
                     ),
                 );
+
+                const ingresosRubroToCuenta: Record<string, string> = {};
+                ingresosBase.cuentaToRubroCodigo.forEach((rubroCodigo, cuentaCodigo) => {
+                    ingresosRubroToCuenta[rubroCodigo] = cuentaCodigo;
+                });
+
+                const gastosRubroToCuenta: Record<string, string> = {};
+                gastosBase.cuentaToRubroCodigo.forEach((rubroCodigo, cuentaCodigo) => {
+                    gastosRubroToCuenta[rubroCodigo] = cuentaCodigo;
+                });
+
+                setIngresosBaseCuentaMap(ingresosRubroToCuenta);
+                setGastosBaseCuentaMap(gastosRubroToCuenta);
             })
             .catch((error) => {
                 if (isCancelled) return;
 
                 setIngresosData([]);
                 setGastosData([]);
+                setIngresosBaseCuentaMap({});
+                setGastosBaseCuentaMap({});
                 console.error('[PyG] Error al cargar rubros/configuraciones de PyG desde BD:', error instanceof Error ? error.message : error);
             });
 
@@ -302,6 +360,8 @@ export default function PyGView() {
                     centroCosto={filtros.centroCosto}
                     ingresosData={ingresosData}
                     gastosData={gastosData}
+                    ingresosBaseCuentaMap={ingresosBaseCuentaMap}
+                    gastosBaseCuentaMap={gastosBaseCuentaMap}
                     onBack={() => setShowDetailView(false)}
                     onConfiguracionSaved={() => setConfigRefreshKey((prev) => prev + 1)}
                 />
@@ -606,6 +666,8 @@ function PyGDetalleView({
     centroCosto,
     ingresosData,
     gastosData,
+    ingresosBaseCuentaMap,
+    gastosBaseCuentaMap,
     onBack,
     onConfiguracionSaved
 }: PyGDetalleViewProps) {
@@ -688,6 +750,10 @@ function PyGDetalleView({
         ? configuracionCentroCostoIngresos
         : configuracionCentroCostoGastos;
 
+    const baseCuentaMapActivo = cuentasTipo === 'ingresos'
+        ? ingresosBaseCuentaMap
+        : gastosBaseCuentaMap;
+
     useEffect(() => {
         if (!cuentasTipo) return;
         setCuentasModalData([...(cuentasTipo === 'ingresos' ? detalleIngresosData : detalleGastosData)]);
@@ -751,17 +817,55 @@ function PyGDetalleView({
 
         const nextConfigCuentas: Record<string, string> = {};
         const nextTipoCalculo: Record<string, 'V' | 'P'> = {};
+        const prefix = cuentasTipo === 'ingresos' ? '4' : '5';
+        const rubroPattern = new RegExp(`^${prefix}\\.\\d+$`);
+
+        const cuentaToRubroCodigo = new Map<string, string>();
+        [...rubrosPeriodo]
+            .sort((a, b) => String(a.codigoCuenta || '').localeCompare(String(b.codigoCuenta || ''), 'es', {
+                numeric: true,
+                sensitivity: 'base',
+            }))
+            .forEach((rubro, index) => {
+                const cuentaCodigo = String(rubro.codigoCuenta || '').trim();
+                if (!cuentaCodigo) return;
+                cuentaToRubroCodigo.set(cuentaCodigo, `${prefix}.${index + 1}`);
+            });
 
         configuracionActiva.forEach((cfg) => {
-            const rubro = String(cfg.grupoCuenta || '').trim();
-            if (!rubro) return;
-            nextConfigCuentas[rubro] = String(cfg.codigo || '').trim();
-            nextTipoCalculo[rubro] = cfg.tipoCalculo === 'P' ? 'P' : 'V';
+            const grupoCuentaRaw = String(cfg.grupoCuenta || '').trim();
+            const codigoCuenta = String(cfg.codigo || '').trim();
+            const rubroNormalizado = rubroPattern.test(grupoCuentaRaw)
+                ? grupoCuentaRaw
+                : (cuentaToRubroCodigo.get(codigoCuenta) || grupoCuentaRaw);
+
+            if (!rubroNormalizado) return;
+            nextConfigCuentas[rubroNormalizado] = codigoCuenta;
+            nextTipoCalculo[rubroNormalizado] = cfg.tipoCalculo === 'P' ? 'P' : 'V';
+        });
+
+        // Para rubros sin configuracion persistida, preseleccionamos la cuenta base
+        // para que Agrupacion/Grupo se autocompleten sin edicion manual inicial.
+        Object.entries(baseCuentaMapActivo).forEach(([rubroCodigo, codigoCuenta]) => {
+            if (!nextConfigCuentas[rubroCodigo]) {
+                nextConfigCuentas[rubroCodigo] = String(codigoCuenta || '').trim();
+            }
         });
 
         setConfigCuentas(nextConfigCuentas);
         setTipoCalculoByRubro(nextTipoCalculo);
-    }, [cuentasTipo, configuracionActiva]);
+    }, [cuentasTipo, configuracionActiva, rubrosPeriodo, baseCuentaMapActivo]);
+
+    useEffect(() => {
+        if (!cuentasTipo) return;
+
+        Object.entries(configCuentas).forEach(([rubroCodigo, codigoCuenta]) => {
+            const cuentaCodigo = String(codigoCuenta || '').trim();
+            if (!cuentaCodigo) return;
+            if (configuracionByCodigoCuenta[cuentaCodigo]) return;
+            loadConfiguracionCuenta(cuentaCodigo, rubroCodigo);
+        });
+    }, [cuentasTipo, configCuentas, configuracionByCodigoCuenta]);
 
     useEffect(() => {
         if (!cuentasTipo) return;
@@ -839,17 +943,25 @@ function PyGDetalleView({
         if (!cuentasTipo) return;
 
         if (cuentasTipo === 'ingresos') {
-            const cuentas = cuentasModalData.filter(c => c.tipo === 'cuenta');
-            const lastCode = cuentas.length > 0 ? cuentas[cuentas.length - 1].codigo : '4.0';
-            const nextNum = parseInt(lastCode.split('.')[1], 10) + 1;
+            const cuentas = cuentasModalData
+                .filter(c => c.tipo === 'cuenta' && /^4\.\d+$/.test(String(c.codigo || '').trim()));
+            const lastNum = cuentas.reduce((max, cuenta) => {
+                const parsed = parseInt(String(cuenta.codigo).split('.')[1] || '0', 10);
+                return Number.isFinite(parsed) ? Math.max(max, parsed) : max;
+            }, 0);
+            const nextNum = lastNum + 1;
             const nextCode = `4.${nextNum}`;
             setCuentasModalData([...cuentasModalData, { codigo: nextCode, descripcion: '', tipo: 'cuenta', total: '-' }]);
             return;
         }
 
-        const grupos = cuentasModalData.filter(c => c.tipo === 'grupo' && c.codigo.split('.').length === 2);
-        const lastCode = grupos.length > 0 ? grupos[grupos.length - 1].codigo : '5.0';
-        const nextNum = parseInt(lastCode.split('.')[1], 10) + 1;
+        const grupos = cuentasModalData
+            .filter(c => c.tipo === 'grupo' && /^5\.\d+$/.test(String(c.codigo || '').trim()));
+        const lastNum = grupos.reduce((max, grupo) => {
+            const parsed = parseInt(String(grupo.codigo).split('.')[1] || '0', 10);
+            return Number.isFinite(parsed) ? Math.max(max, parsed) : max;
+        }, 0);
+        const nextNum = lastNum + 1;
         const nextCode = `5.${nextNum}`;
         setCuentasModalData([...cuentasModalData, { codigo: nextCode, descripcion: '', tipo: 'grupo', total: '-' }]);
     };
