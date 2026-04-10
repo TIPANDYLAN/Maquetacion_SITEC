@@ -1071,7 +1071,7 @@ const ProveedorHumanaView = () => {
                             seguroCampesino,
                             urbapark: primaNeta,
                             sssCampesino: parseFloat(String(rowData[20] || '0').replace(/,/g, '')) || 0,
-                            totalUrbapark: ajuste < 0 ? ajuste : (primaNeta + seguroCampesino + ajuste + humanaAssist - 7.5),
+                            totalUrbapark: ajuste === 0 ? ajuste : (primaNeta + seguroCampesino + ajuste + humanaAssist - 7.5),
                             trabajador: parseFloat(String(rowData[22] || '0').replace(/,/g, '')) || 0,
                             total: parseFloat(String(rowData[23] || '0').replace(/,/g, '')) || 0,
                             diferencia: parseFloat(String(rowData[24] || '0').replace(/,/g, '')) || 0,
