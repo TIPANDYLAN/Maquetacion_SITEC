@@ -93,15 +93,31 @@ export default function PyGView() {
             .finally(() => setLoadingCentros(false));
     }, []);
 
+    const normalizeCentro = (value: string) => {
+        return String(value || '')
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .trim()
+            .toUpperCase();
+    };
+
+    const adminCentroCosto = centrosCosto.find((cc) => {
+        const id = normalizeCentro(cc.IDCENTROCOSTO);
+        const nombre = normalizeCentro(cc.CENTROCOSTO);
+        return id === 'ADMINISTRACION' || nombre.includes('ADMINISTRACION');
+    });
+
+    const adminCentroCostoId = String(adminCentroCosto?.IDCENTROCOSTO || 'ADMINISTRACION').trim();
+
     const isGeneralReport = filtros.tipoReporte === 'general';
     const centroCostoEfectivo = isGeneralReport
-        ? 'ADMINISTRACION'
+        ? adminCentroCostoId
         : String(filtros.centroCosto || '').trim();
     const canShowReport = Boolean(filtros.periodo && centroCostoEfectivo);
     const centrosCostoProyecto = centrosCosto.filter((cc) => {
-        const id = String(cc.IDCENTROCOSTO || '').trim().toUpperCase();
-        const nombre = String(cc.CENTROCOSTO || '').trim().toUpperCase();
-        return id !== 'ADMINISTRACION' && nombre !== 'ADMINISTRACION';
+        const id = normalizeCentro(cc.IDCENTROCOSTO);
+        const nombre = normalizeCentro(cc.CENTROCOSTO);
+        return id !== 'ADMINISTRACION' && !nombre.includes('ADMINISTRACION');
     });
 
     const formatMonto = (val: number) => {
@@ -667,7 +683,7 @@ export default function PyGView() {
                                     setFiltros({
                                         ...filtros,
                                         tipoReporte,
-                                        centroCosto: tipoReporte === 'general' ? 'ADMINISTRACION' : '',
+                                        centroCosto: tipoReporte === 'general' ? adminCentroCostoId : '',
                                     });
                                 }}
                             >
