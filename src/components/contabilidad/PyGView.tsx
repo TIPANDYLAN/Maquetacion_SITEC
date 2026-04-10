@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, BarChart3, Building, Calendar, ChevronDown, Download, Edit, Filter, List, Pencil, Plus, Save, Settings2, Trash2, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowLeft, BarChart3, Building, Calendar, ChevronDown, Download, Edit, Filter, List, Loader2, Pencil, Plus, Save, Settings2, Trash2, X } from 'lucide-react';
 import type { CuentaPyG, FiltrosPyG } from '../../types';
 import { dbApi } from '../../services/dbApi';
 import { getNominaCostCenters, type NominaCostCenter } from '../../services/n8nApi';
@@ -8,7 +8,9 @@ interface PyGReportTableProps {
     periodo: string;
     centroCosto: string;
     ingresosData: CuentaPyG[];
+    ingresosPreviousData: CuentaPyG[];
     gastosData: CuentaPyG[];
+    gastosPreviousData: CuentaPyG[];
     onViewDetail: () => void;
     onDownloadExcel: () => void;
 }
@@ -65,13 +67,17 @@ export default function PyGView() {
     });
 
     const [ingresosData, setIngresosData] = useState<CuentaPyG[]>([]);
+    const [ingresosPreviousData, setIngresosPreviousData] = useState<CuentaPyG[]>([]);
     const [gastosData, setGastosData] = useState<CuentaPyG[]>([]);
+    const [gastosPreviousData, setGastosPreviousData] = useState<CuentaPyG[]>([]);
     const [showDetailView, setShowDetailView] = useState(false);
     const [centrosCosto, setCentrosCosto] = useState<NominaCostCenter[]>([]);
     const [loadingCentros, setLoadingCentros] = useState(false);
     const [configRefreshKey, setConfigRefreshKey] = useState(0);
+    const [loadingPyG, setLoadingPyG] = useState(false);
     const [ingresosBaseCuentaMap, setIngresosBaseCuentaMap] = useState<Record<string, string>>({});
     const [gastosBaseCuentaMap, setGastosBaseCuentaMap] = useState<Record<string, string>>({});
+    const lastSpRunKeyRef = useRef('');
 
     useEffect(() => {
         setLoadingCentros(true);
@@ -87,7 +93,15 @@ export default function PyGView() {
     }, []);
 
     const isGeneralReport = filtros.tipoReporte === 'general';
-    const canShowProjectReport = Boolean(filtros.periodo && filtros.tipoReporte === 'por_proyecto' && filtros.centroCosto);
+    const centroCostoEfectivo = isGeneralReport
+        ? 'ADMINISTRACION'
+        : String(filtros.centroCosto || '').trim();
+    const canShowReport = Boolean(filtros.periodo && centroCostoEfectivo);
+    const centrosCostoProyecto = centrosCosto.filter((cc) => {
+        const id = String(cc.IDCENTROCOSTO || '').trim().toUpperCase();
+        const nombre = String(cc.CENTROCOSTO || '').trim().toUpperCase();
+        return id !== 'ADMINISTRACION' && nombre !== 'ADMINISTRACION';
+    });
 
     const formatMonto = (val: number) => {
         if (!Number.isFinite(val)) return '-';
@@ -126,6 +140,20 @@ export default function PyGView() {
             rows,
             cuentaToRubroCodigo,
         };
+    };
+
+    const getPreviousPeriodo = (periodoValue: string) => {
+        const [yearRaw, monthRaw] = String(periodoValue || '').split('-');
+        const year = Number(yearRaw || 0);
+        const month = Number(monthRaw || 0);
+        if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
+            return periodoValue;
+        }
+
+        const prevDate = new Date(year, month - 2, 1);
+        const prevYear = prevDate.getFullYear();
+        const prevMonth = String(prevDate.getMonth() + 1).padStart(2, '0');
+        return `${prevYear}-${prevMonth}`;
     };
 
     const mergeRubrosWithConfiguracion = (
@@ -178,173 +206,272 @@ export default function PyGView() {
     };
 
     useEffect(() => {
-        if (!canShowProjectReport) {
+        if (!canShowReport) {
             setIngresosData([]);
+            setIngresosPreviousData([]);
             setGastosData([]);
+            setGastosPreviousData([]);
+            setIngresosBaseCuentaMap({});
+            setGastosBaseCuentaMap({});
+            setLoadingPyG(false);
             return;
         }
 
         let isCancelled = false;
 
-        void Promise.all([
-            dbApi.contabilidad.pyg.getRubrosPeriodo<{
-                ok?: boolean;
-                rubros?: RubroPeriodoOption[];
-            }>({
-                centroCosto: filtros.centroCosto,
-                periodo: filtros.periodo,
-                tipo: 'ingresos',
-            }),
-            dbApi.contabilidad.pyg.getRubrosPeriodo<{
-                ok?: boolean;
-                rubros?: RubroPeriodoOption[];
-            }>({
-                centroCosto: filtros.centroCosto,
-                periodo: filtros.periodo,
-                tipo: 'gastos',
-            }),
-            dbApi.contabilidad.pyg.getConfiguracionCentroCosto<{
-                ok?: boolean;
-                configuraciones?: ConfiguracionCentroCostoOption[];
-            }>({
-                centroCosto: filtros.centroCosto,
-                periodo: filtros.periodo,
-                tipo: 'ingresos',
-            }),
-            dbApi.contabilidad.pyg.getConfiguracionCentroCosto<{
-                ok?: boolean;
-                configuraciones?: ConfiguracionCentroCostoOption[];
-            }>({
-                centroCosto: filtros.centroCosto,
-                periodo: filtros.periodo,
-                tipo: 'gastos',
-            }),
-        ])
-            .then(([ingresosRubrosResponse, gastosRubrosResponse, ingresosConfigResponse, gastosConfigResponse]) => {
-                if (isCancelled) return;
+        const run = async () => {
+            setLoadingPyG(true);
 
-                const ingresosRubros = Array.isArray(ingresosRubrosResponse?.rubros)
-                    ? ingresosRubrosResponse.rubros
-                    : [];
-                const gastosRubros = Array.isArray(gastosRubrosResponse?.rubros)
-                    ? gastosRubrosResponse.rubros
-                    : [];
-                const ingresosConfiguraciones = Array.isArray(ingresosConfigResponse?.configuraciones)
-                    ? ingresosConfigResponse.configuraciones
-                    : [];
-                const gastosConfiguraciones = Array.isArray(gastosConfigResponse?.configuraciones)
-                    ? gastosConfigResponse.configuraciones
-                    : [];
+            try {
+                const currentSpKey = `${filtros.periodo}|${centroCostoEfectivo}`;
+                const shouldRunSp = lastSpRunKeyRef.current !== currentSpKey;
 
-                const ingresosBase = buildBaseRubros(ingresosRubros, 'ingresos');
-                const gastosBase = buildBaseRubros(gastosRubros, 'gastos');
+                const fetchAllPyGData = async () => {
+                    return await Promise.all([
+                        dbApi.contabilidad.pyg.getRubrosPeriodo<{
+                            ok?: boolean;
+                            rubros?: RubroPeriodoOption[];
+                        }>({
+                            centroCosto: centroCostoEfectivo,
+                            periodo: filtros.periodo,
+                            tipo: 'ingresos',
+                        }),
+                        dbApi.contabilidad.pyg.getRubrosPeriodo<{
+                            ok?: boolean;
+                            rubros?: RubroPeriodoOption[];
+                        }>({
+                            centroCosto: centroCostoEfectivo,
+                            periodo: filtros.periodo,
+                            tipo: 'gastos',
+                        }),
+                        dbApi.contabilidad.pyg.getConfiguracionCentroCosto<{
+                            ok?: boolean;
+                            configuraciones?: ConfiguracionCentroCostoOption[];
+                        }>({
+                            centroCosto: centroCostoEfectivo,
+                            periodo: filtros.periodo,
+                            tipo: 'ingresos',
+                        }),
+                        dbApi.contabilidad.pyg.getConfiguracionCentroCosto<{
+                            ok?: boolean;
+                            configuraciones?: ConfiguracionCentroCostoOption[];
+                        }>({
+                            centroCosto: centroCostoEfectivo,
+                            periodo: filtros.periodo,
+                            tipo: 'gastos',
+                        }),
+                    ]);
+                };
 
-                setIngresosData(
-                    mergeRubrosWithConfiguracion(
+                const mapResponsesToMerged = (
+                    ingresosRubrosResponse: { rubros?: RubroPeriodoOption[] } | undefined,
+                    gastosRubrosResponse: { rubros?: RubroPeriodoOption[] } | undefined,
+                    ingresosConfigResponse: { configuraciones?: ConfiguracionCentroCostoOption[] } | undefined,
+                    gastosConfigResponse: { configuraciones?: ConfiguracionCentroCostoOption[] } | undefined,
+                ) => {
+                    const ingresosRubros = Array.isArray(ingresosRubrosResponse?.rubros)
+                        ? ingresosRubrosResponse.rubros
+                        : [];
+                    const gastosRubros = Array.isArray(gastosRubrosResponse?.rubros)
+                        ? gastosRubrosResponse.rubros
+                        : [];
+                    const ingresosConfiguraciones = Array.isArray(ingresosConfigResponse?.configuraciones)
+                        ? ingresosConfigResponse.configuraciones
+                        : [];
+                    const gastosConfiguraciones = Array.isArray(gastosConfigResponse?.configuraciones)
+                        ? gastosConfigResponse.configuraciones
+                        : [];
+
+                    const ingresosBase = buildBaseRubros(ingresosRubros, 'ingresos');
+                    const gastosBase = buildBaseRubros(gastosRubros, 'gastos');
+
+                    const ingresosMerged = mergeRubrosWithConfiguracion(
                         ingresosBase.rows,
                         ingresosBase.cuentaToRubroCodigo,
                         ingresosConfiguraciones,
                         'ingresos',
-                    ),
-                );
-                setGastosData(
-                    mergeRubrosWithConfiguracion(
+                    );
+
+                    const gastosMerged = mergeRubrosWithConfiguracion(
                         gastosBase.rows,
                         gastosBase.cuentaToRubroCodigo,
                         gastosConfiguraciones,
                         'gastos',
-                    ),
+                    );
+
+                    const ingresosRubroToCuenta: Record<string, string> = {};
+                    ingresosBase.cuentaToRubroCodigo.forEach((rubroCodigo, cuentaCodigo) => {
+                        ingresosRubroToCuenta[rubroCodigo] = cuentaCodigo;
+                    });
+
+                    const gastosRubroToCuenta: Record<string, string> = {};
+                    gastosBase.cuentaToRubroCodigo.forEach((rubroCodigo, cuentaCodigo) => {
+                        gastosRubroToCuenta[rubroCodigo] = cuentaCodigo;
+                    });
+
+                    return {
+                        ingresosMerged,
+                        gastosMerged,
+                        ingresosRubroToCuenta,
+                        gastosRubroToCuenta,
+                    };
+                };
+
+                let [ingresosRubrosResponse, gastosRubrosResponse, ingresosConfigResponse, gastosConfigResponse] = await fetchAllPyGData();
+
+                const ingresosRubrosInicial = Array.isArray(ingresosRubrosResponse?.rubros)
+                    ? ingresosRubrosResponse.rubros
+                    : [];
+                const gastosRubrosInicial = Array.isArray(gastosRubrosResponse?.rubros)
+                    ? gastosRubrosResponse.rubros
+                    : [];
+                const hasBaseData = ingresosRubrosInicial.length > 0 || gastosRubrosInicial.length > 0;
+
+                if (shouldRunSp && !hasBaseData) {
+                    const [yearRaw, monthRaw] = filtros.periodo.split('-');
+                    const year = Number(yearRaw || 0);
+                    const month = Number(monthRaw || 0);
+
+                    if (Number.isInteger(year) && Number.isInteger(month) && month >= 1 && month <= 12) {
+                        const firstDay = new Date(year, month - 1, 1);
+                        const firstDayNextMonth = new Date(year, month, 1);
+                        const toIsoLocal = (date: Date) => {
+                            const y = date.getFullYear();
+                            const m = String(date.getMonth() + 1).padStart(2, '0');
+                            const d = String(date.getDate()).padStart(2, '0');
+                            return `${y}-${m}-${d}`;
+                        };
+
+                        const fechaIni = toIsoLocal(firstDay);
+                        const fechaFin = toIsoLocal(firstDayNextMonth);
+                        const anio = String(year);
+                        const centroCosto = centroCostoEfectivo;
+
+                        console.log('[PyG] Ejecutando SP sp_reporte_pyg_filtrado con filtros', {
+                            centroCosto,
+                            fechaIni,
+                            fechaFin,
+                            anio,
+                        });
+
+                        try {
+                            const response = await dbApi.contabilidad.pyg.ejecutarSpFiltrado({
+                                centroCosto,
+                                fechaIni,
+                                fechaFin,
+                                anio,
+                            });
+
+                            const estado = String((response as { message?: string; mode?: string })?.message || (response as { message?: string; mode?: string })?.mode || '').trim().toLowerCase();
+                            if (estado === 'ya registrado') {
+                                console.log('[PyG] ya registrado');
+                            } else if (estado === 'sp utilizado' || estado === 'sp_utilizado') {
+                                console.log('[PyG] sp utilizado');
+                            } else {
+                                console.log('[PyG] Estado de ejecucion:', response);
+                            }
+                        } catch (error) {
+                            console.error('[PyG] Error al ejecutar SP de PyG', error instanceof Error ? error.message : error);
+                        }
+
+                        // Tras ejecutar SP, refrescamos todo para no perder ningun dato nuevo.
+                        [ingresosRubrosResponse, gastosRubrosResponse, ingresosConfigResponse, gastosConfigResponse] = await fetchAllPyGData();
+                    } else {
+                        console.warn('[PyG] Periodo invalido para ejecutar SP:', filtros.periodo);
+                    }
+                }
+
+                if (shouldRunSp && !isCancelled) {
+                    lastSpRunKeyRef.current = currentSpKey;
+                }
+
+                if (isCancelled) return;
+
+                const currentMerged = mapResponsesToMerged(
+                    ingresosRubrosResponse,
+                    gastosRubrosResponse,
+                    ingresosConfigResponse,
+                    gastosConfigResponse,
                 );
 
-                const ingresosRubroToCuenta: Record<string, string> = {};
-                ingresosBase.cuentaToRubroCodigo.forEach((rubroCodigo, cuentaCodigo) => {
-                    ingresosRubroToCuenta[rubroCodigo] = cuentaCodigo;
-                });
+                setIngresosData(currentMerged.ingresosMerged);
+                setGastosData(currentMerged.gastosMerged);
+                setIngresosBaseCuentaMap(currentMerged.ingresosRubroToCuenta);
+                setGastosBaseCuentaMap(currentMerged.gastosRubroToCuenta);
 
-                const gastosRubroToCuenta: Record<string, string> = {};
-                gastosBase.cuentaToRubroCodigo.forEach((rubroCodigo, cuentaCodigo) => {
-                    gastosRubroToCuenta[rubroCodigo] = cuentaCodigo;
-                });
+                const previousPeriodo = getPreviousPeriodo(filtros.periodo);
+                const [prevIngresosRubrosResponse, prevGastosRubrosResponse, prevIngresosConfigResponse, prevGastosConfigResponse] = await Promise.all([
+                    dbApi.contabilidad.pyg.getRubrosPeriodo<{
+                        ok?: boolean;
+                        rubros?: RubroPeriodoOption[];
+                    }>({
+                        centroCosto: centroCostoEfectivo,
+                        periodo: previousPeriodo,
+                        tipo: 'ingresos',
+                    }),
+                    dbApi.contabilidad.pyg.getRubrosPeriodo<{
+                        ok?: boolean;
+                        rubros?: RubroPeriodoOption[];
+                    }>({
+                        centroCosto: centroCostoEfectivo,
+                        periodo: previousPeriodo,
+                        tipo: 'gastos',
+                    }),
+                    dbApi.contabilidad.pyg.getConfiguracionCentroCosto<{
+                        ok?: boolean;
+                        configuraciones?: ConfiguracionCentroCostoOption[];
+                    }>({
+                        centroCosto: centroCostoEfectivo,
+                        periodo: previousPeriodo,
+                        tipo: 'ingresos',
+                    }),
+                    dbApi.contabilidad.pyg.getConfiguracionCentroCosto<{
+                        ok?: boolean;
+                        configuraciones?: ConfiguracionCentroCostoOption[];
+                    }>({
+                        centroCosto: centroCostoEfectivo,
+                        periodo: previousPeriodo,
+                        tipo: 'gastos',
+                    }),
+                ]);
 
-                setIngresosBaseCuentaMap(ingresosRubroToCuenta);
-                setGastosBaseCuentaMap(gastosRubroToCuenta);
-            })
-            .catch((error) => {
+                if (isCancelled) return;
+
+                const previousMerged = mapResponsesToMerged(
+                    prevIngresosRubrosResponse,
+                    prevGastosRubrosResponse,
+                    prevIngresosConfigResponse,
+                    prevGastosConfigResponse,
+                );
+
+                setIngresosPreviousData(previousMerged.ingresosMerged);
+                setGastosPreviousData(previousMerged.gastosMerged);
+            } catch (error) {
                 if (isCancelled) return;
 
                 setIngresosData([]);
+                setIngresosPreviousData([]);
                 setGastosData([]);
+                setGastosPreviousData([]);
                 setIngresosBaseCuentaMap({});
                 setGastosBaseCuentaMap({});
                 console.error('[PyG] Error al cargar rubros/configuraciones de PyG desde BD:', error instanceof Error ? error.message : error);
-            });
+            } finally {
+                if (!isCancelled) {
+                    setLoadingPyG(false);
+                }
+            }
+        };
+
+        void run();
 
         return () => {
             isCancelled = true;
         };
-    }, [canShowProjectReport, filtros.centroCosto, filtros.periodo, configRefreshKey]);
-
-    useEffect(() => {
-        if (filtros.tipoReporte !== 'por_proyecto') return;
-        if (!filtros.periodo || !filtros.centroCosto) return;
-
-        const [yearRaw, monthRaw] = filtros.periodo.split('-');
-        const year = Number(yearRaw || 0);
-        const month = Number(monthRaw || 0);
-
-        if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
-            console.warn('[PyG] Periodo invalido para ejecutar SP:', filtros.periodo);
-            return;
-        }
-
-        const firstDay = new Date(year, month - 1, 1);
-        const firstDayNextMonth = new Date(year, month, 1);
-        const toIsoLocal = (date: Date) => {
-            const y = date.getFullYear();
-            const m = String(date.getMonth() + 1).padStart(2, '0');
-            const d = String(date.getDate()).padStart(2, '0');
-            return `${y}-${m}-${d}`;
-        };
-
-        const fechaIni = toIsoLocal(firstDay);
-        const fechaFin = toIsoLocal(firstDayNextMonth);
-        const anio = String(year);
-        const centroCosto = String(filtros.centroCosto || '').trim();
-
-        console.log('[PyG] Ejecutando SP sp_reporte_pyg_filtrado con filtros', {
-            centroCosto,
-            fechaIni,
-            fechaFin,
-            anio,
-        });
-
-        void dbApi.contabilidad.pyg.ejecutarSpFiltrado({
-            centroCosto,
-            fechaIni,
-            fechaFin,
-            anio,
-        })
-            .then((response) => {
-                const estado = String((response as { message?: string; mode?: string })?.message || (response as { message?: string; mode?: string })?.mode || '').trim().toLowerCase();
-                if (estado === 'ya registrado') {
-                    console.log('[PyG] ya registrado');
-                    return;
-                }
-
-                if (estado === 'sp utilizado' || estado === 'sp_utilizado') {
-                    console.log('[PyG] sp utilizado');
-                    return;
-                }
-
-                console.log('[PyG] Estado de ejecucion:', response);
-            })
-            .catch((error) => {
-                console.error('[PyG] Error al ejecutar SP de PyG', error instanceof Error ? error.message : error);
-            });
-    }, [filtros.periodo, filtros.tipoReporte, filtros.centroCosto]);
+    }, [canShowReport, centroCostoEfectivo, filtros.periodo, configRefreshKey]);
 
     const handleDownloadExcel = () => {
-        alert(`Descargando Excel para ${filtros.centroCosto || 'Reporte General'} - ${filtros.periodo}`);
+        alert(`Descargando Excel para ${centroCostoEfectivo || 'Reporte General'} - ${filtros.periodo}`);
     };
 
     const handleViewDetail = () => {
@@ -357,7 +484,7 @@ export default function PyGView() {
             <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
                 <PyGDetalleView
                     periodo={filtros.periodo}
-                    centroCosto={filtros.centroCosto}
+                    centroCosto={centroCostoEfectivo}
                     ingresosData={ingresosData}
                     gastosData={gastosData}
                     ingresosBaseCuentaMap={ingresosBaseCuentaMap}
@@ -408,7 +535,14 @@ export default function PyGView() {
                             <select
                                 className="w-full pl-12 pr-10 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none text-slate-700 cursor-pointer font-medium focus:border-[#001F3F] transition-all"
                                 value={filtros.tipoReporte}
-                                onChange={(e) => setFiltros({ ...filtros, tipoReporte: e.target.value as any, centroCosto: '' })}
+                                onChange={(e) => {
+                                    const tipoReporte = e.target.value as FiltrosPyG['tipoReporte'];
+                                    setFiltros({
+                                        ...filtros,
+                                        tipoReporte,
+                                        centroCosto: tipoReporte === 'general' ? 'ADMINISTRACION' : '',
+                                    });
+                                }}
                             >
                                 <option value="por_proyecto">Por Proyecto</option>
                                 <option value="general">Consolidado General</option>
@@ -434,7 +568,7 @@ export default function PyGView() {
                                     <option value="">
                                         {loadingCentros ? 'Cargando...' : 'Seleccione proyecto...'}
                                     </option>
-                                    {centrosCosto.map((cc) => (
+                                    {centrosCostoProyecto.map((cc) => (
                                         <option key={cc.IDCENTROCOSTO} value={cc.IDCENTROCOSTO}>
                                             {cc.CENTROCOSTO}
                                         </option>
@@ -448,15 +582,29 @@ export default function PyGView() {
             </div>
 
             {/* Mostrar tabla solo para reporte por proyecto */}
-            {canShowProjectReport ? (
+            {canShowReport ? (
+                loadingPyG ? (
+                    <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-12 text-center animate-in fade-in duration-300">
+                        <div className="flex flex-col items-center gap-4">
+                            <Loader2 size={36} className="text-[#001F3F] animate-spin" />
+                            <h3 className="text-lg font-bold text-slate-700">Cargando informacion de PyG...</h3>
+                            <p className="text-slate-500">Ejecutando proceso y actualizando rubros/configuracion.</p>
+                        </div>
+                    </div>
+                ) : (
                 <PyGReportTable
                     periodo={filtros.periodo}
-                    centroCosto={centrosCosto.find(cc => cc.IDCENTROCOSTO === filtros.centroCosto)?.CENTROCOSTO || filtros.centroCosto || 'Consolidado General'}
+                    centroCosto={isGeneralReport
+                        ? 'Consolidado General'
+                        : (centrosCosto.find(cc => cc.IDCENTROCOSTO === centroCostoEfectivo)?.CENTROCOSTO || centroCostoEfectivo || 'Consolidado General')}
                     ingresosData={ingresosData}
+                    ingresosPreviousData={ingresosPreviousData}
                     gastosData={gastosData}
+                    gastosPreviousData={gastosPreviousData}
                     onViewDetail={handleViewDetail}
                     onDownloadExcel={handleDownloadExcel}
                 />
+                )
             ) : !isGeneralReport ? (
                 <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-12 text-center animate-in fade-in zoom-in-95 duration-300">
                     <div className="flex flex-col items-center gap-4">
@@ -483,10 +631,41 @@ function PyGReportTable({
     periodo,
     centroCosto,
     ingresosData,
+    ingresosPreviousData,
     gastosData,
+    gastosPreviousData,
     onViewDetail,
     onDownloadExcel
 }: PyGReportTableProps) {
+    const getMonthYearLabels = (periodValue: string) => {
+        const [yearRaw, monthRaw] = String(periodValue || '').split('-');
+        const year = Number(yearRaw || 0);
+        const month = Number(monthRaw || 0);
+
+        if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
+            return {
+                previousLabel: 'MES ANTERIOR',
+                currentLabel: 'MES ACTUAL',
+            };
+        }
+
+        const currentDate = new Date(year, month - 1, 1);
+        const previousDate = new Date(year, month - 2, 1);
+
+        const formatMonthYear = (date: Date) => {
+            return date
+                .toLocaleDateString('es-ES', { month: 'long', year: 'numeric' })
+                .toUpperCase();
+        };
+
+        return {
+            previousLabel: formatMonthYear(previousDate),
+            currentLabel: formatMonthYear(currentDate),
+        };
+    };
+
+    const { previousLabel, currentLabel } = getMonthYearLabels(periodo);
+
     const parseC = (val: string) => {
         if (!val || val === '-') return 0;
         return parseFloat(val.replace(/\./g, '').replace(',', '.'));
@@ -498,28 +677,38 @@ function PyGReportTable({
     };
 
     const ingresosValidos = ingresosData.filter(c => c.tipo === 'cuenta');
+    const ingresosPrevValidos = ingresosPreviousData.filter(c => c.tipo === 'cuenta');
     const gastosValidos = gastosData.filter(c => c.tipo === 'grupo');
+    const gastosPrevValidos = gastosPreviousData.filter(c => c.tipo === 'grupo');
     const gastosOperacion = gastosValidos.filter(g => g.codigo !== '5.13');
+    const gastosOperacionPrev = gastosPrevValidos.filter(g => g.codigo !== '5.13');
     const gastosAdmin = gastosValidos.find(g => g.codigo === '5.13');
+    const gastosAdminPrev = gastosPrevValidos.find(g => g.codigo === '5.13');
 
-    const totalIngEne = ingresosValidos.reduce((sum, item) => sum + parseC(item.total), 0);
-    const totalIngDic = totalIngEne * 0.95;
-    const totalIngAcum = totalIngEne + totalIngDic;
+    const ingresosPrevByCodigo = new Map<string, CuentaPyG>();
+    ingresosPrevValidos.forEach((row) => ingresosPrevByCodigo.set(row.codigo, row));
 
-    const totalGastosOpEne = gastosOperacion.reduce((sum, item) => sum + parseC(item.total), 0);
-    const totalGastosOpDic = totalGastosOpEne * 0.85;
-    const totalGastosOpAcum = totalGastosOpEne + totalGastosOpDic;
+    const gastosPrevByCodigo = new Map<string, CuentaPyG>();
+    gastosPrevValidos.forEach((row) => gastosPrevByCodigo.set(row.codigo, row));
 
-    const adminEne = gastosAdmin ? parseC(gastosAdmin.total) : 0;
-    const adminDic = adminEne * 0.85;
-    const adminAcum = adminEne + adminDic;
+    const totalIngCurrent = ingresosValidos.reduce((sum, item) => sum + parseC(item.total), 0);
+    const totalIngPrev = ingresosPrevValidos.reduce((sum, item) => sum + parseC(item.total), 0);
+    const totalIngAcum = totalIngCurrent + totalIngPrev;
 
-    const totalGastosEne = totalGastosOpEne + adminEne;
-    const totalGastosDic = totalGastosOpDic + adminDic;
+    const totalGastosOpCurrent = gastosOperacion.reduce((sum, item) => sum + parseC(item.total), 0);
+    const totalGastosOpPrev = gastosOperacionPrev.reduce((sum, item) => sum + parseC(item.total), 0);
+    const totalGastosOpAcum = totalGastosOpCurrent + totalGastosOpPrev;
+
+    const adminCurrent = gastosAdmin ? parseC(gastosAdmin.total) : 0;
+    const adminPrev = gastosAdminPrev ? parseC(gastosAdminPrev.total) : 0;
+    const adminAcum = adminCurrent + adminPrev;
+
+    const totalGastosCurrent = totalGastosOpCurrent + adminCurrent;
+    const totalGastosPrev = totalGastosOpPrev + adminPrev;
     const totalGastosAcum = totalGastosOpAcum + adminAcum;
 
-    const utilEne = totalIngEne - totalGastosEne;
-    const utilDic = totalIngDic - totalGastosDic;
+    const utilCurrent = totalIngCurrent - totalGastosCurrent;
+    const utilPrev = totalIngPrev - totalGastosPrev;
     const utilAcum = totalIngAcum - totalGastosAcum;
 
     const CurrencyCell = ({ value, isBold = false, bgClass = 'bg-white' }: { value: string; isBold?: boolean; bgClass?: string }) => (
@@ -535,8 +724,8 @@ function PyGReportTable({
         <thead className="bg-[#1c2938] text-white text-[10px] uppercase font-bold tracking-wider">
             <tr>
                 <th style={{ width: '45%' }} className="px-4 py-3 border-r border-[#2d3f56]">{title}</th>
-                <th style={{ width: '16%' }} className="px-4 py-3 text-center border-r border-[#2d3f56]">DICIEMBRE 2025</th>
-                <th style={{ width: '16%' }} className="px-4 py-3 text-center">ENERO</th>
+                <th style={{ width: '16%' }} className="px-4 py-3 text-center border-r border-[#2d3f56]">{previousLabel}</th>
+                <th style={{ width: '16%' }} className="px-4 py-3 text-center">{currentLabel}</th>
                 <th style={{ width: '3%' }} className="bg-white border-none"></th>
                 <th style={{ width: '20%' }} className="px-4 py-3 text-center bg-[#1c2938]">ACUMULADO</th>
             </tr>
@@ -554,22 +743,22 @@ function PyGReportTable({
                 <TableHeader title="INGRESOS" />
                 <tbody>
                     {ingresosValidos.map((ingreso, idx) => {
-                        const valEne = parseC(ingreso.total);
-                        const valDic = valEne * 0.95;
+                        const valCurrent = parseC(ingreso.total);
+                        const valPrev = parseC(ingresosPrevByCodigo.get(ingreso.codigo)?.total || '-');
                         return (
                             <tr key={idx} className="hover:bg-slate-50 transition-colors">
                                 <td className="px-4 py-2 border-b border-l border-slate-200 text-[11px] font-medium text-slate-700">{ingreso.descripcion || 'Sin nombre asignado'}</td>
-                                <CurrencyCell value={formatC(valDic)} />
-                                <CurrencyCell value={formatC(valEne)} />
+                                <CurrencyCell value={formatC(valPrev)} />
+                                <CurrencyCell value={formatC(valCurrent)} />
                                 <td className="bg-white border-none"></td>
-                                <CurrencyCell value={formatC(valEne + valDic)} bgClass="bg-slate-50" />
+                                <CurrencyCell value={formatC(valCurrent + valPrev)} bgClass="bg-slate-50" />
                             </tr>
                         );
                     })}
                     <tr>
                         <td className="px-4 py-2 bg-[#1c2938] text-white text-right font-bold text-xs uppercase border border-[#1c2938]">TOTAL INGRESOS</td>
-                        <CurrencyCell value={formatC(totalIngDic)} bgClass="bg-slate-200" isBold={true} />
-                        <CurrencyCell value={formatC(totalIngEne)} bgClass="bg-slate-200" isBold={true} />
+                        <CurrencyCell value={formatC(totalIngPrev)} bgClass="bg-slate-200" isBold={true} />
+                        <CurrencyCell value={formatC(totalIngCurrent)} bgClass="bg-slate-200" isBold={true} />
                         <td className="bg-white border-none"></td>
                         <CurrencyCell value={formatC(totalIngAcum)} bgClass="bg-slate-200" isBold={true} />
                     </tr>
@@ -580,22 +769,22 @@ function PyGReportTable({
                 <TableHeader title="GASTOS" />
                 <tbody>
                     {gastosOperacion.map((gasto, idx) => {
-                        const valEne = parseC(gasto.total);
-                        const valDic = valEne * 0.85;
+                        const valCurrent = parseC(gasto.total);
+                        const valPrev = parseC(gastosPrevByCodigo.get(gasto.codigo)?.total || '-');
                         return (
                             <tr key={idx} className="hover:bg-slate-50 transition-colors">
                                 <td className="px-4 py-2 border-b border-l border-slate-200 text-[11px] font-medium text-slate-700">{gasto.descripcion || 'Sin nombre asignado'}</td>
-                                <CurrencyCell value={formatC(valDic)} />
-                                <CurrencyCell value={formatC(valEne)} />
+                                <CurrencyCell value={formatC(valPrev)} />
+                                <CurrencyCell value={formatC(valCurrent)} />
                                 <td className="bg-white border-none"></td>
-                                <CurrencyCell value={formatC(valEne + valDic)} bgClass="bg-slate-50" />
+                                <CurrencyCell value={formatC(valCurrent + valPrev)} bgClass="bg-slate-50" />
                             </tr>
                         );
                     })}
                     <tr>
                         <td className="px-4 py-2 bg-[#1c2938] text-white text-right font-bold text-xs uppercase border border-[#1c2938]">TOTAL GASTOS DE OPERACIÓN</td>
-                        <CurrencyCell value={formatC(totalGastosOpDic)} bgClass="bg-slate-200" isBold={true} />
-                        <CurrencyCell value={formatC(totalGastosOpEne)} bgClass="bg-slate-200" isBold={true} />
+                        <CurrencyCell value={formatC(totalGastosOpPrev)} bgClass="bg-slate-200" isBold={true} />
+                        <CurrencyCell value={formatC(totalGastosOpCurrent)} bgClass="bg-slate-200" isBold={true} />
                         <td className="bg-white border-none"></td>
                         <CurrencyCell value={formatC(totalGastosOpAcum)} bgClass="bg-slate-200" isBold={true} />
                     </tr>
@@ -609,8 +798,8 @@ function PyGReportTable({
                             <div className="font-bold uppercase text-xs">GASTOS ADMINISTRATIVOS</div>
                             <div className="text-[9px] opacity-80 font-normal leading-tight mt-0.5">(Gestion Contable, tecnica, compras, TTHH, comercial)</div>
                         </td>
-                        <CurrencyCell value={formatC(adminDic)} bgClass="bg-slate-200" isBold={true} />
-                        <CurrencyCell value={formatC(adminEne)} bgClass="bg-slate-200" isBold={true} />
+                        <CurrencyCell value={formatC(adminPrev)} bgClass="bg-slate-200" isBold={true} />
+                        <CurrencyCell value={formatC(adminCurrent)} bgClass="bg-slate-200" isBold={true} />
                         <td style={{ width: '3%' }} className="bg-white border-none"></td>
                         <CurrencyCell value={formatC(adminAcum)} bgClass="bg-slate-200" isBold={true} />
                     </tr>
@@ -621,8 +810,8 @@ function PyGReportTable({
                 <tbody>
                     <tr>
                         <td style={{ width: '45%' }} className="px-4 py-3 bg-[#1c2938] text-white text-right font-bold text-xs uppercase border border-[#1c2938]">GASTOS TOTALES</td>
-                        <CurrencyCell value={formatC(totalGastosDic)} bgClass="bg-slate-200" isBold={true} />
-                        <CurrencyCell value={formatC(totalGastosEne)} bgClass="bg-slate-200" isBold={true} />
+                        <CurrencyCell value={formatC(totalGastosPrev)} bgClass="bg-slate-200" isBold={true} />
+                        <CurrencyCell value={formatC(totalGastosCurrent)} bgClass="bg-slate-200" isBold={true} />
                         <td style={{ width: '3%' }} className="bg-white border-none"></td>
                         <CurrencyCell value={formatC(totalGastosAcum)} bgClass="bg-slate-200" isBold={true} />
                     </tr>
@@ -633,8 +822,8 @@ function PyGReportTable({
                 <tbody>
                     <tr>
                         <td style={{ width: '45%' }} className="px-4 py-3 bg-[#d46b28] text-white text-right font-bold text-xs uppercase border border-[#d46b28]">UTILIDAD / PERDIDA</td>
-                        <CurrencyCell value={formatC(utilDic)} bgClass="bg-slate-200" isBold={true} />
-                        <CurrencyCell value={formatC(utilEne)} bgClass="bg-slate-200" isBold={true} />
+                        <CurrencyCell value={formatC(utilPrev)} bgClass="bg-slate-200" isBold={true} />
+                        <CurrencyCell value={formatC(utilCurrent)} bgClass="bg-slate-200" isBold={true} />
                         <td style={{ width: '3%' }} className="bg-white border-none"></td>
                         <CurrencyCell value={formatC(utilAcum)} bgClass="bg-slate-200" isBold={true} />
                     </tr>
