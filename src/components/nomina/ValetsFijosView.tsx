@@ -33,6 +33,7 @@ interface HorarioFijoGuardado {
 }
 
 interface EventoCalendario {
+  empleadoCedula: string;
   empleadoNombre: string;
   dia: DiaLaboralKey;
   horaEntrada: string;
@@ -189,6 +190,7 @@ const diaLaboralAIndice = (dia: DiaLaboralKey): number => {
 };
 
 interface BloqueCalendario {
+  cedula: string;
   nombre: string;
   horaEntrada: string;
   horaSalida: string;
@@ -198,6 +200,29 @@ interface BloqueCalendario {
   lane: number;
   lanesTotal: number;
 }
+
+const COLORES_EMPLEADO: Array<{ bg: string; border: string; text: string }> = [
+  { bg: '#dbeafe', border: '#1d4ed8', text: '#1e3a5f' },  // azul
+  { bg: '#dcfce7', border: '#15803d', text: '#14532d' },  // verde
+  { bg: '#fef08a', border: '#ca8a04', text: '#713f12' },  // amarillo
+  { bg: '#fecaca', border: '#dc2626', text: '#7f1d1d' },  // rojo
+  { bg: '#e9d5ff', border: '#7c3aed', text: '#4c1d95' },  // violeta
+  { bg: '#fed7aa', border: '#ea580c', text: '#7c2d12' },  // naranja
+  { bg: '#99f6e4', border: '#0d9488', text: '#134e4a' },  // teal
+  { bg: '#fce7f3', border: '#be185d', text: '#831843' },  // rosa fuerte
+  { bg: '#e0f2fe', border: '#0369a1', text: '#0c4a6e' },  // celeste
+  { bg: '#d1fae5', border: '#065f46', text: '#064e3b' },  // esmeralda oscuro
+  { bg: '#fef3c7', border: '#b45309', text: '#78350f' },  // ámbar
+  { bg: '#ede9fe', border: '#5b21b6', text: '#3b0764' },  // índigo
+];
+
+const hashCedula = (cedula: string): number => {
+  let h = 0;
+  for (let i = 0; i < cedula.length; i++) {
+    h = (h * 31 + cedula.charCodeAt(i)) >>> 0;
+  }
+  return h;
+};
 
 const obtenerBloquesCalendarioDia = (
   eventosCalendario: EventoCalendario[],
@@ -215,6 +240,7 @@ const obtenerBloquesCalendarioDia = (
       const inicio = entradaH * 60 + entradaM;
       const fin = salidaH * 60 + salidaM;
       return {
+        cedula: evento.empleadoCedula,
         nombre: evento.empleadoNombre,
         horaEntrada: evento.horaEntrada,
         horaSalida: evento.horaSalida,
@@ -249,6 +275,7 @@ const obtenerBloquesCalendarioDia = (
   const lanesTotal = Math.max(1, finPorLane.length);
 
   return eventosConLane.map((evento) => ({
+    cedula: evento.cedula,
     nombre: evento.nombre,
     horaEntrada: evento.horaEntrada,
     horaSalida: evento.horaSalida,
@@ -1145,6 +1172,7 @@ const ValetsFijosView = () => {
 
   const eventosCalendarioPeriodo = useMemo(() => {
     const eventosBase: EventoCalendario[] = horariosCentroPeriodo.map((item) => ({
+      empleadoCedula: item.empleadoCedula,
       empleadoNombre: item.empleadoNombre,
       dia: item.dia,
       horaEntrada: item.horaEntrada,
@@ -1167,6 +1195,7 @@ const ValetsFijosView = () => {
         return semana.dias
           .filter((diaAdicional) => diaAdicional.horaEntrada && diaAdicional.horaSalida)
           .map((diaAdicional) => ({
+            empleadoCedula: asignacion.empleadoCedula,
             empleadoNombre: asignacion.empleadoNombre,
             dia: diaAdicional.dia,
             horaEntrada: diaAdicional.horaEntrada,
@@ -1177,6 +1206,21 @@ const ValetsFijosView = () => {
 
     return [...eventosBase, ...adicionales];
   }, [horariosCentroPeriodo, centroHorarioSeleccionado, asignacionesCentro, adicionalesPorEmpleado, anio, mes, semanaHorario]);
+
+  const colorIndexPorCedula = useMemo(() => {
+    const mapa = new Map<string, number>();
+    for (const evento of eventosCalendarioPeriodo) {
+      if (!mapa.has(evento.empleadoCedula)) {
+        mapa.set(evento.empleadoCedula, mapa.size % COLORES_EMPLEADO.length);
+      }
+    }
+    return mapa;
+  }, [eventosCalendarioPeriodo]);
+
+  const colorPorCedulaLocal = (cedula: string) => {
+    const idx = colorIndexPorCedula.get(cedula) ?? (hashCedula(cedula) % COLORES_EMPLEADO.length);
+    return COLORES_EMPLEADO[idx]!;
+  };
 
   const diasCalendario = useMemo(() => {
     return [...DIAS_LABORALES];
@@ -1443,26 +1487,39 @@ const ValetsFijosView = () => {
                         />
                       ))}
 
-                      {bloques.map((bloque, idx) => (
+                      {bloques.map((bloque, idx) => {
+                        const color = colorPorCedulaLocal(bloque.cedula);
+                        return (
                         <div
                           key={`${dia.key}-${bloque.nombre}-${bloque.horaEntrada}-${bloque.horaSalida}-${idx}`}
-                          className={`absolute rounded text-[10px] leading-tight px-1.5 py-0.5 overflow-hidden ${
-                            bloque.esAdicional
-                              ? 'border border-red-300 bg-red-100 text-red-900'
-                              : 'border border-blue-300 bg-blue-100 text-blue-900'
-                          }`}
+                          className="absolute rounded text-[10px] leading-tight px-1.5 py-0.5 overflow-visible group/bloque cursor-default z-10 hover:z-50"
                           style={{
                             top: `${bloque.top + 2}px`,
                             height: `${Math.max(18, bloque.height - 4)}px`,
                             left: `calc(${(bloque.lane * 100) / bloque.lanesTotal}% + 2px)`,
                             width: `calc(${100 / bloque.lanesTotal}% - 4px)`,
+                            backgroundColor: color.bg,
+                            borderWidth: '1px',
+                            borderStyle: bloque.esAdicional ? 'dashed' : 'solid',
+                            borderColor: color.border,
+                            color: color.text,
                           }}
-                          title={`${bloque.nombre} (${bloque.horaEntrada}-${bloque.horaSalida})`}
                         >
-                          <div className="font-semibold truncate">{bloque.nombre}</div>
-                          <div className="text-[10px] opacity-80">{bloque.horaEntrada} - {bloque.horaSalida}</div>
+                          <div className="font-semibold truncate overflow-hidden">{bloque.nombre}</div>
+                          <div className="text-[10px] opacity-75 truncate overflow-hidden">{bloque.horaEntrada} - {bloque.horaSalida}</div>
+                          {/* Tooltip hover */}
+                          <div
+                            className="pointer-events-none absolute z-50 hidden group-hover/bloque:block left-full top-0 ml-1 min-w-[160px] rounded-lg shadow-xl border text-xs p-2 whitespace-nowrap"
+                            style={{ backgroundColor: color.bg, borderColor: color.border, color: color.text }}
+                          >
+                            <div className="font-bold mb-0.5">{bloque.nombre}</div>
+                            <div className="opacity-80">CI: {bloque.cedula}</div>
+                            <div className="mt-1 font-semibold">{bloque.horaEntrada} – {bloque.horaSalida}</div>
+                            {bloque.esAdicional && <div className="mt-0.5 italic opacity-70">Día adicional</div>}
+                          </div>
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   );
                 })}
