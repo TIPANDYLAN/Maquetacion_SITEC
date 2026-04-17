@@ -4,13 +4,14 @@ import OrdenCompraView from './OrdenCompraView';
 import RevisionView from './RevisionView.tsx';
 
 export type Tab = 'solicitar' | 'orden_compra' | 'revision';
+export type AccesorioTipo = 'botas' | 'auriculares';
 
 export interface FilaEmpleado {
   id: string;
   empleadoNombre: string;
   empleadoCedula: string;
   centroCosto: string;
-  accesorio: 'botas' | 'auriculares';
+  accesorio: AccesorioTipo;
   talla: string;
 }
 
@@ -21,6 +22,14 @@ export interface SolicitudGuardada {
   estado: 'creada' | 'orden_generada' | 'pedido_realizado';
 }
 
+export interface OrdenAccesorioResumen {
+  numeroOrden: string;
+  totalValor: number;
+  fecha: string;
+  archivoOrdenNombre?: string;
+  archivoValidadaNombre?: string;
+}
+
 export interface OrdenCompraResumen {
   solicitudId: string;
   numeroOrden: string;
@@ -29,6 +38,7 @@ export interface OrdenCompraResumen {
   filas: FilaEmpleado[];
   archivoOrdenNombre?: string;
   archivoValidadaNombre?: string;
+  ordenesPorAccesorio?: Partial<Record<AccesorioTipo, OrdenAccesorioResumen>>;
   numeroFactura?: string;
   cuotasPorAccesorio?: Record<string, string>;
 }
