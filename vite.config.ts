@@ -81,6 +81,18 @@ export default defineConfig({
           })
         },
       },
+      '/api/accesorios': {
+        target: 'http://localhost:4000',
+        changeOrigin: true,
+        configure: (proxy) => {
+          proxy.on('error', (_error, _req, res) => {
+            responderProxyNoDisponible(res, {
+              error: 'Backend de accesorios no disponible',
+              details: 'Inicia el backend con npm run dev:backend',
+            })
+          })
+        },
+      },
       '/api/n8n': {
         target: 'https://n8n.172.10.219.15.sslip.io',
         changeOrigin: true,

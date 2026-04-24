@@ -15,6 +15,9 @@ export const DB_API_CATALOG = {
   contabilidadPygConfiguracionCuenta: '/api/contabilidad/pyg/configuracion-cuenta',
   contabilidadPygRubrosPeriodo: '/api/contabilidad/pyg/rubros-periodo',
   contabilidadPygSaveConfiguracionCentroCosto: '/api/contabilidad/pyg/configuracion-centro-costo',
+  accesoriosSolicitudes: '/api/accesorios/solicitudes',
+  accesoriasOrdenes: '/api/accesorios/ordenes',
+  accesoriasArchivos: '/api/accesorios/archivos',
 } as const;
 
 interface PeriodSummary {

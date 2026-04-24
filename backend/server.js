@@ -2243,6 +2243,657 @@ app.delete('/api/nomina/distribucion-plantillas-empleados/:plantillaId/:empleado
   }
 });
 
+// =====================================================
+// ENDPOINTS Y FUNCIONES PARA ÓRDENES DE ACCESORIOS
+// =====================================================
+
+const ensureAccesoriosTable = async () => {
+  // Tabla de solicitudes
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS solicitudes_accesorios (
+      id VARCHAR(50) PRIMARY KEY,
+      fecha TIMESTAMP NOT NULL,
+      estado VARCHAR(50) NOT NULL CHECK (estado IN ('creada', 'orden_generada', 'pedido_realizado')),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_solicitudes_accesorios_fecha
+      ON solicitudes_accesorios (fecha DESC)
+  `);
+
+  // Tabla de líneas de solicitud
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS lineas_solicitud (
+      id VARCHAR(50) PRIMARY KEY,
+      solicitud_id VARCHAR(50) NOT NULL REFERENCES solicitudes_accesorios(id) ON DELETE CASCADE,
+      empleado_nombre VARCHAR(255) NOT NULL,
+      empleado_cedula VARCHAR(20) NOT NULL,
+      centro_costo VARCHAR(100) NOT NULL,
+      accesorio VARCHAR(50) NOT NULL CHECK (accesorio IN ('botas', 'auriculares')),
+      talla VARCHAR(20) NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await pool.query(`
+    ALTER TABLE lineas_solicitud
+    ADD COLUMN IF NOT EXISTS acta BOOLEAN NOT NULL DEFAULT FALSE
+  `);
+
+  await pool.query(`
+    ALTER TABLE lineas_solicitud
+    ADD COLUMN IF NOT EXISTS numero_factura VARCHAR(100)
+  `);
+
+  await pool.query(`
+    ALTER TABLE lineas_solicitud
+    ADD COLUMN IF NOT EXISTS cuotas VARCHAR(50)
+  `);
+
+  await pool.query(`
+    ALTER TABLE lineas_solicitud
+    ADD COLUMN IF NOT EXISTS valor NUMERIC(18,4)
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_lineas_solicitud_solicitud
+      ON lineas_solicitud (solicitud_id)
+  `);
+
+  await pool.query('DROP TABLE IF EXISTS ordenes_accesorios CASCADE');
+
+  // Tabla de metadata de archivos subidos (sin contenido)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS archivos_accesorios (
+      id BIGSERIAL PRIMARY KEY,
+      solicitud_id VARCHAR(50) NOT NULL REFERENCES solicitudes_accesorios(id) ON DELETE CASCADE,
+      tipo VARCHAR(50) NOT NULL CHECK (tipo IN ('orden', 'acta', 'orden_validada')),
+      nombre_archivo VARCHAR(255) NOT NULL,
+      accesorio VARCHAR(50) CHECK (accesorio IN ('botas', 'auriculares')),
+      empleado_cedula VARCHAR(20),
+      numero_orden VARCHAR(100),
+      total_valor NUMERIC(18, 4) NOT NULL DEFAULT 0,
+      fecha_carga TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_archivos_accesorios_solicitud
+      ON archivos_accesorios (solicitud_id)
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_archivos_accesorios_tipo
+      ON archivos_accesorios (tipo)
+  `);
+};
+
+// Endpoints para solicitudes
+app.get('/api/accesorios/solicitudes', async (req, res) => {
+  try {
+    await ensureAccesoriosTable();
+    
+    const result = await pool.query(`
+      SELECT 
+        s.id, s.fecha, s.estado,
+        COALESCE(
+          json_agg(
+            json_build_object(
+              'id', l.id,
+              'empleadoNombre', l.empleado_nombre,
+              'empleadoCedula', l.empleado_cedula,
+              'centroCosto', l.centro_costo,
+              'accesorio', l.accesorio,
+              'talla', l.talla,
+              'acta', l.acta,
+              'numeroFactura', l.numero_factura,
+              'cuotas', l.cuotas,
+              'valor', l.valor
+            )
+          ) FILTER (WHERE l.id IS NOT NULL),
+          '[]'::json
+        ) as filas
+      FROM solicitudes_accesorios s
+      LEFT JOIN lineas_solicitud l ON l.solicitud_id = s.id
+      GROUP BY s.id
+      ORDER BY s.fecha DESC
+    `);
+
+    res.status(200).json({
+      ok: true,
+      solicitudes: result.rows.map(row => ({
+        id: row.id,
+        fecha: row.fecha.toLocaleDateString('es-ES'),
+        filas: Array.isArray(row.filas) ? row.filas : [],
+        estado: row.estado,
+      })),
+    });
+  } catch (error) {
+    console.error('[GET /api/accesorios/solicitudes] Error:', error instanceof Error ? error.message : String(error));
+    res.status(500).json({
+      error: 'No se pudo cargar las solicitudes',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+app.post('/api/accesorios/solicitudes', async (req, res) => {
+  const solicitudId = String(req.body?.id || '').trim();
+  const filas = Array.isArray(req.body?.filas) ? req.body.filas : [];
+  const estado = String(req.body?.estado || 'creada').trim();
+
+  if (!solicitudId || filas.length === 0) {
+    res.status(400).json({ error: 'Se requiere id y al menos una fila' });
+    return;
+  }
+
+  try {
+    await ensureAccesoriosTable();
+    
+    // Verificar si ya existe
+    const existe = await pool.query(
+      'SELECT id FROM solicitudes_accesorios WHERE id = $1',
+      [solicitudId]
+    );
+
+    if (existe.rows.length > 0) {
+      res.status(400).json({ error: 'La solicitud ya existe' });
+      return;
+    }
+
+    await pool.query('BEGIN');
+
+    // Insertar solicitud
+    await pool.query(
+      `INSERT INTO solicitudes_accesorios (id, fecha, estado)
+       VALUES ($1, $2, $3)`,
+      [solicitudId, new Date(), estado]
+    );
+
+    // Insertar filas
+    for (const fila of filas) {
+      await pool.query(
+        `INSERT INTO lineas_solicitud 
+         (id, solicitud_id, empleado_nombre, empleado_cedula, centro_costo, accesorio, talla)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [
+          fila.id,
+          solicitudId,
+          String(fila.empleadoNombre || ''),
+          String(fila.empleadoCedula || ''),
+          String(fila.centroCosto || ''),
+          String(fila.accesorio || ''),
+          String(fila.talla || ''),
+        ]
+      );
+    }
+
+    await pool.query('COMMIT');
+
+    res.status(201).json({
+      ok: true,
+      solicitudId,
+      filasGuardadas: filas.length,
+    });
+  } catch (error) {
+    await pool.query('ROLLBACK').catch(() => {});
+    console.error('[POST /api/accesorios/solicitudes] Error:', error instanceof Error ? error.message : String(error));
+    res.status(500).json({
+      error: 'No se pudo guardar la solicitud',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+app.put('/api/accesorios/solicitudes/:id', async (req, res) => {
+  const id = String(req.params.id || '').trim();
+  const estado = String(req.body?.estado || '').trim();
+
+  if (!id || !estado) {
+    res.status(400).json({ error: 'Se requiere id y estado' });
+    return;
+  }
+
+  try {
+    await ensureAccesoriosTable();
+    
+    const result = await pool.query(
+      `UPDATE solicitudes_accesorios 
+       SET estado = $1, updated_at = NOW()
+       WHERE id = $2
+       RETURNING *`,
+      [estado, id]
+    );
+
+    if (result.rows.length === 0) {
+      res.status(404).json({ error: 'Solicitud no encontrada' });
+      return;
+    }
+
+    res.status(200).json({
+      ok: true,
+      solicitud: result.rows[0],
+    });
+  } catch (error) {
+    console.error('[PUT /api/accesorios/solicitudes/:id] Error:', error instanceof Error ? error.message : String(error));
+    res.status(500).json({
+      error: 'No se pudo actualizar la solicitud',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+// Endpoints para órdenes de compra
+app.get('/api/accesorios/ordenes', async (req, res) => {
+  try {
+    await ensureAccesoriosTable();
+    const archivosResult = await pool.query(`
+      SELECT
+        solicitud_id,
+        accesorio,
+        LOWER(TRIM(tipo)) AS tipo,
+        nombre_archivo,
+        numero_orden,
+        total_valor,
+        fecha_carga
+      FROM archivos_accesorios
+      WHERE LOWER(TRIM(tipo)) IN ('orden', 'orden_validada')
+        AND NULLIF(TRIM(COALESCE(accesorio, '')), '') IS NOT NULL
+      ORDER BY fecha_carga DESC
+    `);
+
+    const grouped = new Map();
+
+    for (const row of archivosResult.rows) {
+      const solicitudId = String(row.solicitud_id || '').trim();
+      const accesorio = String(row.accesorio || '').trim();
+      const tipo = String(row.tipo || '').trim();
+
+      if (!solicitudId || !accesorio || (tipo !== 'orden' && tipo !== 'orden_validada')) {
+        continue;
+      }
+
+      if (!grouped.has(solicitudId)) {
+        grouped.set(solicitudId, {
+          solicitudId,
+          numeroOrden: '',
+          totalValor: 0,
+          fecha: '',
+          filas: [],
+          archivoOrdenNombre: undefined,
+          archivoValidadaNombre: undefined,
+          ordenesPorAccesorio: {},
+          numeroFactura: undefined,
+          cuotasPorAccesorio: {},
+        });
+      }
+
+      const current = grouped.get(solicitudId);
+      const detalleActual = current.ordenesPorAccesorio[accesorio] || {
+        numeroOrden: '',
+        totalValor: 0,
+        fecha: row.fecha_carga ? new Date(row.fecha_carga).toLocaleDateString('es-ES') : new Date().toLocaleDateString('es-ES'),
+      };
+
+      const nombreArchivo = String(row.nombre_archivo || '').trim();
+      const numeroOrden = String(row.numero_orden || '').trim();
+      const totalValor = Number(row.total_valor || 0);
+
+      if (tipo === 'orden') {
+        if (!detalleActual.archivoOrdenNombre && nombreArchivo) {
+          detalleActual.archivoOrdenNombre = nombreArchivo;
+        }
+        if (!detalleActual.numeroOrden && numeroOrden) {
+          detalleActual.numeroOrden = numeroOrden;
+        }
+        if ((!detalleActual.totalValor || Number(detalleActual.totalValor) <= 0) && Number.isFinite(totalValor) && totalValor > 0) {
+          detalleActual.totalValor = totalValor;
+        }
+      }
+
+      if (tipo === 'orden_validada' && !detalleActual.archivoValidadaNombre && nombreArchivo) {
+        detalleActual.archivoValidadaNombre = nombreArchivo;
+      }
+
+      current.ordenesPorAccesorio[accesorio] = detalleActual;
+    }
+
+    const ordenes = Array.from(grouped.values()).map((item) => {
+      const detalles = Object.values(item.ordenesPorAccesorio || {});
+      const numerosOrden = detalles
+        .map((detalle) => String(detalle?.numeroOrden || '').trim())
+        .filter(Boolean);
+      const totalValor = detalles.reduce((acc, detalle) => acc + Number(detalle?.totalValor || 0), 0);
+      const fecha = String(detalles[0]?.fecha || '');
+      const totalOrdenesConArchivo = detalles.filter((detalle) => Boolean(detalle?.archivoOrdenNombre)).length;
+      const totalValidadasConArchivo = detalles.filter((detalle) => Boolean(detalle?.archivoValidadaNombre)).length;
+
+      return {
+        ...item,
+        numeroOrden: numerosOrden.join(' / '),
+        totalValor,
+        fecha,
+        archivoOrdenNombre:
+          totalOrdenesConArchivo > 0
+            ? totalOrdenesConArchivo === 1
+              ? detalles.find((detalle) => detalle?.archivoOrdenNombre)?.archivoOrdenNombre
+              : `${totalOrdenesConArchivo} ordenes cargadas`
+            : undefined,
+        archivoValidadaNombre:
+          totalValidadasConArchivo > 0
+            ? totalValidadasConArchivo === 1
+              ? detalles.find((detalle) => detalle?.archivoValidadaNombre)?.archivoValidadaNombre
+              : `${totalValidadasConArchivo} ordenes validadas`
+            : undefined,
+      };
+    });
+
+    // Adjuntamos filas de empleados por solicitud para que RevisionView tenga detalle
+    const solicitudIds = ordenes.map((item) => String(item.solicitudId || '').trim()).filter(Boolean);
+    if (solicitudIds.length > 0) {
+      const filasResult = await pool.query(
+        `SELECT
+           id,
+           solicitud_id,
+           empleado_nombre,
+           empleado_cedula,
+           centro_costo,
+           accesorio,
+           talla,
+           acta,
+           numero_factura,
+           cuotas,
+           valor
+         FROM lineas_solicitud
+         WHERE solicitud_id = ANY($1::varchar[])
+         ORDER BY solicitud_id ASC, created_at ASC`,
+        [solicitudIds]
+      );
+
+      const filasPorSolicitud = new Map();
+      for (const fila of filasResult.rows) {
+        const solicitudId = String(fila.solicitud_id || '').trim();
+        if (!solicitudId) {
+          continue;
+        }
+
+        if (!filasPorSolicitud.has(solicitudId)) {
+          filasPorSolicitud.set(solicitudId, []);
+        }
+
+        filasPorSolicitud.get(solicitudId).push({
+          id: String(fila.id || ''),
+          empleadoNombre: String(fila.empleado_nombre || ''),
+          empleadoCedula: String(fila.empleado_cedula || ''),
+          centroCosto: String(fila.centro_costo || ''),
+          accesorio: String(fila.accesorio || ''),
+          talla: String(fila.talla || ''),
+          acta: Boolean(fila.acta),
+          numeroFactura: String(fila.numero_factura || '').trim() || undefined,
+          cuotas: String(fila.cuotas || '').trim() || undefined,
+          valor: fila.valor != null ? Number(fila.valor) : undefined,
+        });
+      }
+
+      for (const orden of ordenes) {
+        const filasOrden = filasPorSolicitud.get(String(orden.solicitudId || '').trim()) || [];
+        orden.filas = filasOrden;
+
+        const facturasPorAccesorio = {};
+        for (const fila of filasOrden) {
+          const acc = String(fila.accesorio || '').trim();
+          const factura = String(fila.numeroFactura || '').trim();
+          if (acc && factura && !facturasPorAccesorio[acc]) {
+            facturasPorAccesorio[acc] = factura;
+          }
+        }
+        orden.facturasPorAccesorio = Object.keys(facturasPorAccesorio).length > 0 ? facturasPorAccesorio : undefined;
+
+        const cuotasPorAccesorio = {};
+        for (const fila of filasOrden) {
+          if (String(fila.cuotas || '').trim()) {
+            cuotasPorAccesorio[fila.id] = String(fila.cuotas || '').trim();
+          }
+        }
+        orden.cuotasPorAccesorio = cuotasPorAccesorio;
+      }
+    }
+
+    res.status(200).json({
+      ok: true,
+      ordenes,
+    });
+  } catch (error) {
+    console.error('[GET /api/accesorios/ordenes] Error:', error instanceof Error ? error.message : String(error));
+    res.status(500).json({
+      error: 'No se pudo cargar las órdenes',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+app.post('/api/accesorios/ordenes', async (req, res) => {
+  const solicitudId = String(req.body?.solicitudId || '').trim();
+  const facturasPorAccesorio = req.body?.facturasPorAccesorio || {};
+  const cuotasPorAccesorio = req.body?.cuotasPorAccesorio || {};
+
+  const facturasValidas = Object.entries(facturasPorAccesorio).filter(([, v]) => String(v || '').trim());
+
+  if (!solicitudId || facturasValidas.length === 0) {
+    res.status(400).json({ error: 'Se requiere solicitudId y al menos un numero de factura' });
+    return;
+  }
+
+  try {
+    await ensureAccesoriosTable();
+
+    await pool.query('BEGIN');
+
+    const solicitudExiste = await pool.query(
+      `SELECT id FROM solicitudes_accesorios WHERE id = $1`,
+      [solicitudId]
+    );
+
+    if (solicitudExiste.rows.length === 0) {
+      await pool.query('ROLLBACK');
+      res.status(404).json({ error: 'Solicitud no encontrada' });
+      return;
+    }
+
+    for (const [accesorio, factura] of facturasValidas) {
+      await pool.query(
+        `UPDATE lineas_solicitud
+         SET numero_factura = $1
+         WHERE solicitud_id = $2
+           AND accesorio = $3`,
+        [String(factura).trim(), solicitudId, String(accesorio)]
+      );
+    }
+
+    for (const [lineaId, cuota] of Object.entries(cuotasPorAccesorio)) {
+      const cuotaNormalizada = String(cuota || '').trim();
+      if (!cuotaNormalizada) {
+        continue;
+      }
+
+      await pool.query(
+        `UPDATE lineas_solicitud
+         SET cuotas = $1
+         WHERE id = $2
+           AND solicitud_id = $3`,
+        [cuotaNormalizada, String(lineaId), solicitudId]
+      );
+    }
+
+    await pool.query('COMMIT');
+
+    res.status(201).json({
+      ok: true,
+      solicitudId,
+    });
+  } catch (error) {
+    await pool.query('ROLLBACK').catch(() => {});
+    console.error('[POST /api/accesorios/ordenes] Error:', error instanceof Error ? error.message : String(error));
+    res.status(500).json({
+      error: 'No se pudo guardar la revision',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+app.post('/api/accesorios/archivos', async (req, res) => {
+  const solicitudId = String(req.body?.solicitudId || '').trim();
+  const tipo = String(req.body?.tipo || '').trim();
+  const nombreArchivo = String(req.body?.nombreArchivo || '').trim();
+  const accesorio = String(req.body?.accesorio || '').trim();
+  const empleadoCedula = String(req.body?.empleadoCedula || '').trim();
+  const numeroOrden = String(req.body?.numeroOrden || '').trim();
+  const totalValor = parseValor(req.body?.totalValor);
+
+  if (!solicitudId || !tipo || !nombreArchivo) {
+    res.status(400).json({ error: 'Se requiere solicitudId, tipo y nombreArchivo' });
+    return;
+  }
+
+  try {
+    await ensureAccesoriosTable();
+
+    if (tipo === 'orden_validada' && accesorio) {
+      const validacionActas = await pool.query(
+        `SELECT
+           COUNT(*)::int AS total,
+           COUNT(*) FILTER (WHERE acta = TRUE)::int AS con_acta
+         FROM lineas_solicitud
+         WHERE solicitud_id = $1
+           AND accesorio = $2`,
+        [solicitudId, accesorio]
+      );
+
+      const total = Number(validacionActas.rows[0]?.total || 0);
+      const conActa = Number(validacionActas.rows[0]?.con_acta || 0);
+
+      if (total === 0) {
+        res.status(400).json({ error: 'No hay lineas para validar en este accesorio' });
+        return;
+      }
+
+      if (conActa < total) {
+        res.status(400).json({
+          error: 'No se puede generar la orden validada: faltan actas por cargar',
+        });
+        return;
+      }
+    }
+
+    const result = await pool.query(
+      `INSERT INTO archivos_accesorios
+       (solicitud_id, tipo, nombre_archivo, accesorio, empleado_cedula, numero_orden, total_valor)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING id, solicitud_id, tipo, nombre_archivo, accesorio, empleado_cedula, numero_orden, total_valor, fecha_carga`,
+      [
+        solicitudId,
+        tipo,
+        nombreArchivo,
+        accesorio || null,
+        empleadoCedula || null,
+        numeroOrden || null,
+        Number.isFinite(totalValor) ? totalValor : 0,
+      ]
+    );
+
+    if (tipo === 'acta' && empleadoCedula) {
+      await pool.query(
+        `UPDATE lineas_solicitud
+         SET acta = TRUE
+         WHERE solicitud_id = $1
+           AND empleado_cedula = $2`,
+        [
+          solicitudId,
+          empleadoCedula,
+        ]
+      );
+    }
+
+    if (tipo === 'orden' && accesorio && Number.isFinite(totalValor) && totalValor > 0) {
+      const countResult = await pool.query(
+        `SELECT COUNT(*)::int AS cnt
+         FROM lineas_solicitud
+         WHERE solicitud_id = $1
+           AND accesorio = $2`,
+        [solicitudId, accesorio]
+      );
+      const count = Number(countResult.rows[0]?.cnt || 0);
+      if (count > 0) {
+        const valorPorPersona = totalValor / count;
+        await pool.query(
+          `UPDATE lineas_solicitud
+           SET valor = $1
+           WHERE solicitud_id = $2
+             AND accesorio = $3`,
+          [valorPorPersona, solicitudId, accesorio]
+        );
+      }
+    }
+
+    res.status(201).json({
+      ok: true,
+      registro: result.rows[0],
+    });
+  } catch (error) {
+    console.error('[POST /api/accesorios/archivos] Error:', error instanceof Error ? error.message : String(error));
+    res.status(500).json({
+      error: 'No se pudo guardar metadata de archivo',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+app.get('/api/accesorios/archivos/:solicitudId', async (req, res) => {
+  const solicitudId = String(req.params.solicitudId || '').trim();
+
+  if (!solicitudId) {
+    res.status(400).json({ error: 'Se requiere solicitudId' });
+    return;
+  }
+
+  try {
+    await ensureAccesoriosTable();
+
+    const result = await pool.query(
+      `SELECT
+         id,
+         solicitud_id,
+         tipo,
+         nombre_archivo,
+         accesorio,
+         empleado_cedula,
+         numero_orden,
+         total_valor,
+         fecha_carga
+       FROM archivos_accesorios
+       WHERE solicitud_id = $1
+       ORDER BY fecha_carga DESC`,
+      [solicitudId]
+    );
+
+    res.status(200).json({
+      ok: true,
+      archivos: result.rows,
+    });
+  } catch (error) {
+    console.error('[GET /api/accesorios/archivos/:solicitudId] Error:', error instanceof Error ? error.message : String(error));
+    res.status(500).json({
+      error: 'No se pudo cargar metadata de archivos',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+
 const startServer = async () => {
   try {
     await checkPostgresConnection();
@@ -2262,6 +2913,7 @@ const startServer = async () => {
     await ensureValetFijoHorarioTable();
     await ensureDistribucionPlantillasTable();
     await ensureEmpleadoDistribucionPlantillaTable();
+    await ensureAccesoriosTable();
     app.listen(PORT, () => {
       console.log(`humana-backend escuchando en http://localhost:${PORT}`);
     });

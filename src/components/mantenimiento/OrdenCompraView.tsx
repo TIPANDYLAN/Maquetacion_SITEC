@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { CheckCircle, ChevronDown, ChevronRight, Download, Eye, FileText, Upload, X } from 'lucide-react';
+import { dbApiFetch, DB_API_CATALOG } from '../../services/dbApi';
 import type {
   AccesorioTipo,
   FilaEmpleado,
@@ -26,6 +27,16 @@ interface ArchivoSubido {
   file?: File;
 }
 
+interface ArchivoRegistrado {
+  solicitudId: string;
+  tipo: 'orden' | 'acta' | 'orden_validada';
+  nombreArchivo: string;
+  accesorio?: AccesorioTipo;
+  empleadoCedula?: string;
+  numeroOrden?: string;
+  totalValor?: number;
+}
+
 interface FilaSeleccionadaContext {
   solicitudId: string;
   fila: FilaEmpleado;
@@ -47,6 +58,12 @@ const obtenerTiposAccesorio = (filas: FilaEmpleado[]): AccesorioTipo[] => {
 };
 
 const getAccesorioLabel = (accesorio: AccesorioTipo) => ACCESORIOS_CONFIG[accesorio].label;
+
+const extraerCedulaDesdeNombreActa = (nombre: string): string => {
+  const raw = String(nombre || '').trim();
+  const match = raw.match(/^Acta_([^_]+)_/i);
+  return match ? String(match[1] || '').trim() : '';
+};
 
 const construirResumenOrden = (
   solicitud: SolicitudGuardada,
@@ -79,16 +96,56 @@ const construirResumenOrden = (
           : `${totalValidadas} ordenes validadas`
         : undefined,
     ordenesPorAccesorio,
-    numeroFactura: ordenActual?.numeroFactura,
+    facturasPorAccesorio: ordenActual?.facturasPorAccesorio,
     cuotasPorAccesorio: ordenActual?.cuotasPorAccesorio,
   };
 };
 
 const OrdenCompraView = ({ solicitudes, ordenesCompra, onUpdateEstado, onOrdenCompraSubida, onPedidoRealizado }: OrdenCompraViewProps) => {
   const [archivos, setArchivos] = useState<ArchivoSubido[]>([]);
+  const [archivosRegistrados, setArchivosRegistrados] = useState<ArchivoRegistrado[]>([]);
   const [filaSeleccionada, setFilaSeleccionada] = useState<FilaSeleccionadaContext | null>(null);
   const [generandoActaPersonal, setGenerandoActaPersonal] = useState(false);
   const [expandedSolicitud, setExpandedSolicitud] = useState<string | null>(null);
+
+  useEffect(() => {
+    const cargarArchivosRegistrados = async () => {
+      if (solicitudes.length === 0) {
+        setArchivosRegistrados([]);
+        return;
+      }
+
+      try {
+        const respuestas = await Promise.all(
+          solicitudes.map(async (solicitud) => {
+            const response = await dbApiFetch<{ ok: boolean; archivos?: Array<Record<string, unknown>> }>({
+              endpoint: `${DB_API_CATALOG.accesoriasArchivos}/${solicitud.id}`,
+              method: 'GET',
+              allow404: true,
+            });
+
+            return Array.isArray(response?.archivos) ? response.archivos : [];
+          }),
+        );
+
+        const normalizados = respuestas.flat().map((item) => ({
+          solicitudId: String(item.solicitud_id ?? item.solicitudId ?? ''),
+          tipo: String(item.tipo ?? '') as ArchivoRegistrado['tipo'],
+          nombreArchivo: String(item.nombre_archivo ?? item.nombreArchivo ?? ''),
+          accesorio: item.accesorio ? String(item.accesorio) as AccesorioTipo : undefined,
+          empleadoCedula: item.empleado_cedula ? String(item.empleado_cedula) : item.empleadoCedula ? String(item.empleadoCedula) : undefined,
+          numeroOrden: item.numero_orden ? String(item.numero_orden) : item.numeroOrden ? String(item.numeroOrden) : undefined,
+          totalValor: Number(item.total_valor ?? item.totalValor ?? 0),
+        })).filter((item) => item.solicitudId && item.tipo && item.nombreArchivo);
+
+        setArchivosRegistrados(normalizados);
+      } catch (error) {
+        console.error('Error cargando metadata de archivos:', error);
+      }
+    };
+
+    void cargarArchivosRegistrados();
+  }, [solicitudes]);
 
   if (solicitudes.length === 0) {
     return (
@@ -118,16 +175,50 @@ const OrdenCompraView = ({ solicitudes, ordenesCompra, onUpdateEstado, onOrdenCo
     return [...archivos]
       .reverse()
       .find(
-        (archivo) => archivo.tipo === 'acta' && archivo.solicitudId === solicitudId && archivo.empleadoCedula === empleadoCedula,
+        (archivo) => {
+          if (archivo.tipo !== 'acta' || archivo.solicitudId !== solicitudId) {
+            return false;
+          }
+          const cedulaArchivo = String(archivo.empleadoCedula || '').trim() || extraerCedulaDesdeNombreActa(archivo.nombre);
+          return cedulaArchivo === empleadoCedula;
+        },
+      );
+  };
+
+  const getActaRegistrada = (solicitudId: string, empleadoCedula: string) => {
+    return [...archivosRegistrados]
+      .reverse()
+      .find(
+        (archivo) => {
+          if (archivo.tipo !== 'acta' || archivo.solicitudId !== solicitudId) {
+            return false;
+          }
+          const cedulaArchivo = String(archivo.empleadoCedula || '').trim() || extraerCedulaDesdeNombreActa(archivo.nombreArchivo);
+          return cedulaArchivo === empleadoCedula;
+        },
       );
   };
 
   const getActasCompletas = (solicitudId: string) => {
-    return new Set(
-      archivos
-        .filter((archivo) => archivo.tipo === 'acta' && archivo.solicitudId === solicitudId && archivo.empleadoCedula)
-        .map((archivo) => archivo.empleadoCedula),
-    ).size;
+    const cedulasRegistradas = archivosRegistrados
+      .filter((archivo) => archivo.tipo === 'acta' && archivo.solicitudId === solicitudId)
+      .map((archivo) => String(archivo.empleadoCedula || '').trim() || extraerCedulaDesdeNombreActa(archivo.nombreArchivo))
+      .filter(Boolean);
+
+    return new Set(cedulasRegistradas).size;
+  };
+
+  const existeArchivoRegistrado = (
+    solicitudId: string,
+    tipo: 'orden' | 'orden_validada',
+    accesorio: AccesorioTipo,
+  ) => {
+    return archivosRegistrados.some(
+      (archivo) =>
+        archivo.solicitudId === solicitudId
+        && archivo.tipo === tipo
+        && String(archivo.accesorio || '').trim() === accesorio,
+    );
   };
 
   const getTotalPersonasSolicitud = (solicitud: SolicitudGuardada) => {
@@ -136,6 +227,65 @@ const OrdenCompraView = ({ solicitudes, ordenesCompra, onUpdateEstado, onOrdenCo
         .map((fila) => fila.empleadoCedula)
         .filter((cedula) => Boolean(cedula && cedula.trim())),
     ).size;
+  };
+
+  const registrarArchivoEnBD = async (payload: {
+    solicitudId: string;
+    tipo: 'orden' | 'acta' | 'orden_validada';
+    nombreArchivo: string;
+    accesorio?: AccesorioTipo;
+    empleadoCedula?: string;
+    numeroOrden?: string;
+    totalValor?: number;
+  }): Promise<boolean> => {
+    try {
+      const response = await dbApiFetch<{ ok: boolean; registro?: Record<string, unknown> }>({
+        endpoint: DB_API_CATALOG.accesoriasArchivos,
+        method: 'POST',
+        body: {
+          solicitudId: payload.solicitudId,
+          tipo: payload.tipo,
+          nombreArchivo: payload.nombreArchivo,
+          accesorio: payload.accesorio,
+          empleadoCedula: payload.empleadoCedula,
+          numeroOrden: payload.numeroOrden,
+          totalValor: payload.totalValor,
+        },
+      });
+
+      const registro = response?.registro;
+      if (registro) {
+        const normalizado: ArchivoRegistrado = {
+          solicitudId: String(registro.solicitud_id ?? payload.solicitudId ?? ''),
+          tipo: String(registro.tipo ?? payload.tipo ?? '') as ArchivoRegistrado['tipo'],
+          nombreArchivo: String(registro.nombre_archivo ?? payload.nombreArchivo ?? ''),
+          accesorio: registro.accesorio ? String(registro.accesorio) as AccesorioTipo : payload.accesorio,
+          empleadoCedula: registro.empleado_cedula
+            ? String(registro.empleado_cedula)
+            : payload.empleadoCedula,
+          numeroOrden: registro.numero_orden ? String(registro.numero_orden) : payload.numeroOrden,
+          totalValor: Number(registro.total_valor ?? payload.totalValor ?? 0),
+        };
+
+        setArchivosRegistrados((prev) => {
+          const yaExiste = prev.some(
+            (item) =>
+              item.solicitudId === normalizado.solicitudId
+              && item.tipo === normalizado.tipo
+              && String(item.accesorio || '') === String(normalizado.accesorio || '')
+              && String(item.empleadoCedula || '') === String(normalizado.empleadoCedula || '')
+              && item.nombreArchivo === normalizado.nombreArchivo,
+          );
+          return yaExiste ? prev : [normalizado, ...prev];
+        });
+      }
+
+      return true;
+    } catch (error) {
+      console.error('Error guardando metadata de archivo en BD:', error);
+      window.alert(error instanceof Error ? error.message : 'No se pudo registrar el archivo en BD.');
+      return false;
+    }
   };
 
   const descargarArchivo = (solicitudId: string, tipo: 'orden' | 'orden_validada', accesorio: AccesorioTipo) => {
@@ -158,9 +308,14 @@ const OrdenCompraView = ({ solicitudes, ordenesCompra, onUpdateEstado, onOrdenCo
 
   const descargarActaFirmada = (solicitudId: string, empleadoCedula: string) => {
     const archivo = getActaArchivo(solicitudId, empleadoCedula);
+    const registro = getActaRegistrada(solicitudId, empleadoCedula);
 
     if (!archivo?.file) {
-      window.alert('No hay acta firmada disponible para descargar en esta sesion.');
+      if (registro) {
+        window.alert('El acta esta registrada como subida, pero en esta maqueta no se almacena el archivo para descarga.');
+      } else {
+        window.alert('No hay acta firmada disponible para descargar en esta sesion.');
+      }
       return;
     }
 
@@ -178,101 +333,133 @@ const OrdenCompraView = ({ solicitudes, ordenesCompra, onUpdateEstado, onOrdenCo
     tipo: 'orden' | 'acta' | 'orden_validada',
     solicitud: SolicitudGuardada,
     accesorio?: AccesorioTipo,
+    empleadoCedulaSeleccionada?: string,
   ) => {
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = '.pdf,.doc,.docx';
 
     input.onchange = (event) => {
-      const files = (event.target as HTMLInputElement).files;
-      if (!files || !files[0]) return;
+      void (async () => {
+        const files = (event.target as HTMLInputElement).files;
+        if (!files || !files[0]) return;
 
-      const file = files[0];
-      const solicitudId = solicitud.id;
-      const ordenActual = getOrden(solicitudId);
-      const tiposSolicitud = obtenerTiposAccesorio(solicitud.filas);
+        const file = files[0];
+        const solicitudId = solicitud.id;
+        const empleadoCedulaActa =
+          tipo === 'acta'
+            ? String(empleadoCedulaSeleccionada || filaSeleccionada?.fila.empleadoCedula || '').trim()
+            : String(filaSeleccionada?.fila.empleadoCedula || '').trim();
+        const ordenActual = getOrden(solicitudId);
+        const tiposSolicitud = obtenerTiposAccesorio(solicitud.filas);
 
-      if (tipo !== 'acta' && !accesorio) {
-        window.alert('Seleccione el tipo de accesorio para continuar.');
-        return;
-      }
-
-      if (tipo === 'orden' && ordenActual?.ordenesPorAccesorio?.[accesorio!]?.archivoOrdenNombre) {
-        return;
-      }
-
-      if (tipo === 'orden_validada' && ordenActual?.ordenesPorAccesorio?.[accesorio!]?.archivoValidadaNombre) {
-        return;
-      }
-
-      let numeroOrden = ordenActual?.ordenesPorAccesorio?.[accesorio!]?.numeroOrden || '';
-      let totalValor = ordenActual?.ordenesPorAccesorio?.[accesorio!]?.totalValor || 0;
-
-      if (tipo === 'orden') {
-        const etiqueta = getAccesorioLabel(accesorio!);
-        const numeroIngresado = window.prompt(`Ingrese el numero de orden de compra para ${etiqueta.toLowerCase()}`);
-        if (!numeroIngresado || !numeroIngresado.trim()) return;
-        numeroOrden = numeroIngresado.trim();
-
-        const totalIngresado = window.prompt(`Ingrese el total de la orden para ${etiqueta.toLowerCase()}`);
-        if (!totalIngresado || !totalIngresado.trim()) return;
-
-        totalValor = Number(totalIngresado.replace(',', '.'));
-        if (Number.isNaN(totalValor) || totalValor <= 0) {
-          window.alert('El total debe ser un numero mayor a 0.');
+        if (tipo !== 'acta' && !accesorio) {
+          window.alert('Seleccione el tipo de accesorio para continuar.');
           return;
         }
-      }
 
-      if (tipo === 'orden_validada' && !ordenActual?.ordenesPorAccesorio?.[accesorio!]?.archivoOrdenNombre) {
-        window.alert('Primero debe subir la orden de compra de este accesorio.');
-        return;
-      }
+        if (tipo === 'orden' && existeArchivoRegistrado(solicitudId, 'orden', accesorio!)) {
+          return;
+        }
 
-      setArchivos((prev) => [
-        ...prev,
-        {
+        if (tipo === 'orden_validada' && existeArchivoRegistrado(solicitudId, 'orden_validada', accesorio!)) {
+          return;
+        }
+
+        let numeroOrden = ordenActual?.ordenesPorAccesorio?.[accesorio!]?.numeroOrden || '';
+        let totalValor = ordenActual?.ordenesPorAccesorio?.[accesorio!]?.totalValor || 0;
+
+        if (tipo === 'orden') {
+          const etiqueta = getAccesorioLabel(accesorio!);
+          const numeroIngresado = window.prompt(`Ingrese el numero de orden de compra para ${etiqueta.toLowerCase()}`);
+          if (!numeroIngresado || !numeroIngresado.trim()) return;
+          numeroOrden = numeroIngresado.trim();
+
+          const totalIngresado = window.prompt(`Ingrese el total de la orden para ${etiqueta.toLowerCase()}`);
+          if (!totalIngresado || !totalIngresado.trim()) return;
+
+          totalValor = Number(totalIngresado.replace(',', '.'));
+          if (Number.isNaN(totalValor) || totalValor <= 0) {
+            window.alert('El total debe ser un numero mayor a 0.');
+            return;
+          }
+        }
+
+        if (tipo === 'orden_validada' && !existeArchivoRegistrado(solicitudId, 'orden', accesorio!)) {
+          window.alert('Primero debe subir la orden de compra de este accesorio.');
+          return;
+        }
+
+        const guardadoEnBD = await registrarArchivoEnBD({
           solicitudId,
           tipo,
-          nombre: file.name,
-          fecha: new Date().toLocaleDateString('es-ES'),
+          nombreArchivo: file.name,
           accesorio,
-          empleadoCedula: filaSeleccionada?.fila.empleadoCedula,
-          file,
-        },
-      ]);
+          empleadoCedula: empleadoCedulaActa || undefined,
+          numeroOrden: tipo === 'acta' ? undefined : numeroOrden,
+          totalValor: tipo === 'acta' ? 0 : Number(totalValor || 0),
+        });
 
-      if (tipo === 'orden' || tipo === 'orden_validada') {
-        const ordenesPorAccesorio: Partial<Record<AccesorioTipo, OrdenAccesorioResumen>> = {
-          ...(ordenActual?.ordenesPorAccesorio ?? {}),
-          [accesorio!]: {
-            numeroOrden,
-            totalValor,
+        if (!guardadoEnBD) {
+          return;
+        }
+
+        setArchivos((prev) => [
+          ...prev,
+          {
+            solicitudId,
+            tipo,
+            nombre: file.name,
             fecha: new Date().toLocaleDateString('es-ES'),
-            archivoOrdenNombre:
-              tipo === 'orden'
-                ? file.name
-                : ordenActual?.ordenesPorAccesorio?.[accesorio!]?.archivoOrdenNombre,
-            archivoValidadaNombre:
-              tipo === 'orden_validada'
-                ? file.name
-                : ordenActual?.ordenesPorAccesorio?.[accesorio!]?.archivoValidadaNombre,
+            accesorio,
+            empleadoCedula: empleadoCedulaActa || undefined,
+            file,
           },
-        };
+        ]);
 
-        onOrdenCompraSubida(construirResumenOrden(solicitud, ordenActual, ordenesPorAccesorio));
+        if (tipo === 'orden' || tipo === 'orden_validada') {
+          const ordenesPorAccesorio: Partial<Record<AccesorioTipo, OrdenAccesorioResumen>> = {
+            ...(ordenActual?.ordenesPorAccesorio ?? {}),
+            [accesorio!]: {
+              numeroOrden,
+              totalValor,
+              fecha: new Date().toLocaleDateString('es-ES'),
+              archivoOrdenNombre:
+                tipo === 'orden'
+                  ? file.name
+                  : ordenActual?.ordenesPorAccesorio?.[accesorio!]?.archivoOrdenNombre,
+              archivoValidadaNombre:
+                tipo === 'orden_validada'
+                  ? file.name
+                  : ordenActual?.ordenesPorAccesorio?.[accesorio!]?.archivoValidadaNombre,
+            },
+          };
 
-        const todasOrdenesSubidas = tiposSolicitud.every((tipoAccesorio) => Boolean(ordenesPorAccesorio[tipoAccesorio]?.archivoOrdenNombre));
-        const todasOrdenesValidadas = tiposSolicitud.every((tipoAccesorio) => Boolean(ordenesPorAccesorio[tipoAccesorio]?.archivoValidadaNombre));
+          const resumenOrden = construirResumenOrden(solicitud, ordenActual, ordenesPorAccesorio);
+          onOrdenCompraSubida(resumenOrden);
 
-        if (tipo === 'orden' && todasOrdenesSubidas) {
-          onUpdateEstado(solicitudId, 'orden_generada');
+          const todasOrdenesSubidas = tiposSolicitud.every((tipoAccesorio) => {
+            if (tipo === 'orden' && tipoAccesorio === accesorio) {
+              return true;
+            }
+            return existeArchivoRegistrado(solicitudId, 'orden', tipoAccesorio);
+          });
+          const todasOrdenesValidadas = tiposSolicitud.every((tipoAccesorio) => {
+            if (tipo === 'orden_validada' && tipoAccesorio === accesorio) {
+              return true;
+            }
+            return existeArchivoRegistrado(solicitudId, 'orden_validada', tipoAccesorio);
+          });
+
+          if (tipo === 'orden' && todasOrdenesSubidas) {
+            onUpdateEstado(solicitudId, 'orden_generada');
+          }
+
+          if (tipo === 'orden_validada' && todasOrdenesValidadas) {
+            onPedidoRealizado(solicitudId);
+          }
         }
-
-        if (tipo === 'orden_validada' && todasOrdenesValidadas) {
-          onPedidoRealizado(solicitudId);
-        }
-      }
+      })();
     };
 
     input.click();
@@ -293,6 +480,7 @@ const OrdenCompraView = ({ solicitudes, ordenesCompra, onUpdateEstado, onOrdenCo
           empleadoCedula: filaSeleccionada.fila.empleadoCedula,
         },
       ]);
+
       setGenerandoActaPersonal(false);
     }, 1500);
   };
@@ -311,7 +499,15 @@ const OrdenCompraView = ({ solicitudes, ordenesCompra, onUpdateEstado, onOrdenCo
           const todasActasCompletas = actasCompletas === totalPersonas && totalPersonas > 0;
           const panelAbierto = expandedSolicitud === solicitud.id;
           const tiposSolicitud = obtenerTiposAccesorio(solicitud.filas);
-          const todasOrdenesSubidas = tiposSolicitud.every((tipoAccesorio) => Boolean(orden?.ordenesPorAccesorio?.[tipoAccesorio]?.archivoOrdenNombre));
+          const todasOrdenesSubidas = tiposSolicitud.every((tipoAccesorio) => existeArchivoRegistrado(solicitud.id, 'orden', tipoAccesorio));
+          const todasOrdenesValidadas = tiposSolicitud.every((tipoAccesorio) => existeArchivoRegistrado(solicitud.id, 'orden_validada', tipoAccesorio));
+          const pasoPendiente = !todasOrdenesSubidas
+            ? 'ordenes'
+            : !todasActasCompletas
+              ? 'actas'
+              : !todasOrdenesValidadas
+                ? 'validacion'
+                : 'completado';
 
           return (
             <div key={solicitud.id} className="bg-white overflow-hidden">
@@ -356,6 +552,18 @@ const OrdenCompraView = ({ solicitudes, ordenesCompra, onUpdateEstado, onOrdenCo
                   <div className="text-sm text-slate-500">
                     <p>
                       Fecha: <span className="font-medium text-slate-700">{solicitud.fecha}</span>
+                    </p>
+                    <p>
+                      Paso pendiente:{' '}
+                      <span className="font-medium text-slate-700">
+                        {pasoPendiente === 'ordenes'
+                          ? 'Subir órdenes'
+                          : pasoPendiente === 'actas'
+                            ? 'Subir actas'
+                            : pasoPendiente === 'validacion'
+                              ? 'Subir órdenes validadas'
+                              : 'Flujo completo'}
+                      </span>
                     </p>
                   </div>
 
@@ -420,8 +628,8 @@ const OrdenCompraView = ({ solicitudes, ordenesCompra, onUpdateEstado, onOrdenCo
                   {todasOrdenesSubidas && (
                     <div className="flex flex-wrap gap-2">
                       {tiposSolicitud.map((accesorio) => {
-                        const detalle = orden?.ordenesPorAccesorio?.[accesorio];
-                        if (!detalle?.archivoOrdenNombre) return null;
+                        const ordenSubida = existeArchivoRegistrado(solicitud.id, 'orden', accesorio);
+                        if (!ordenSubida) return null;
 
                         return (
                           <button
@@ -515,8 +723,8 @@ const OrdenCompraView = ({ solicitudes, ordenesCompra, onUpdateEstado, onOrdenCo
                     <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
                       {tiposSolicitud.map((accesorio) => {
                         const detalle = orden?.ordenesPorAccesorio?.[accesorio];
-                        const tieneOrden = Boolean(detalle?.archivoOrdenNombre);
-                        const tieneValidada = Boolean(detalle?.archivoValidadaNombre);
+                        const tieneOrden = existeArchivoRegistrado(solicitud.id, 'orden', accesorio);
+                        const tieneValidada = existeArchivoRegistrado(solicitud.id, 'orden_validada', accesorio);
 
                         return (
                           <div key={`${solicitud.id}-validacion-${accesorio}`} className="border border-slate-200 rounded-2xl overflow-hidden bg-white">
@@ -539,6 +747,12 @@ const OrdenCompraView = ({ solicitudes, ordenesCompra, onUpdateEstado, onOrdenCo
                                 <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-3 text-xs text-emerald-800 space-y-1">
                                   <p><span className="font-semibold">Archivo:</span> {detalle.archivoValidadaNombre}</p>
                                   <p><span className="font-semibold">Orden:</span> {detalle.numeroOrden}</p>
+                                </div>
+                              )}
+
+                              {tieneValidada && !detalle?.archivoValidadaNombre && (
+                                <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-3 text-xs text-emerald-800">
+                                  Orden validada registrada en BD.
                                 </div>
                               )}
 
@@ -609,16 +823,18 @@ const OrdenCompraView = ({ solicitudes, ordenesCompra, onUpdateEstado, onOrdenCo
 
               {(() => {
                 const actaArchivo = getActaArchivo(filaSeleccionada.solicitudId, filaSeleccionada.fila.empleadoCedula);
-                const actaFirmada = Boolean(actaArchivo?.file);
+                const actaRegistrada = getActaRegistrada(filaSeleccionada.solicitudId, filaSeleccionada.fila.empleadoCedula);
+                const actaSubida = Boolean(actaRegistrada || actaArchivo?.file);
+                const actaGenerada = Boolean(actaArchivo && !actaArchivo.file);
 
-                if (!actaArchivo) return null;
+                if (!actaSubida && !actaGenerada) return null;
 
                 return (
                   <div className="bg-emerald-50 rounded-xl p-4 border border-emerald-200 flex items-start gap-2">
                     <CheckCircle size={18} className="text-emerald-600 flex-shrink-0 mt-0.5" />
                     <div className="text-xs text-emerald-700">
-                      <p className="font-semibold">{actaFirmada ? 'Acta firmada cargada' : 'Acta generada'}</p>
-                      <p className="text-emerald-600">{actaFirmada ? 'Lista para descargar' : 'Pendiente de firma y carga'}</p>
+                      <p className="font-semibold">{actaSubida ? 'Acta subida' : 'Acta generada'}</p>
+                      <p className="text-emerald-600">{actaSubida ? 'Registrada para esta solicitud y cédula' : 'Pendiente de firma y carga'}</p>
                     </div>
                   </div>
                 );
@@ -628,16 +844,18 @@ const OrdenCompraView = ({ solicitudes, ordenesCompra, onUpdateEstado, onOrdenCo
             <div className="px-6 py-5 bg-slate-50 border-t border-slate-200 flex flex-col gap-3">
               {(() => {
                 const actaArchivo = getActaArchivo(filaSeleccionada.solicitudId, filaSeleccionada.fila.empleadoCedula);
-                const actaFirmada = Boolean(actaArchivo?.file);
+                const actaRegistrada = getActaRegistrada(filaSeleccionada.solicitudId, filaSeleccionada.fila.empleadoCedula);
+                const actaSubida = Boolean(actaRegistrada || actaArchivo?.file);
+                const actaFirmadaEnSesion = Boolean(actaArchivo?.file);
 
-                if (actaFirmada) {
+                if (actaSubida) {
                   return (
                     <button
                       onClick={() => descargarActaFirmada(filaSeleccionada.solicitudId, filaSeleccionada.fila.empleadoCedula)}
                       className="flex items-center justify-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-semibold transition"
                     >
                       <Download size={16} />
-                      Descargar Acta Firmada
+                      {actaFirmadaEnSesion ? 'Descargar Acta Firmada' : 'Descargar Acta Subida'}
                     </button>
                   );
                 }
@@ -646,7 +864,7 @@ const OrdenCompraView = ({ solicitudes, ordenesCompra, onUpdateEstado, onOrdenCo
                   <>
                     <button
                       onClick={handleGenerarActaPersonal}
-                      disabled={generandoActaPersonal || Boolean(actaArchivo)}
+                      disabled={generandoActaPersonal}
                       className="flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400 text-white rounded-xl text-sm font-semibold transition"
                     >
                       <Download size={16} />
@@ -654,7 +872,12 @@ const OrdenCompraView = ({ solicitudes, ordenesCompra, onUpdateEstado, onOrdenCo
                     </button>
 
                     <button
-                      onClick={() => handleUploadArchivo('acta', solicitudes.find((solicitud) => solicitud.id === filaSeleccionada.solicitudId) ?? solicitudes[0])}
+                      onClick={() => handleUploadArchivo(
+                        'acta',
+                        solicitudes.find((solicitud) => solicitud.id === filaSeleccionada.solicitudId) ?? solicitudes[0],
+                        undefined,
+                        filaSeleccionada.fila.empleadoCedula,
+                      )}
                       className="flex items-center justify-center gap-2 px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-sm font-semibold transition"
                     >
                       <Upload size={16} />

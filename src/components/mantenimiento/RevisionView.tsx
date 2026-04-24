@@ -1,50 +1,63 @@
 import { Fragment, useState } from 'react';
-import type { OrdenCompraResumen } from './SolicitudAccesoriosTabsView';
+import type { AccesorioTipo, OrdenCompraResumen } from './SolicitudAccesoriosTabsView';
 import ExcelJS from 'exceljs';
 
 interface RevisionViewProps {
   ordenesCompra: OrdenCompraResumen[];
-  onGuardarRevision: (solicitudId: string, data: { numeroFactura: string; cuotasPorAccesorio: Record<string, string> }) => void;
+  onGuardarRevision: (solicitudId: string, data: { facturasPorAccesorio: Partial<Record<AccesorioTipo, string>>; cuotasPorAccesorio: Record<string, string> }) => Promise<boolean>;
 }
 
 const RevisionView = ({ ordenesCompra, onGuardarRevision }: RevisionViewProps) => {
   const [expandedOrden, setExpandedOrden] = useState<string | null>(null);
   const [ordenEnRevision, setOrdenEnRevision] = useState<OrdenCompraResumen | null>(null);
-  const [numeroFactura, setNumeroFactura] = useState('');
+  const [facturasPorAccesorio, setFacturasPorAccesorio] = useState<Partial<Record<AccesorioTipo, string>>>({});
   const [cuotasPorAccesorio, setCuotasPorAccesorio] = useState<Record<string, string>>({});
+  const [guardandoRevision, setGuardandoRevision] = useState(false);
 
   const formatUsd = (value: number) =>
     new Intl.NumberFormat('es-EC', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value);
 
+  const tiposDeOrden = (orden: OrdenCompraResumen): AccesorioTipo[] =>
+    [...new Set(orden.filas.map((f) => f.accesorio))];
+
   const abrirRevision = (orden: OrdenCompraResumen) => {
     setOrdenEnRevision(orden);
-    setNumeroFactura(orden.numeroFactura ?? '');
+    setFacturasPorAccesorio(orden.facturasPorAccesorio ?? {});
     setCuotasPorAccesorio(orden.cuotasPorAccesorio ?? {});
   };
 
   const cerrarRevision = () => {
     setOrdenEnRevision(null);
-    setNumeroFactura('');
+    setFacturasPorAccesorio({});
     setCuotasPorAccesorio({});
   };
 
-  const guardarRevision = () => {
-    if (!ordenEnRevision) return;
-    if (!numeroFactura.trim()) {
-      window.alert('Ingrese el numero de factura.');
+  const guardarRevision = async () => {
+    if (!ordenEnRevision || guardandoRevision) return;
+    const tipos = tiposDeOrden(ordenEnRevision);
+    const faltaFactura = tipos.find((t) => !facturasPorAccesorio[t]?.trim());
+    if (faltaFactura) {
+      window.alert(`Ingrese el número de factura para ${faltaFactura}.`);
       return;
     }
 
-    onGuardarRevision(ordenEnRevision.solicitudId, {
-      numeroFactura: numeroFactura.trim(),
+    setGuardandoRevision(true);
+    const ok = await onGuardarRevision(ordenEnRevision.solicitudId, {
+      facturasPorAccesorio,
       cuotasPorAccesorio,
     });
-    cerrarRevision();
+    setGuardandoRevision(false);
+
+    if (ok) {
+      cerrarRevision();
+    }
   };
 
   const ordenRevisada = (orden: OrdenCompraResumen) => {
-    if (!orden.numeroFactura?.trim()) return false;
-    if (!orden.filas.length) return false;
+    const tipos = tiposDeOrden(orden);
+    if (tipos.length === 0) return false;
+    const todasTienenFactura = tipos.every((t) => Boolean(orden.facturasPorAccesorio?.[t]?.trim()));
+    if (!todasTienenFactura) return false;
 
     return orden.filas.every((fila) => {
       const cuota = orden.cuotasPorAccesorio?.[fila.id];
@@ -95,7 +108,7 @@ const RevisionView = ({ ordenesCompra, onGuardarRevision }: RevisionViewProps) =
         const cuotas = orden.cuotasPorAccesorio?.[fila.id] || '';
 
         worksheet.addRow([
-          orden.numeroFactura || '',
+          orden.facturasPorAccesorio?.[fila.accesorio] || '',
           orden.numeroOrden,
           orden.fecha,
           fila.empleadoCedula,
@@ -105,7 +118,7 @@ const RevisionView = ({ ordenesCompra, onGuardarRevision }: RevisionViewProps) =
           centro.codigo,
           centro.centro,
           cuotas,
-          20,
+          fila.valor != null ? fila.valor : '',
         ]);
       });
     });
@@ -156,6 +169,7 @@ const RevisionView = ({ ordenesCompra, onGuardarRevision }: RevisionViewProps) =
               <tr>
                 <th className="px-4 py-3 w-8"></th>
                 <th className="px-4 py-3 min-w-[180px]">Número Orden</th>
+                <th className="px-4 py-3 min-w-[220px]">Archivo Orden</th>
                 <th className="px-4 py-3 min-w-[120px]">Fecha</th>
                 <th className="px-4 py-3 min-w-[160px]">Factura</th>
                 <th className="px-4 py-3 text-right min-w-[120px]">Total Valor</th>
@@ -166,7 +180,7 @@ const RevisionView = ({ ordenesCompra, onGuardarRevision }: RevisionViewProps) =
             <tbody>
               {ordenesCompra.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-6 py-8 text-center text-slate-400">
+                  <td colSpan={7} className="px-6 py-8 text-center text-slate-400">
                     Aun no hay ordenes de compra subidas.
                   </td>
                 </tr>
@@ -190,8 +204,17 @@ const RevisionView = ({ ordenesCompra, onGuardarRevision }: RevisionViewProps) =
                           )}
                         </td>
                         <td className="px-4 py-3 font-semibold text-slate-700">{orden.numeroOrden}</td>
+                        <td className="px-4 py-3 text-slate-600">
+                          {orden.archivoOrdenNombre || 'Pendiente'}
+                        </td>
                         <td className="px-4 py-3 text-slate-600">{orden.fecha}</td>
-                        <td className="px-4 py-3 text-slate-600">{orden.numeroFactura || 'Pendiente revisión'}</td>
+                        <td className="px-4 py-3 text-slate-600">
+                          {orden.facturasPorAccesorio
+                            ? Object.entries(orden.facturasPorAccesorio)
+                                .map(([acc, fac]) => `${acc.charAt(0).toUpperCase() + acc.slice(1)}: ${fac}`)
+                                .join(' / ')
+                            : 'Pendiente revisión'}
+                        </td>
                         <td className="px-4 py-3 text-right font-bold text-slate-900">${formatUsd(orden.totalValor)}</td>
                         <td className="px-4 py-3 text-center">
                           <button
@@ -210,7 +233,7 @@ const RevisionView = ({ ordenesCompra, onGuardarRevision }: RevisionViewProps) =
 
                       {estaAbierto && (
                         <tr className="bg-white border-b">
-                          <td colSpan={6} className="p-0">
+                          <td colSpan={7} className="p-0">
                             <div className="px-6 py-4 bg-slate-50/70 border-t border-slate-200">
                               <div className="space-y-2">
                                 {orden.filas.map((fila, i) => (
@@ -226,7 +249,7 @@ const RevisionView = ({ ordenesCompra, onGuardarRevision }: RevisionViewProps) =
                                         ? `${orden.cuotasPorAccesorio[fila.id]} cuota(s)`
                                         : 'Pendiente revisión'}
                                     </div>
-                                    <div className="text-right font-semibold text-slate-800">$20.00</div>
+                                    <div className="text-right font-semibold text-slate-800">{fila.valor != null ? `$${formatUsd(fila.valor)}` : '—'}</div>
                                   </div>
                                 ))}
                               </div>
@@ -259,63 +282,76 @@ const RevisionView = ({ ordenesCompra, onGuardarRevision }: RevisionViewProps) =
               </button>
             </div>
 
-            <div className="p-6 space-y-5">
-              <div className="flex flex-col gap-2 max-w-sm">
-                <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Número de factura</label>
-                <input
-                  type="text"
-                  value={numeroFactura}
-                  onChange={(e) => setNumeroFactura(e.target.value)}
-                  className="px-3 py-2 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-300 bg-white"
-                  placeholder="Ingrese número de factura"
-                />
-              </div>
-
-              <div className="border border-slate-200 rounded-2xl overflow-hidden">
-                <div className="grid grid-cols-[minmax(220px,2fr)_minmax(180px,1.6fr)_100px_140px] gap-4 px-4 py-3 bg-slate-50 text-[11px] font-bold uppercase tracking-wide text-slate-500 border-b border-slate-200">
-                  <div>Persona</div>
-                  <div>Accesorio</div>
-                  <div>Valor</div>
-                  <div>Cuota</div>
-                </div>
-
-                <div className="divide-y divide-slate-100">
-                  {ordenEnRevision.filas.map((fila) => (
-                    <div key={fila.id} className="grid grid-cols-[minmax(220px,2fr)_minmax(180px,1.6fr)_100px_140px] gap-4 px-4 py-3 items-center text-sm bg-white">
-                      <div className="font-semibold text-slate-700">{fila.empleadoNombre}</div>
-                      <div className="text-slate-700">{fila.accesorio === 'botas' ? `Botas talla ${fila.talla}` : 'Auriculares'}</div>
-                      <div className="text-slate-600 font-semibold">$20.00</div>
-                      <input
-                        type="number"
-                        min="1"
-                        value={cuotasPorAccesorio[fila.id] ?? ''}
-                        onChange={(e) =>
-                          setCuotasPorAccesorio((prev) => ({
-                            ...prev,
-                            [fila.id]: e.target.value,
-                          }))
-                        }
-                        className="no-spinner px-3 py-2 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-300 bg-white"
-                        placeholder="Cuota"
-                      />
+            <div className="p-6 space-y-6">
+              {tiposDeOrden(ordenEnRevision).map((tipo) => {
+                const filasDelTipo = ordenEnRevision.filas.filter((f) => f.accesorio === tipo);
+                return (
+                  <div key={tipo} className="space-y-3">
+                    <div className="flex items-center gap-3">
+                      <span className="text-sm font-bold text-slate-700 capitalize">{tipo}</span>
+                      <div className="flex-1 flex items-center gap-2">
+                        <label className="text-xs font-semibold uppercase tracking-wide text-slate-500 whitespace-nowrap">Número de factura</label>
+                        <input
+                          type="text"
+                          value={facturasPorAccesorio[tipo] ?? ''}
+                          onChange={(e) =>
+                            setFacturasPorAccesorio((prev) => ({ ...prev, [tipo]: e.target.value }))
+                          }
+                          className="w-48 px-3 py-2 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-300 bg-white"
+                          placeholder="Número de factura"
+                        />
+                      </div>
                     </div>
-                  ))}
-                </div>
-              </div>
+
+                    <div className="border border-slate-200 rounded-2xl overflow-hidden">
+                      <div className="grid grid-cols-[minmax(220px,2fr)_minmax(180px,1.6fr)_100px_140px] gap-4 px-4 py-3 bg-slate-50 text-[11px] font-bold uppercase tracking-wide text-slate-500 border-b border-slate-200">
+                        <div>Persona</div>
+                        <div>Accesorio</div>
+                        <div>Valor</div>
+                        <div>Cuota</div>
+                      </div>
+                      <div className="divide-y divide-slate-100">
+                        {filasDelTipo.map((fila) => (
+                          <div key={fila.id} className="grid grid-cols-[minmax(220px,2fr)_minmax(180px,1.6fr)_100px_140px] gap-4 px-4 py-3 items-center text-sm bg-white">
+                            <div className="font-semibold text-slate-700">{fila.empleadoNombre}</div>
+                            <div className="text-slate-700">{fila.accesorio === 'botas' ? `Botas talla ${fila.talla}` : 'Auriculares'}</div>
+                            <div className="text-slate-600 font-semibold">{fila.valor != null ? `$${formatUsd(fila.valor)}` : '—'}</div>
+                            <input
+                              type="number"
+                              min="1"
+                              value={cuotasPorAccesorio[fila.id] ?? ''}
+                              onChange={(e) =>
+                                setCuotasPorAccesorio((prev) => ({
+                                  ...prev,
+                                  [fila.id]: e.target.value,
+                                }))
+                              }
+                              className="no-spinner px-3 py-2 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-300 bg-white"
+                              placeholder="Cuota"
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
 
             <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex justify-end gap-3">
               <button
                 onClick={cerrarRevision}
-                className="px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-100 rounded-xl transition"
+                disabled={guardandoRevision}
+                className="px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-100 rounded-xl transition disabled:opacity-50"
               >
                 Cancelar
               </button>
               <button
-                onClick={guardarRevision}
-                className="px-4 py-2 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-xl transition"
+                onClick={() => void guardarRevision()}
+                disabled={guardandoRevision}
+                className="px-4 py-2 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-xl transition disabled:opacity-50"
               >
-                Guardar revisión
+                {guardandoRevision ? 'Guardando...' : 'Guardar revisión'}
               </button>
             </div>
           </div>
