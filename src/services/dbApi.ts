@@ -5,8 +5,6 @@ export const DB_API_CATALOG = {
   humanaEmployeeLatest: '/api/humana/employee-latest',
   valetsEmpleados: '/api/valets/empleados',
   valetsHorarios: '/api/valets/horarios',
-  valetsAdicionales: '/api/valets/adicionales',
-  valetsAdicionalesLista: '/api/valets/adicionales/lista',
   descuentosIncidentesCajaChica: '/api/descuentos/incidentes-caja-chica',
   descuentosExentosPagoSeguro: '/api/descuentos/exentos-pago-seguro',
   distribucionPlantillas: '/api/nomina/distribucion-plantillas',
@@ -270,26 +268,6 @@ export const dbApi = {
 
       save: async <T = unknown>(payload: unknown): Promise<T> => {
         return await saveResource<T>(DB_API_CATALOG.valetsHorarios, payload);
-      },
-    },
-
-    adicionales: {
-      list: async <T = unknown>(): Promise<T> => {
-        return await listResource<T>(DB_API_CATALOG.valetsAdicionalesLista);
-      },
-
-      get: async <T = unknown>(centroCostoId: string, empleadoCedula: string): Promise<T | null> => {
-        return await dbApiFetch<T>({
-          endpoint: withQuery(DB_API_CATALOG.valetsAdicionales, {
-            centroCostoId,
-            empleadoCedula,
-          }),
-          allow404: true,
-        });
-      },
-
-      save: async <T = unknown>(payload: unknown): Promise<T> => {
-        return await saveResource<T>(DB_API_CATALOG.valetsAdicionales, payload);
       },
     },
   },

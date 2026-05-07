@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { Menu, ChevronDown, ChevronRight, LogOut, Cpu, Wallet, Wrench, Users, BarChart3, Network, Key } from 'lucide-react';
 import { Placeholder } from "./components/commons/Placeholder";
 
@@ -57,7 +57,10 @@ interface MenuState {
 }
 
 function App() {
-  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(() => {
+    if (typeof window === 'undefined') return true;
+    return window.innerWidth >= 1024;
+  });
   const [activeTab, setActiveTab] = useState('tickets');
   const [expandedMenus, setExpandedMenus] = useState<MenuState>({
     operaciones: false,
@@ -71,6 +74,17 @@ function App() {
   const toggleSidebar = () => setIsSidebarOpen(!isSidebarOpen);
   const toggleMenu = (menuId: keyof MenuState) =>
     setExpandedMenus(prev => ({ ...prev, [menuId]: !prev[menuId] }));
+
+  useEffect(() => {
+    const handleResize = () => {
+      if (window.innerWidth >= 1024) {
+        setIsSidebarOpen(true);
+      }
+    };
+
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   const isItemActive = (id: string) => activeTab === id;
   const esTabDescuentos = activeTab === 'descuentos';
@@ -109,6 +123,13 @@ function App() {
 
   return (
     <div className="min-h-screen bg-[#F8FAFC] flex font-sans text-slate-800">
+      {isSidebarOpen && (
+        <div
+          className="fixed inset-0 z-30 bg-slate-900/20 backdrop-blur-[1px] lg:hidden"
+          onClick={() => setIsSidebarOpen(false)}
+        />
+      )}
+
       {/* SIDEBAR */}
       <aside className={`fixed inset-y-0 left-0 z-40 w-72 bg-white border-r border-slate-200 text-slate-600 transform transition-transform duration-300 ease-in-out ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} lg:sticky lg:top-0 lg:h-screen lg:translate-x-0 flex flex-col overflow-hidden`}>
         {/* LOGO */}

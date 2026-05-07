@@ -1,2084 +1,1359 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Eye } from 'lucide-react';
-import { getNominaCostCenters, getNominaEmployeesActive } from '../../services/n8nApi';
+import { useEffect, useState } from 'react';
+import { Eye, Trash2, ChevronDown, Check, CheckCircle2 } from 'lucide-react';
+import { getNominaCostCenters, getNominaEmployeesActive, type NominaCostCenter } from '../../services/n8nApi';
 import { dbApi } from '../../services/dbApi';
-import type {
-  EmpleadoNominaApiItem,
-  NominaApiRecordAndListResponse,
-  NominaApiResponseBase,
-  NominaCentroCosto,
-} from '../../types/nomina';
+import type { EmpleadoNominaApiItem } from '../../types/nomina';
 
-type SeccionValets = 'horario_fijo' | 'gestionar_valet';
-type DiaLaboralKey = 'lunes' | 'martes' | 'miercoles' | 'jueves' | 'viernes' | 'sabado' | 'domingo';
+type SeccionValets = 'ingreso' | 'gestionar';
 
-interface EmpleadoOption {
-  cedula: string;
+interface EmpleadoValet {
+  id: string;
+  centro: string;
   nombre: string;
+  valor: string;
+  cedula?: string;
 }
 
-interface HorarioFijoGuardado {
+interface ValetEmpleadoDbRegistro {
   id: string;
-  empleadoCedula: string;
-  empleadoNombre: string;
   centroCostoId: string;
   centroCostoNombre: string;
-  valorFijo: number;
-  anio: number;
-  mes: number;
-  semana: number;
-  dia: DiaLaboralKey;
-  horaEntrada: string;
-  horaSalida: string;
-}
-
-interface EventoCalendario {
   empleadoCedula: string;
   empleadoNombre: string;
-  dia: DiaLaboralKey;
+  valorFijo: number;
+}
+
+interface ValetEmpleadosListResponse {
+  ok?: boolean;
+  registros?: ValetEmpleadoDbRegistro[];
+}
+
+interface ValetEmpleadoSaveResponse {
+  ok?: boolean;
+  registro?: ValetEmpleadoDbRegistro;
+}
+
+interface ValetHorarioDbRegistro {
+  id: string;
+  centroCostoId: string;
+  centroCostoNombre: string;
+  empleadoCedula: string;
+  empleadoNombre: string;
+  fechaTurno: string;
   horaEntrada: string;
   horaSalida: string;
   esAdicional: boolean;
+  aprobado?: boolean;
 }
 
-interface ValetAsignadoCentro {
+interface ValetHorariosListResponse {
+  ok?: boolean;
+  registros?: ValetHorarioDbRegistro[];
+}
+
+interface ValetHorarioSaveResponse {
+  ok?: boolean;
+  registro?: ValetHorarioDbRegistro;
+}
+
+interface EmpleadoActivoOption {
+  cedula: string;
+  nombreCompleto: string;
+  centroId: string;
+  centroNombre: string;
+}
+
+interface HorarioRegistrado {
   id: string;
-  centroCostoId: string;
-  centroCostoNombre: string;
-  empleadoCedula: string;
-  empleadoNombre: string;
-  valorFijo: number;
-}
-
-interface DiaDiaAdicional {
-  dia: DiaLaboralKey;
+  centro: string;
+  empleado: string;
+  fecha: string;
   horaEntrada: string;
   horaSalida: string;
+  adicional: boolean;
+  aprobado?: boolean;
 }
 
-interface SemanaDiaAdicionalConfig {
-  semana: number;
-  habilitado: boolean;
-  dias: DiaDiaAdicional[];
+interface CalendarDay {
+  d: number;
+  curr: boolean;
+  m: number;
+  y: number;
+  active?: boolean;
 }
 
-interface AdicionalesEmpleadoConfig {
-  habilitarDiaAdicional: boolean;
-  diaAdicionalAnio: number;
-  diaAdicionalMes: number;
-  diaAdicionalSemanas: SemanaDiaAdicionalConfig[];
-  habilitarDomingo: boolean;
-  domingoAnio: number;
-  domingoMes: number;
-  domingoSemanas: number[];
+interface WeekDay {
+  d: number;
+  m: number;
+  y: number;
+  n: string;
+  active: boolean;
 }
 
-interface ValetAdicionalesApiResponse extends NominaApiResponseBase {
-  data?: {
-    configuracion?: AdicionalesEmpleadoConfig;
-  };
-  registros?: Array<{
-    centroCostoId: string;
-    empleadoCedula: string;
-    configuracion: AdicionalesEmpleadoConfig;
-  }>;
-}
-
-type ValetEmpleadoApiResponse = NominaApiRecordAndListResponse<ValetAsignadoCentro>;
-
-type ValetHorarioApiResponse = NominaApiRecordAndListResponse<HorarioFijoGuardado>;
-
-const SEMANAS_DISPONIBLES = [1, 2, 3, 4, 5];
-
-const crearSemanasDiaAdicional = (): SemanaDiaAdicionalConfig[] => {
-  return SEMANAS_DISPONIBLES.map((semana) => ({
-    semana,
-    habilitado: false,
-    dias: [],
-  }));
+const calcularValorNum = (entrada: string, salida: string): number => {
+  if (!entrada || !salida) return 0;
+  const [h1, m1] = entrada.split(':').map(Number);
+  const [h2, m2] = salida.split(':').map(Number);
+  let diff = (h2 * 60 + m2) - (h1 * 60 + m1);
+  if (diff < 0) diff += 24 * 60;
+  return (diff / 60) * 3;
 };
 
-const DIAS_LABORALES: Array<{ key: DiaLaboralKey; label: string }> = [
-  { key: 'lunes', label: 'Lunes' },
-  { key: 'martes', label: 'Martes' },
-  { key: 'miercoles', label: 'Miercoles' },
-  { key: 'jueves', label: 'Jueves' },
-  { key: 'viernes', label: 'Viernes' },
-  { key: 'sabado', label: 'Sábado' },
-  { key: 'domingo', label: 'Domingo' },
-];
+const calcularValorStr = (entrada: string, salida: string): string => calcularValorNum(entrada, salida).toFixed(2);
 
-const DIAS_LABORALES_SIN_DOMINGO: Array<{ key: DiaLaboralKey; label: string }> = DIAS_LABORALES.filter(
-  (dia) => dia.key !== 'domingo',
-);
-const ORDEN_DIAS_ADICIONALES = DIAS_LABORALES_SIN_DOMINGO.map((dia) => dia.key);
+const monthNames = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+const daysOfWeek = ['lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo'];
+const hours = Array.from({ length: 24 }, (_, i) => i);
 
-const MESES: Array<{ value: number; label: string }> = [
-  { value: 1, label: 'Enero' },
-  { value: 2, label: 'Febrero' },
-  { value: 3, label: 'Marzo' },
-  { value: 4, label: 'Abril' },
-  { value: 5, label: 'Mayo' },
-  { value: 6, label: 'Junio' },
-  { value: 7, label: 'Julio' },
-  { value: 8, label: 'Agosto' },
-  { value: 9, label: 'Septiembre' },
-  { value: 10, label: 'Octubre' },
-  { value: 11, label: 'Noviembre' },
-  { value: 12, label: 'Diciembre' },
-];
+const parseCentroCompuesto = (valor: string): { centroCostoId: string; centroCostoNombre: string } => {
+  const raw = String(valor || '').trim();
+  const match = raw.match(/^([^\-]+?)\s*-\s*(.+)$/);
 
-const HORA_INICIO = 7;
-const HORA_FIN = 24;
-
-const OPCIONES_HORA_MEDIA = Array.from({ length: HORA_FIN - HORA_INICIO + 1 }, (_, index) => {
-  const horas = HORA_INICIO + index;
-  const minutos = '00';
-  return `${String(horas).padStart(2, '0')}:${minutos}`;
-});
-
-const etiquetaEmpleado = (empleado: EmpleadoOption): string => `${empleado.nombre} - ${empleado.cedula}`;
-const etiquetaCentro = (centro: NominaCentroCosto): string => `${centro.IDCENTROCOSTO} - ${centro.CENTROCOSTO}`;
-
-const formatearMoneda = (valor: number) => {
-  return new Intl.NumberFormat('es-EC', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(valor);
-};
-
-const calcularHorasTrabajadas = (horaEntrada: string, horaSalida: string): number => {
-  const [entradaHora, entradaMinuto] = horaEntrada.split(':').map(Number);
-  const [salidaHora, salidaMinuto] = horaSalida.split(':').map(Number);
-
-  if (
-    Number.isNaN(entradaHora)
-    || Number.isNaN(entradaMinuto)
-    || Number.isNaN(salidaHora)
-    || Number.isNaN(salidaMinuto)
-  ) {
-    return 0;
+  if (!match) {
+    return { centroCostoId: '', centroCostoNombre: raw };
   }
 
-  const inicioMinutos = entradaHora * 60 + entradaMinuto;
-  const finMinutos = salidaHora * 60 + salidaMinuto;
-  const diferencia = finMinutos - inicioMinutos;
-  if (diferencia <= 0) return 0;
-  return Math.round((diferencia / 60) * 100) / 100;
+  return {
+    centroCostoId: String(match[1] || '').trim(),
+    centroCostoNombre: String(match[2] || '').trim(),
+  };
 };
 
-const esHoraValida = (hora: string): boolean => {
-  const partes = hora.split(':');
-  if (partes.length < 2) return false;
-  const minutos = Number(partes[1]);
-  return minutos === 0;
+const composeCentroDisplay = (centroCostoId: string, centroCostoNombre: string): string => {
+  if (centroCostoId && centroCostoNombre) {
+    return `${centroCostoId} - ${centroCostoNombre}`;
+  }
+  return centroCostoId || centroCostoNombre;
 };
 
-const generarHorasDelDia = (): string[] => {
-  return Array.from({ length: HORA_FIN - HORA_INICIO + 1 }, (_, i) => {
-    const hora = HORA_INICIO + i;
-    const minutos = '00';
-    return `${String(hora).padStart(2, '0')}:${minutos}`;
-  });
+const parseHora24AMinutos = (value: string): number | null => {
+  const raw = String(value || '').trim();
+  if (!/^\d{2}:\d{2}$/.test(raw)) return null;
+
+  const [h, m] = raw.split(':').map(Number);
+  if (!Number.isInteger(h) || !Number.isInteger(m)) return null;
+  if (h < 0 || h > 23 || m < 0 || m > 59) return null;
+
+  return (h * 60) + m;
 };
 
-const diaLaboralAIndice = (dia: DiaLaboralKey): number => {
-  const indice = DIAS_LABORALES.findIndex((d) => d.key === dia);
-  return indice;
+const horariosSeSolapan = (inicioA: number, finA: number, inicioB: number, finB: number): boolean => {
+  return inicioA < finB && inicioB < finA;
 };
 
-interface BloqueCalendario {
-  cedula: string;
-  nombre: string;
-  horaEntrada: string;
-  horaSalida: string;
-  esAdicional: boolean;
-  top: number;
-  height: number;
+interface Bloque {
+  id: string;
+  evento: HorarioRegistrado;
+  inicioMin: number;
+  finMin: number;
+  duracionMin: number;
   lane: number;
   lanesTotal: number;
 }
 
-const COLORES_EMPLEADO: Array<{ bg: string; border: string; text: string }> = [
-  { bg: '#dbeafe', border: '#1d4ed8', text: '#1e3a5f' },  // azul
-  { bg: '#dcfce7', border: '#15803d', text: '#14532d' },  // verde
-  { bg: '#fef08a', border: '#ca8a04', text: '#713f12' },  // amarillo
-  { bg: '#fecaca', border: '#dc2626', text: '#7f1d1d' },  // rojo
-  { bg: '#e9d5ff', border: '#7c3aed', text: '#4c1d95' },  // violeta
-  { bg: '#fed7aa', border: '#ea580c', text: '#7c2d12' },  // naranja
-  { bg: '#99f6e4', border: '#0d9488', text: '#134e4a' },  // teal
-  { bg: '#fce7f3', border: '#be185d', text: '#831843' },  // rosa fuerte
-  { bg: '#e0f2fe', border: '#0369a1', text: '#0c4a6e' },  // celeste
-  { bg: '#d1fae5', border: '#065f46', text: '#064e3b' },  // esmeralda oscuro
-  { bg: '#fef3c7', border: '#b45309', text: '#78350f' },  // ámbar
-  { bg: '#ede9fe', border: '#5b21b6', text: '#3b0764' },  // índigo
-];
-
-const hashCedula = (cedula: string): number => {
-  let h = 0;
-  for (let i = 0; i < cedula.length; i++) {
-    h = (h * 31 + cedula.charCodeAt(i)) >>> 0;
-  }
-  return h;
-};
-
-const obtenerBloquesCalendarioDia = (
-  eventosCalendario: EventoCalendario[],
-  dia: DiaLaboralKey,
-  slotHeight: number,
-): BloqueCalendario[] => {
-  const inicioDia = HORA_INICIO * 60;
-  const finDia = HORA_FIN * 60;
-
-  const eventos = eventosCalendario
-    .filter((evento) => evento.dia === dia)
+const calcularBloquesCalendario = (eventosDelDia: HorarioRegistrado[]): Bloque[] => {
+  const eventosValidos = eventosDelDia
     .map((evento) => {
-      const [entradaH, entradaM] = evento.horaEntrada.split(':').map(Number);
-      const [salidaH, salidaM] = evento.horaSalida.split(':').map(Number);
-      const inicio = entradaH * 60 + entradaM;
-      const fin = salidaH * 60 + salidaM;
+      const inicioMin = parseHora24AMinutos(evento.horaEntrada);
+      const finMin = parseHora24AMinutos(evento.horaSalida);
+      if (inicioMin === null || finMin === null || finMin <= inicioMin) return null;
+
       return {
-        cedula: evento.empleadoCedula,
-        nombre: evento.empleadoNombre,
-        horaEntrada: evento.horaEntrada,
-        horaSalida: evento.horaSalida,
-        esAdicional: evento.esAdicional,
-        inicio,
-        fin,
+        id: evento.id,
+        evento,
+        inicioMin,
+        finMin,
+        duracionMin: finMin - inicioMin,
       };
     })
-    .filter((e) => e.fin > e.inicio)
-    .map((e) => ({
-      ...e,
-      inicio: Math.max(inicioDia, e.inicio),
-      fin: Math.min(finDia, e.fin),
-    }))
-    .filter((e) => e.fin > e.inicio)
-    .sort((a, b) => a.inicio - b.inicio || a.fin - b.fin);
+    .filter((item): item is Exclude<typeof item, null> => item !== null)
+    .sort((a, b) => a.inicioMin - b.inicioMin);
 
-  if (eventos.length === 0) return [];
+  if (eventosValidos.length === 0) return [];
 
   const finPorLane: number[] = [];
-  const eventosConLane = eventos.map((evento) => {
-    let lane = finPorLane.findIndex((finLane) => evento.inicio >= finLane);
+  const bloquesConLane = eventosValidos.map((bloque) => {
+    let lane = finPorLane.findIndex((fin) => bloque.inicioMin >= fin);
     if (lane === -1) {
       lane = finPorLane.length;
-      finPorLane.push(evento.fin);
+      finPorLane.push(bloque.finMin);
     } else {
-      finPorLane[lane] = evento.fin;
+      finPorLane[lane] = bloque.finMin;
     }
-    return { ...evento, lane };
+    return { ...bloque, lane };
   });
 
   const lanesTotal = Math.max(1, finPorLane.length);
 
-  return eventosConLane.map((evento) => ({
-    cedula: evento.cedula,
-    nombre: evento.nombre,
-    horaEntrada: evento.horaEntrada,
-    horaSalida: evento.horaSalida,
-    esAdicional: evento.esAdicional,
-    top: ((evento.inicio - inicioDia) / 60) * slotHeight,
-    height: Math.max(28, ((evento.fin - evento.inicio) / 60) * slotHeight),
-    lane: evento.lane,
+  return bloquesConLane.map((bloque) => ({
+    ...bloque,
     lanesTotal,
   }));
 };
 
 const ValetsFijosView = () => {
-  const hoy = new Date();
-  const [empleados, setEmpleados] = useState<EmpleadoOption[]>([]);
-  const [centrosCosto, setCentrosCosto] = useState<NominaCentroCosto[]>([]);
-  const [loadingEmpleados, setLoadingEmpleados] = useState(false);
-  const [loadingCentros, setLoadingCentros] = useState(false);
+  const [activeSubTab, setActiveSubTab] = useState<SeccionValets>('ingreso');
+  
+  // Estados para GESTIONAR VALET
+  const [gestionarCentro, setGestionarCentro] = useState('');
+  const [showGestionarEmpleadosModal, setShowGestionarEmpleadosModal] = useState(false);
+  const [empleadoBusqueda, setEmpleadoBusqueda] = useState('');
+  const [valorFijo, setValorFijo] = useState('');
+  const [showSuccessGuardado, setShowSuccessGuardado] = useState(false);
+  const [loadingCatalogos, setLoadingCatalogos] = useState(false);
+  const [loadingEmpleadosDb, setLoadingEmpleadosDb] = useState(false);
+  const [guardandoEmpleado, setGuardandoEmpleado] = useState(false);
+  const [eliminandoEmpleadoId, setEliminandoEmpleadoId] = useState('');
+  const [catalogosError, setCatalogosError] = useState('');
+  const [centrosCosto, setCentrosCosto] = useState<NominaCostCenter[]>([]);
+  const [empleadosActivos, setEmpleadosActivos] = useState<EmpleadoActivoOption[]>([]);
+  const [centroAutorizadoList, setCentroAutorizadoList] = useState<Record<string, boolean>>({});
+  const [showDetallesModal, setShowDetallesModal] = useState(false);
+  const [detalleEmpleado, setDetalleEmpleado] = useState<EmpleadoValet | null>(null);
+  const [empleadosValet, setEmpleadosValet] = useState<EmpleadoValet[]>([]);
 
-  const [empleadoInput, setEmpleadoInput] = useState('');
-  const [seccionActiva, setSeccionActiva] = useState<SeccionValets>('horario_fijo');
-  const [centroHorarioInput, setCentroHorarioInput] = useState('');
-  const [centroGestionInput, setCentroGestionInput] = useState('');
-
-  const [anio, setAnio] = useState(hoy.getFullYear());
-  const [mes, setMes] = useState(hoy.getMonth() + 1);
-  const [semanaHorario, setSemanaHorario] = useState(1);
-  const [diaHorario, setDiaHorario] = useState<DiaLaboralKey>('lunes');
-  const [horaEntradaHorario, setHoraEntradaHorario] = useState('');
-  const [horaSalidaHorario, setHoraSalidaHorario] = useState('');
-  const [horariosFijosGuardados, setHorariosFijosGuardados] = useState<HorarioFijoGuardado[]>([]);
-  const [asignacionesCentro, setAsignacionesCentro] = useState<ValetAsignadoCentro[]>([]);
-  const [modalAgregarOpen, setModalAgregarOpen] = useState(false);
-  const [modalGestionEmpleadoModo, setModalGestionEmpleadoModo] = useState<'agregar' | 'eliminar'>('agregar');
-  const [modalEmpleadoInput, setModalEmpleadoInput] = useState('');
-  const [modalEmpleadoEliminarCedula, setModalEmpleadoEliminarCedula] = useState('');
-  const [modalValorFijo, setModalValorFijo] = useState('');
-  const [modalAdicionalesOpen, setModalAdicionalesOpen] = useState(false);
-  const [empleadoAdicionalSeleccionado, setEmpleadoAdicionalSeleccionado] = useState<ValetAsignadoCentro | null>(null);
-  const [adicionalesPorEmpleado, setAdicionalesPorEmpleado] = useState<Record<string, AdicionalesEmpleadoConfig>>({});
-  const [modalHabilitarDiaAdicional, setModalHabilitarDiaAdicional] = useState(false);
-  const [modalDiaAdicionalAnio, setModalDiaAdicionalAnio] = useState(hoy.getFullYear());
-  const [modalDiaAdicionalMes, setModalDiaAdicionalMes] = useState(hoy.getMonth() + 1);
-  const [modalDiaAdicionalSemanas, setModalDiaAdicionalSemanas] = useState<SemanaDiaAdicionalConfig[]>(crearSemanasDiaAdicional());
-  const [modalHabilitarDomingo, setModalHabilitarDomingo] = useState(false);
-  const [modalDomingoAnio, setModalDomingoAnio] = useState(hoy.getFullYear());
-  const [modalDomingoMes, setModalDomingoMes] = useState(hoy.getMonth() + 1);
-  const [modalDomingoSemanas, setModalDomingoSemanas] = useState<number[]>([]);
-  const [empleadoDetallesAbierto, setEmpleadoDetallesAbierto] = useState<ValetAsignadoCentro | null>(null);
-  const [mensaje, setMensaje] = useState<{ type: 'success' | 'error' | null; text: string }>({
-    type: null,
-    text: '',
-  });
+  // Estados para INGRESO HORARIO
+  const [ingresoCentro, setIngresoCentro] = useState('');
+  const [ingresoEmpleado, setIngresoEmpleado] = useState('');
+  const [ingresoFecha, setIngresoFecha] = useState('');
+  const [ingresoHoraEntrada, setIngresoHoraEntrada] = useState('');
+  const [ingresoHoraSalida, setIngresoHoraSalida] = useState('');
+  const [ingresoAdicional, setIngresoAdicional] = useState(false);
+  const [showSuccessHorario, setShowSuccessHorario] = useState(false);
+  const [loadingHorariosDb, setLoadingHorariosDb] = useState(false);
+  const [guardandoHorario, setGuardandoHorario] = useState(false);
+  const [filtroEstado, setFiltroEstado] = useState('');
+  const [horariosRegistrados, setHorariosRegistrados] = useState<HorarioRegistrado[]>([]);
+  const [calendarView, setCalendarView] = useState('mes');
 
   useEffect(() => {
-    void cargarEmpleados();
-    void cargarCentrosCosto();
-    void cargarAsignacionesCentro();
-    void cargarHorariosFijos();
-    void cargarAdicionalesValets();
-  }, []);
+    let isMounted = true;
 
-  const cargarAsignacionesCentro = async () => {
-    try {
-      const payload = await dbApi.valets.empleados.list<ValetEmpleadoApiResponse>();
-      const registros = Array.isArray(payload?.registros) ? payload.registros : [];
+    const cargarCatalogos = async () => {
+      setLoadingCatalogos(true);
+      setCatalogosError('');
 
-      setAsignacionesCentro(registros.map((item) => ({
-        id: `${item.centroCostoId}-${item.empleadoCedula}`,
-        centroCostoId: String(item.centroCostoId || '').trim(),
-        centroCostoNombre: String(item.centroCostoNombre || '').trim(),
-        empleadoCedula: String(item.empleadoCedula || '').trim(),
-        empleadoNombre: String(item.empleadoNombre || '').trim(),
-        valorFijo: Number(item.valorFijo || 0),
-      })));
-    } catch (error) {
-      console.error('Error cargando empleados de valet fijo desde backend:', error);
-      setAsignacionesCentro([]);
-      setMensaje({ type: 'error', text: 'No se pudo cargar empleados de valet fijo desde la base de datos.' });
-    }
-  };
+      try {
+        const [centrosData, empleadosData] = await Promise.all([
+          getNominaCostCenters(),
+          getNominaEmployeesActive<EmpleadoNominaApiItem[]>(),
+        ]);
 
-  const cargarHorariosFijos = async () => {
-    try {
-      const payload = await dbApi.valets.horarios.list<ValetHorarioApiResponse>();
-      const registros = Array.isArray(payload?.registros) ? payload.registros : [];
+        const centrosNormalizados = (Array.isArray(centrosData) ? centrosData : [])
+          .filter((cc) => cc.IDCENTROCOSTO || cc.CENTROCOSTO)
+          .sort((a, b) => `${a.IDCENTROCOSTO} ${a.CENTROCOSTO}`.localeCompare(`${b.IDCENTROCOSTO} ${b.CENTROCOSTO}`, 'es', { sensitivity: 'base' }));
 
-      setHorariosFijosGuardados(registros.map((item) => ({
-        id: String(item.id || `${item.centroCostoId}-${item.empleadoCedula}-${item.anio}-${item.mes}-${item.semana}-${item.dia}`),
-        empleadoCedula: String(item.empleadoCedula || '').trim(),
-        empleadoNombre: String(item.empleadoNombre || '').trim(),
-        centroCostoId: String(item.centroCostoId || '').trim(),
-        centroCostoNombre: String(item.centroCostoNombre || '').trim(),
-        valorFijo: Number(item.valorFijo || 0),
-        anio: Number(item.anio || 0),
-        mes: Number(item.mes || 0),
-        semana: Number(item.semana || 0),
-        dia: item.dia as DiaLaboralKey,
-        horaEntrada: String(item.horaEntrada || ''),
-        horaSalida: String(item.horaSalida || ''),
-      })));
-    } catch (error) {
-      console.error('Error cargando horarios de valet fijo desde backend:', error);
-      setHorariosFijosGuardados([]);
-      setMensaje({ type: 'error', text: 'No se pudo cargar horarios de valet fijo desde la base de datos.' });
-    }
-  };
-
-  const cargarAdicionalesValets = async () => {
-    try {
-      const payload = await dbApi.valets.adicionales.list<ValetAdicionalesApiResponse>();
-      const registros = Array.isArray(payload?.registros) ? payload.registros : [];
-
-      const mapa = registros.reduce<Record<string, AdicionalesEmpleadoConfig>>((acc, item) => {
-        const centroCostoId = String(item?.centroCostoId || '').trim();
-        const empleadoCedula = String(item?.empleadoCedula || '').trim();
-        if (!centroCostoId || !empleadoCedula || !item?.configuracion) {
-          return acc;
-        }
-
-        acc[`${centroCostoId}-${empleadoCedula}`] = {
-          habilitarDiaAdicional: Boolean(item.configuracion.habilitarDiaAdicional),
-          diaAdicionalAnio: Number(item.configuracion.diaAdicionalAnio || hoy.getFullYear()),
-          diaAdicionalMes: Number(item.configuracion.diaAdicionalMes || hoy.getMonth() + 1),
-          diaAdicionalSemanas: SEMANAS_DISPONIBLES.map((semana) => {
-            const guardada = item.configuracion.diaAdicionalSemanas?.find((s) => s.semana === semana);
-            return {
-              semana,
-              habilitado: Boolean(guardada?.habilitado),
-              dias: (guardada?.dias ?? []).filter((d) => d.dia !== 'domingo'),
-            };
-          }),
-          habilitarDomingo: Boolean(item.configuracion.habilitarDomingo),
-          domingoAnio: Number(item.configuracion.domingoAnio || hoy.getFullYear()),
-          domingoMes: Number(item.configuracion.domingoMes || hoy.getMonth() + 1),
-          domingoSemanas: (item.configuracion.domingoSemanas ?? [])
-            .map((semana) => Number(semana || 0))
-            .filter((semana) => SEMANAS_DISPONIBLES.includes(semana))
-            .sort((a, b) => a - b),
-        };
-        return acc;
-      }, {});
-
-      setAdicionalesPorEmpleado(mapa);
-    } catch (error) {
-      console.error('Error cargando adicionales de valet desde backend:', error);
-      setAdicionalesPorEmpleado({});
-      setMensaje({ type: 'error', text: 'No se pudo cargar adicionales de valet desde la base de datos.' });
-    }
-  };
-
-  const cargarEmpleados = async () => {
-    setLoadingEmpleados(true);
-    try {
-      const rawData = await getNominaEmployeesActive<EmpleadoNominaApiItem[]>();
-      const empleadosApi = Array.isArray(rawData) ? rawData : [];
-
-      const empleadosNormalizados = empleadosApi
-        .map((item: EmpleadoNominaApiItem) => {
-          const payload = (item?.json ?? item ?? {}) as Record<string, unknown>;
+        const empleadosMap = new Map<string, EmpleadoActivoOption>();
+        (Array.isArray(empleadosData) ? empleadosData : []).forEach((item) => {
+          const payload = item?.json ?? item;
           const cedula = String(payload?.CEDULA || payload?.DOCI_MFEMP || '').trim();
           const nombres = String(payload?.NOMBRES || '').trim();
           const apellidos = String(payload?.APELLIDOS || '').trim();
-          const nombre = `${apellidos} ${nombres}`.trim();
-          return { cedula, nombre };
-        })
-        .filter((item: EmpleadoOption) => item.cedula && item.nombre)
-        .sort((a: EmpleadoOption, b: EmpleadoOption) =>
-          a.nombre.localeCompare(b.nombre, 'es', { sensitivity: 'base' }),
-        );
+          const nombreCompleto = `${apellidos} ${nombres}`.trim();
+          const centroId = String((payload as EmpleadoNominaApiItem & { COD_MFCC?: string })?.COD_MFCC || '').trim();
+          const centroNombre = String((payload as EmpleadoNominaApiItem & { DSC_MFCC?: string })?.DSC_MFCC || '').trim();
 
-      setEmpleados(empleadosNormalizados);
-    } catch (error) {
-      console.error('Error cargando empleados para valets fijos:', error);
-      setEmpleados([]);
-      setMensaje({ type: 'error', text: 'No se pudo cargar la lista de empleados desde n8n.' });
-    } finally {
-      setLoadingEmpleados(false);
-    }
-  };
-
-  const cargarCentrosCosto = async () => {
-    setLoadingCentros(true);
-    try {
-      const data = await getNominaCostCenters();
-      setCentrosCosto(data);
-    } catch (error) {
-      console.error('Error cargando centros de costo para valets fijos:', error);
-      setCentrosCosto([]);
-      setMensaje({ type: 'error', text: 'No se pudo cargar la lista de centros de costo desde n8n.' });
-    } finally {
-      setLoadingCentros(false);
-    }
-  };
-
-  const centrosHorarioDisponibles = useMemo(() => {
-    const centrosConEmpleados = new Set(
-      asignacionesCentro
-        .map((item) => String(item.centroCostoId || '').trim())
-        .filter(Boolean),
-    );
-
-    return centrosCosto
-      .filter((item) => centrosConEmpleados.has(item.IDCENTROCOSTO))
-      .sort((a, b) => a.CENTROCOSTO.localeCompare(b.CENTROCOSTO, 'es', { sensitivity: 'base' }));
-  }, [centrosCosto, asignacionesCentro]);
-
-  const centroHorarioSeleccionado = useMemo(() => {
-    const valor = centroHorarioInput.trim();
-    if (!valor) return null;
-
-    const porCodigo = centrosHorarioDisponibles.find((item) => item.IDCENTROCOSTO === valor);
-    if (porCodigo) return porCodigo;
-
-    return centrosHorarioDisponibles.find((item) => etiquetaCentro(item).toLowerCase() === valor.toLowerCase()) || null;
-  }, [centroHorarioInput, centrosHorarioDisponibles]);
-
-  const empleadosCentroHorario = useMemo(() => {
-    if (!centroHorarioSeleccionado) return [];
-
-    return asignacionesCentro
-      .filter((item) => item.centroCostoId === centroHorarioSeleccionado.IDCENTROCOSTO)
-      .reduce<EmpleadoOption[]>((acc, item) => {
-        const existe = acc.some((emp) => emp.cedula === item.empleadoCedula);
-        if (!existe) {
-          acc.push({ cedula: item.empleadoCedula, nombre: item.empleadoNombre });
-        }
-        return acc;
-      }, [])
-      .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es', { sensitivity: 'base' }));
-  }, [asignacionesCentro, centroHorarioSeleccionado]);
-
-  const empleadoSeleccionado = useMemo(() => {
-    const valor = empleadoInput.trim();
-    if (!valor) return null;
-
-    const porCedula = empleadosCentroHorario.find((item) => item.cedula === valor);
-    if (porCedula) return porCedula;
-
-    return empleadosCentroHorario.find((item) => etiquetaEmpleado(item).toLowerCase() === valor.toLowerCase()) || null;
-  }, [empleadoInput, empleadosCentroHorario]);
-
-  const centroGestionSeleccionado = useMemo(() => {
-    const valor = centroGestionInput.trim();
-    if (!valor) return null;
-
-    const porCodigo = centrosCosto.find((item) => item.IDCENTROCOSTO === valor);
-    if (porCodigo) return porCodigo;
-
-    return centrosCosto.find((item) => etiquetaCentro(item).toLowerCase() === valor.toLowerCase()) || null;
-  }, [centroGestionInput, centrosCosto]);
-
-  const empleadoModalSeleccionado = useMemo(() => {
-    const valor = modalEmpleadoInput.trim();
-    if (!valor) return null;
-
-    const porCedula = empleados.find((item) => item.cedula === valor);
-    if (porCedula) return porCedula;
-
-    return empleados.find((item) => etiquetaEmpleado(item).toLowerCase() === valor.toLowerCase()) || null;
-  }, [modalEmpleadoInput, empleados]);
-
-  const detalleCentroSeleccionado = useMemo(() => {
-    if (!centroGestionSeleccionado) return [];
-
-    return asignacionesCentro
-      .filter((item) => item.centroCostoId === centroGestionSeleccionado.IDCENTROCOSTO)
-      .sort((a, b) => a.empleadoNombre.localeCompare(b.empleadoNombre, 'es', { sensitivity: 'base' }));
-  }, [centroGestionSeleccionado, asignacionesCentro]);
-
-  const empleadosCentroGestion = useMemo(() => {
-    if (!centroGestionSeleccionado) return [];
-
-    return asignacionesCentro
-      .filter((item) => item.centroCostoId === centroGestionSeleccionado.IDCENTROCOSTO)
-      .sort((a, b) => a.empleadoNombre.localeCompare(b.empleadoNombre, 'es', { sensitivity: 'base' }));
-  }, [centroGestionSeleccionado, asignacionesCentro]);
-
-  const diasDisponiblesIngreso = useMemo(() => {
-    let dias = [...DIAS_LABORALES_SIN_DOMINGO];
-
-    if (empleadoSeleccionado && centroHorarioSeleccionado) {
-      const asignacionEmpleado = asignacionesCentro.find(
-        (item) => item.centroCostoId === centroHorarioSeleccionado.IDCENTROCOSTO
-          && item.empleadoCedula === empleadoSeleccionado.cedula,
-      );
-
-      if (asignacionEmpleado) {
-        const configAdicionales = adicionalesPorEmpleado[asignacionEmpleado.id];
-        if (
-          configAdicionales?.habilitarDomingo
-          && configAdicionales.domingoAnio === anio
-          && configAdicionales.domingoMes === mes
-          && configAdicionales.domingoSemanas.includes(semanaHorario)
-        ) {
-          dias = [...DIAS_LABORALES];
-        }
-      }
-    }
-
-    return dias;
-  }, [empleadoSeleccionado, centroHorarioSeleccionado, anio, mes, semanaHorario, adicionalesPorEmpleado, asignacionesCentro]);
-
-  useEffect(() => {
-    if (diasDisponiblesIngreso.length === 0) return;
-
-    const diaSigueDisponible = diasDisponiblesIngreso.some((dia) => dia.key === diaHorario);
-    if (!diaSigueDisponible) {
-      setDiaHorario(diasDisponiblesIngreso[0].key);
-    }
-  }, [diasDisponiblesIngreso, diaHorario]);
-
-  const abrirModalAdicionales = async (empleado: ValetAsignadoCentro) => {
-    const configGuardada = adicionalesPorEmpleado[empleado.id];
-    setEmpleadoAdicionalSeleccionado(empleado);
-
-    const aplicarConfigAModal = (config: AdicionalesEmpleadoConfig | undefined) => {
-      setModalHabilitarDiaAdicional(config?.habilitarDiaAdicional ?? false);
-      setModalDiaAdicionalAnio(config?.diaAdicionalAnio ?? hoy.getFullYear());
-      setModalDiaAdicionalMes(config?.diaAdicionalMes ?? hoy.getMonth() + 1);
-      setModalDiaAdicionalSemanas(
-        SEMANAS_DISPONIBLES.map((semana) => {
-          const guardada = config?.diaAdicionalSemanas?.find((item) => item.semana === semana);
-          return {
-            semana,
-            habilitado: guardada?.habilitado ?? false,
-            dias: (guardada?.dias ?? []).filter((d) => d.dia !== 'domingo'),
-          };
-        }),
-      );
-      setModalHabilitarDomingo(config?.habilitarDomingo ?? false);
-      setModalDomingoAnio(config?.domingoAnio ?? hoy.getFullYear());
-      setModalDomingoMes(config?.domingoMes ?? hoy.getMonth() + 1);
-      setModalDomingoSemanas(
-        (config?.domingoSemanas ?? [])
-          .filter((semana) => SEMANAS_DISPONIBLES.includes(semana))
-          .sort((a, b) => a - b),
-      );
-    };
-
-    aplicarConfigAModal(configGuardada);
-    setModalAdicionalesOpen(true);
-
-    try {
-      const payload = await dbApi.valets.adicionales.get<ValetAdicionalesApiResponse>(
-        empleado.centroCostoId,
-        empleado.empleadoCedula,
-      );
-
-      if (!payload) {
-        return;
-      }
-      const configApi = payload?.data?.configuracion;
-
-      if (!configApi) {
-        return;
-      }
-
-      const configNormalizada: AdicionalesEmpleadoConfig = {
-        habilitarDiaAdicional: Boolean(configApi.habilitarDiaAdicional),
-        diaAdicionalAnio: Number(configApi.diaAdicionalAnio || hoy.getFullYear()),
-        diaAdicionalMes: Number(configApi.diaAdicionalMes || hoy.getMonth() + 1),
-        diaAdicionalSemanas: SEMANAS_DISPONIBLES.map((semana) => {
-          const semanaApi = configApi.diaAdicionalSemanas?.find((item) => item.semana === semana);
-          return {
-            semana,
-            habilitado: Boolean(semanaApi?.habilitado),
-            dias: (semanaApi?.dias ?? []).filter((d) => d.dia !== 'domingo'),
-          };
-        }),
-        habilitarDomingo: Boolean(configApi.habilitarDomingo),
-        domingoAnio: Number(configApi.domingoAnio || hoy.getFullYear()),
-        domingoMes: Number(configApi.domingoMes || hoy.getMonth() + 1),
-        domingoSemanas: (configApi.domingoSemanas ?? [])
-          .map((semana) => Number(semana || 0))
-          .filter((semana) => SEMANAS_DISPONIBLES.includes(semana))
-          .sort((a, b) => a - b),
-      };
-
-      setAdicionalesPorEmpleado((prev) => ({
-        ...prev,
-        [empleado.id]: configNormalizada,
-      }));
-      aplicarConfigAModal(configNormalizada);
-    } catch (error) {
-      console.error('Error cargando adicionales de valet desde backend:', error);
-      setMensaje({ type: 'error', text: 'No se pudo cargar adicionales guardados desde la base de datos.' });
-    }
-  };
-
-  const cerrarModalAdicionales = () => {
-    setModalAdicionalesOpen(false);
-    setEmpleadoAdicionalSeleccionado(null);
-  };
-
-  const obtenerIndiceDiaAdicional = (dia: DiaLaboralKey): number => ORDEN_DIAS_ADICIONALES.indexOf(dia);
-
-  const obtenerDiasDisponiblesPorIndice = (dias: DiaDiaAdicional[], indexDia: number): DiaLaboralKey[] => {
-    if (indexDia <= 0) {
-      return [...ORDEN_DIAS_ADICIONALES];
-    }
-
-    const diaAnterior = dias[indexDia - 1]?.dia;
-    const indiceAnterior = diaAnterior ? obtenerIndiceDiaAdicional(diaAnterior) : -1;
-    if (indiceAnterior < 0) {
-      return [...ORDEN_DIAS_ADICIONALES];
-    }
-
-    return ORDEN_DIAS_ADICIONALES.slice(indiceAnterior + 1);
-  };
-
-  const obtenerSiguienteDiaDisponible = (dias: DiaDiaAdicional[]): DiaLaboralKey | null => {
-    if (dias.length === 0) {
-      return ORDEN_DIAS_ADICIONALES[0] || null;
-    }
-
-    const ultimoDia = dias[dias.length - 1]?.dia;
-    const indiceUltimo = ultimoDia ? obtenerIndiceDiaAdicional(ultimoDia) : -1;
-    if (indiceUltimo < 0 || indiceUltimo + 1 >= ORDEN_DIAS_ADICIONALES.length) {
-      return null;
-    }
-
-    return ORDEN_DIAS_ADICIONALES[indiceUltimo + 1] || null;
-  };
-
-  const handleToggleDiaAdicionalSemana = (semana: number, habilitado: boolean) => {
-    setModalDiaAdicionalSemanas((prev) => prev.map((item) => (
-      item.semana === semana ? { ...item, habilitado, dias: habilitado ? item.dias : [] } : item
-    )));
-  };
-
-  const handleAgregarDiaAdicional = (semana: number) => {
-    const semanaConfig = modalDiaAdicionalSemanas.find((item) => item.semana === semana);
-    if (!semanaConfig) return;
-
-    if (semanaConfig.dias.length >= 5) {
-      setMensaje({ type: 'error', text: `La semana ${semana} permite maximo 5 dias adicionales.` });
-      return;
-    }
-
-    const siguienteDia = obtenerSiguienteDiaDisponible(semanaConfig.dias);
-    if (!siguienteDia) {
-      setMensaje({ type: 'error', text: `No hay mas dias disponibles para la semana ${semana}.` });
-      return;
-    }
-
-    setModalDiaAdicionalSemanas((prev) => prev.map((item) => {
-      if (item.semana !== semana) return item;
-      return {
-        ...item,
-        dias: [...item.dias, { dia: siguienteDia, horaEntrada: '', horaSalida: '' }],
-      };
-    }));
-  };
-
-  const handleRemoverDiaAdicional = (semana: number, indexDia: number) => {
-    setModalDiaAdicionalSemanas((prev) => prev.map((item) => {
-      if (item.semana !== semana) return item;
-      return {
-        ...item,
-        dias: item.dias.filter((_, idx) => idx !== indexDia),
-      };
-    }));
-  };
-
-  const handleActualizarDiaAdicional = (
-    semana: number,
-    indexDia: number,
-    campo: 'dia' | 'horaEntrada' | 'horaSalida',
-    valor: string,
-  ) => {
-    setModalDiaAdicionalSemanas((prev) => prev.map((item) => {
-      if (item.semana !== semana) return item;
-
-      const diasActualizados = item.dias.map((d, idx) => {
-        if (idx !== indexDia) return d;
-        if (campo === 'dia') {
-          return { ...d, dia: valor as DiaLaboralKey };
-        }
-        return { ...d, [campo]: valor };
-      });
-
-      if (campo === 'dia') {
-        // Mantiene un orden ascendente de dias para evitar desorden entre selects.
-        const diasNormalizados = [...diasActualizados];
-        for (let idx = 1; idx < diasNormalizados.length; idx += 1) {
-          const indiceAnterior = obtenerIndiceDiaAdicional(diasNormalizados[idx - 1].dia);
-          const indiceActual = obtenerIndiceDiaAdicional(diasNormalizados[idx].dia);
-
-          if (indiceActual > indiceAnterior) {
-            continue;
+          if (!cedula || !nombreCompleto) return;
+          if (!empleadosMap.has(cedula)) {
+            empleadosMap.set(cedula, {
+              cedula,
+              nombreCompleto,
+              centroId,
+              centroNombre,
+            });
           }
-
-          const siguienteClave = ORDEN_DIAS_ADICIONALES[indiceAnterior + 1];
-          if (!siguienteClave) {
-            diasNormalizados.splice(idx);
-            break;
-          }
-
-          diasNormalizados[idx] = {
-            ...diasNormalizados[idx],
-            dia: siguienteClave,
-            horaEntrada: '',
-            horaSalida: '',
-          };
-        }
-
-        return {
-          ...item,
-          dias: diasNormalizados,
-        };
-      }
-
-      return {
-        ...item,
-        dias: diasActualizados,
-      };
-    }));
-  };
-
-  const handleToggleDomingoSemana = (semana: number, habilitado: boolean) => {
-    setModalDomingoSemanas((prev) => {
-      if (habilitado) {
-        return Array.from(new Set([...prev, semana])).sort((a, b) => a - b);
-      }
-      return prev.filter((item) => item !== semana);
-    });
-  };
-
-  const handleGuardarAdicionales = async () => {
-    if (!empleadoAdicionalSeleccionado) return;
-
-    if (!modalHabilitarDiaAdicional && !modalHabilitarDomingo) {
-      setMensaje({ type: 'error', text: 'Selecciona al menos una opcion de adicionales.' });
-      return;
-    }
-
-    if (modalHabilitarDiaAdicional) {
-      const semanasDiaAdicional = modalDiaAdicionalSemanas.filter((item) => item.habilitado);
-      if (semanasDiaAdicional.length === 0) {
-        setMensaje({ type: 'error', text: 'Debes habilitar al menos una semana para dia adicional.' });
-        return;
-      }
-
-      for (const semanaDia of semanasDiaAdicional) {
-        if (semanaDia.dias.length === 0) {
-          setMensaje({ type: 'error', text: `En semana ${semanaDia.semana} debes agregar al menos un dia adicional.` });
-          return;
-        }
-
-        for (const diaDia of semanaDia.dias) {
-          if (!diaDia.horaEntrada || !diaDia.horaSalida) {
-            setMensaje({ type: 'error', text: `En semana ${semanaDia.semana}, ${DIAS_LABORALES_SIN_DOMINGO.find((d) => d.key === diaDia.dia)?.label || diaDia.dia} necesita hora de entrada y salida.` });
-            return;
-          }
-
-          if (!esHoraValida(diaDia.horaEntrada) || !esHoraValida(diaDia.horaSalida)) {
-            setMensaje({ type: 'error', text: `Las horas de semana ${semanaDia.semana} deben estar en punto (:00).` });
-            return;
-          }
-
-          if (calcularHorasTrabajadas(diaDia.horaEntrada, diaDia.horaSalida) <= 0) {
-            setMensaje({ type: 'error', text: `En semana ${semanaDia.semana}, la salida debe ser mayor que la entrada.` });
-            return;
-          }
-        }
-      }
-    }
-
-    if (modalHabilitarDomingo && modalDomingoSemanas.length === 0) {
-      setMensaje({ type: 'error', text: 'Debes habilitar al menos una semana para domingo.' });
-      return;
-    }
-
-    const nuevaConfig: AdicionalesEmpleadoConfig = {
-      habilitarDiaAdicional: modalHabilitarDiaAdicional,
-      diaAdicionalAnio: modalDiaAdicionalAnio,
-      diaAdicionalMes: modalDiaAdicionalMes,
-      diaAdicionalSemanas: modalDiaAdicionalSemanas,
-      habilitarDomingo: modalHabilitarDomingo,
-      domingoAnio: modalDomingoAnio,
-      domingoMes: modalDomingoMes,
-      domingoSemanas: modalDomingoSemanas,
-    };
-
-    setAdicionalesPorEmpleado((prev) => ({
-      ...prev,
-      [empleadoAdicionalSeleccionado.id]: nuevaConfig,
-    }));
-
-    try {
-      await dbApi.valets.adicionales.save({
-        centroCostoId: empleadoAdicionalSeleccionado.centroCostoId,
-        centroCostoNombre: empleadoAdicionalSeleccionado.centroCostoNombre,
-        empleadoCedula: empleadoAdicionalSeleccionado.empleadoCedula,
-        empleadoNombre: empleadoAdicionalSeleccionado.empleadoNombre,
-        habilitarDiaAdicional: nuevaConfig.habilitarDiaAdicional,
-        diaAdicionalAnio: nuevaConfig.diaAdicionalAnio,
-        diaAdicionalMes: nuevaConfig.diaAdicionalMes,
-        diaAdicionalSemanas: nuevaConfig.diaAdicionalSemanas,
-        habilitarDomingo: nuevaConfig.habilitarDomingo,
-        domingoAnio: nuevaConfig.domingoAnio,
-        domingoMes: nuevaConfig.domingoMes,
-        domingoSemanas: nuevaConfig.domingoSemanas,
-      });
-    } catch (error) {
-      console.error('Error guardando adicionales de valet en backend:', error);
-      setMensaje({
-        type: 'error',
-        text: `No se pudo guardar en base de datos: ${error instanceof Error ? error.message : 'Error desconocido'}`,
-      });
-      return;
-    }
-
-    setMensaje({
-      type: 'success',
-      text: `Adicionales actualizados y guardados en base de datos para ${empleadoAdicionalSeleccionado.empleadoNombre}.`,
-    });
-    cerrarModalAdicionales();
-  };
-
-  const handleRegistrar = () => {
-    if (!centroHorarioSeleccionado) {
-      setMensaje({
-        type: 'error',
-        text: 'Selecciona un centro de costo valido.',
-      });
-      return;
-    }
-
-    if (empleadosCentroHorario.length === 0) {
-      setMensaje({
-        type: 'error',
-        text: 'No existen empleados dentro de ese centro de costo.',
-      });
-      return;
-    }
-
-    if (!empleadoSeleccionado) {
-      setMensaje({
-        type: 'error',
-        text: 'Selecciona un empleado valido dentro del centro de costo.',
-      });
-      return;
-    }
-
-    const asignacionEmpleadoCentro = asignacionesCentro.find((item) => (
-      item.centroCostoId === centroHorarioSeleccionado.IDCENTROCOSTO
-      && item.empleadoCedula === empleadoSeleccionado.cedula
-    ));
-    if (!asignacionEmpleadoCentro) {
-      setMensaje({ type: 'error', text: 'El empleado no tiene valor fijo configurado en Gestionar valet.' });
-      return;
-    }
-
-    if (!horaEntradaHorario || !horaSalidaHorario) {
-      setMensaje({ type: 'error', text: 'Selecciona hora de entrada y salida.' });
-      return;
-    }
-
-    if (!esHoraValida(horaEntradaHorario) || !esHoraValida(horaSalidaHorario)) {
-      setMensaje({ type: 'error', text: 'Las horas deben estar en punto (:00).' });
-      return;
-    }
-
-    if (calcularHorasTrabajadas(horaEntradaHorario, horaSalidaHorario) <= 0) {
-      setMensaje({ type: 'error', text: 'La hora de salida debe ser mayor a la hora de entrada.' });
-      return;
-    }
-
-    const diaSeleccionadoDisponible = diasDisponiblesIngreso.find((dia) => dia.key === diaHorario);
-    if (!diaSeleccionadoDisponible) {
-      setMensaje({ type: 'error', text: 'El dia seleccionado ya no esta disponible para la semana actual. Selecciona un dia valido.' });
-      return;
-    }
-
-    const nuevoHorario: HorarioFijoGuardado = {
-      id: `${Date.now()}-${empleadoSeleccionado.cedula}`,
-      empleadoCedula: empleadoSeleccionado.cedula,
-      empleadoNombre: empleadoSeleccionado.nombre,
-      centroCostoId: centroHorarioSeleccionado.IDCENTROCOSTO,
-      centroCostoNombre: centroHorarioSeleccionado.CENTROCOSTO,
-      valorFijo: asignacionEmpleadoCentro.valorFijo,
-      anio,
-      mes,
-      semana: semanaHorario,
-      dia: diaSeleccionadoDisponible.key,
-      horaEntrada: horaEntradaHorario,
-      horaSalida: horaSalidaHorario,
-    };
-
-    void (async () => {
-      try {
-        const payload = await dbApi.valets.horarios.save<ValetHorarioApiResponse>({
-          centroCostoId: nuevoHorario.centroCostoId,
-          centroCostoNombre: nuevoHorario.centroCostoNombre,
-          empleadoCedula: nuevoHorario.empleadoCedula,
-          empleadoNombre: nuevoHorario.empleadoNombre,
-          valorFijo: nuevoHorario.valorFijo,
-          anio: nuevoHorario.anio,
-          mes: nuevoHorario.mes,
-          semana: nuevoHorario.semana,
-          dia: nuevoHorario.dia,
-          horaEntrada: nuevoHorario.horaEntrada,
-          horaSalida: nuevoHorario.horaSalida,
-        });
-        const horarioGuardado = payload?.registro || nuevoHorario;
-
-        setHorariosFijosGuardados((prev) => {
-          const sinDuplicado = prev.filter((item) => !(
-            item.empleadoCedula === horarioGuardado.empleadoCedula
-            && item.anio === horarioGuardado.anio
-            && item.mes === horarioGuardado.mes
-            && item.semana === horarioGuardado.semana
-            && item.dia === horarioGuardado.dia
-          ));
-          return [{
-            id: String(horarioGuardado.id || `${horarioGuardado.centroCostoId}-${horarioGuardado.empleadoCedula}-${horarioGuardado.anio}-${horarioGuardado.mes}-${horarioGuardado.semana}-${horarioGuardado.dia}`),
-            empleadoCedula: horarioGuardado.empleadoCedula,
-            empleadoNombre: horarioGuardado.empleadoNombre,
-            centroCostoId: horarioGuardado.centroCostoId,
-            centroCostoNombre: horarioGuardado.centroCostoNombre,
-            valorFijo: Number(horarioGuardado.valorFijo || 0),
-            anio: Number(horarioGuardado.anio || 0),
-            mes: Number(horarioGuardado.mes || 0),
-            semana: Number(horarioGuardado.semana || 0),
-            dia: horarioGuardado.dia as DiaLaboralKey,
-            horaEntrada: horarioGuardado.horaEntrada,
-            horaSalida: horarioGuardado.horaSalida,
-          }, ...sinDuplicado];
         });
 
-        setAsignacionesCentro((prev) => {
-          const nuevaAsignacion: ValetAsignadoCentro = {
-            id: `${nuevoHorario.centroCostoId}-${nuevoHorario.empleadoCedula}`,
-            centroCostoId: nuevoHorario.centroCostoId,
-            centroCostoNombre: nuevoHorario.centroCostoNombre,
-            empleadoCedula: nuevoHorario.empleadoCedula,
-            empleadoNombre: nuevoHorario.empleadoNombre,
-            valorFijo: nuevoHorario.valorFijo,
-          };
+        const empleadosNormalizados = Array.from(empleadosMap.values())
+          .sort((a, b) => a.nombreCompleto.localeCompare(b.nombreCompleto, 'es', { sensitivity: 'base' }));
 
-          const sinDuplicado = prev.filter((item) => !(
-            item.centroCostoId === nuevaAsignacion.centroCostoId
-            && item.empleadoCedula === nuevaAsignacion.empleadoCedula
-          ));
-
-          return [nuevaAsignacion, ...sinDuplicado];
-        });
-
-        setMensaje({
-          type: 'success',
-          text: `Horario guardado en base de datos para ${empleadoSeleccionado.nombre} en semana ${semanaHorario}, ${diaSeleccionadoDisponible.label}.`,
-        });
-
-        setHoraEntradaHorario('');
-        setHoraSalidaHorario('');
+        if (!isMounted) return;
+        setCentrosCosto(centrosNormalizados);
+        setEmpleadosActivos(empleadosNormalizados);
       } catch (error) {
-        console.error('Error guardando horario de valet fijo en backend:', error);
-        setMensaje({
-          type: 'error',
-          text: `No se pudo guardar horario en base de datos: ${error instanceof Error ? error.message : 'Error desconocido'}`,
-        });
+        if (!isMounted) return;
+        setCatalogosError(error instanceof Error ? error.message : 'No se pudieron cargar catalogos desde n8n.');
+      } finally {
+        if (isMounted) {
+          setLoadingCatalogos(false);
+        }
       }
-    })();
-  };
-
-  const handleGuardarEmpleadoCentro = () => {
-    if (!centroGestionSeleccionado) {
-      setMensaje({ type: 'error', text: 'Selecciona un centro de costo valido.' });
-      return;
-    }
-
-    if (!empleadoModalSeleccionado) {
-      setMensaje({ type: 'error', text: 'Selecciona un empleado valido de la lista.' });
-      return;
-    }
-
-    const valorFijoNumero = Number(modalValorFijo);
-    if (!Number.isFinite(valorFijoNumero) || valorFijoNumero <= 0) {
-      setMensaje({ type: 'error', text: 'Ingresa un valor fijo valido mayor a 0.' });
-      return;
-    }
-
-    const nuevaAsignacion: ValetAsignadoCentro = {
-      id: `${centroGestionSeleccionado.IDCENTROCOSTO}-${empleadoModalSeleccionado.cedula}`,
-      centroCostoId: centroGestionSeleccionado.IDCENTROCOSTO,
-      centroCostoNombre: centroGestionSeleccionado.CENTROCOSTO,
-      empleadoCedula: empleadoModalSeleccionado.cedula,
-      empleadoNombre: empleadoModalSeleccionado.nombre,
-      valorFijo: Math.round(valorFijoNumero * 100) / 100,
     };
 
-    void (async () => {
-      try {
-        await dbApi.valets.empleados.save({
-          centroCostoId: nuevaAsignacion.centroCostoId,
-          centroCostoNombre: nuevaAsignacion.centroCostoNombre,
-          empleadoCedula: nuevaAsignacion.empleadoCedula,
-          empleadoNombre: nuevaAsignacion.empleadoNombre,
-          valorFijo: nuevaAsignacion.valorFijo,
-        });
-
-        setAsignacionesCentro((prev) => {
-          const sinDuplicado = prev.filter((item) => !(
-            item.centroCostoId === nuevaAsignacion.centroCostoId
-            && item.empleadoCedula === nuevaAsignacion.empleadoCedula
-          ));
-          return [nuevaAsignacion, ...sinDuplicado];
-        });
-
-        setModalAgregarOpen(false);
-        setModalEmpleadoInput('');
-        setModalEmpleadoEliminarCedula('');
-        setModalValorFijo('');
-        setMensaje({ type: 'success', text: 'Empleado guardado correctamente en la base de datos.' });
-      } catch (error) {
-        console.error('Error guardando empleado valet fijo en backend:', error);
-        setMensaje({
-          type: 'error',
-          text: `No se pudo guardar empleado en base de datos: ${error instanceof Error ? error.message : 'Error desconocido'}`,
-        });
-      }
-    })();
-  };
-
-  const handleEliminarEmpleadoCentro = () => {
-    if (!centroGestionSeleccionado) {
-      setMensaje({ type: 'error', text: 'Selecciona un centro de costo valido.' });
-      return;
-    }
-
-    const cedula = modalEmpleadoEliminarCedula.trim();
-    if (!cedula) {
-      setMensaje({ type: 'error', text: 'Selecciona un empleado existente para eliminar.' });
-      return;
-    }
-
-    const empleadoExistente = empleadosCentroGestion.find((item) => item.empleadoCedula === cedula);
-    if (!empleadoExistente) {
-      setMensaje({ type: 'error', text: 'El empleado seleccionado no pertenece a este centro de costo.' });
-      return;
-    }
-
-    void (async () => {
-      try {
-        await dbApi.valets.empleados.delete(
-          centroGestionSeleccionado.IDCENTROCOSTO,
-          cedula,
-        );
-
-        setAsignacionesCentro((prev) => prev.filter((item) => !(
-          item.centroCostoId === centroGestionSeleccionado.IDCENTROCOSTO
-          && item.empleadoCedula === cedula
-        )));
-
-        setHorariosFijosGuardados((prev) => prev.filter((item) => !(
-          item.centroCostoId === centroGestionSeleccionado.IDCENTROCOSTO
-          && item.empleadoCedula === cedula
-        )));
-
-        setAdicionalesPorEmpleado((prev) => {
-          const next = { ...prev };
-          delete next[`${centroGestionSeleccionado.IDCENTROCOSTO}-${cedula}`];
-          return next;
-        });
-
-        setModalAgregarOpen(false);
-        setModalEmpleadoInput('');
-        setModalEmpleadoEliminarCedula('');
-        setModalValorFijo('');
-        setMensaje({ type: 'success', text: 'Empleado eliminado correctamente del centro de costo.' });
-      } catch (error) {
-        console.error('Error eliminando empleado valet fijo en backend:', error);
-        setMensaje({
-          type: 'error',
-          text: `No se pudo eliminar empleado en base de datos: ${error instanceof Error ? error.message : 'Error desconocido'}`,
-        });
-      }
-    })();
-  };
-
-  const horariosCentroPeriodo = useMemo(() => {
-    if (!centroHorarioSeleccionado) return [];
-    return horariosFijosGuardados
-      .filter((item) => 
-        item.centroCostoId === centroHorarioSeleccionado.IDCENTROCOSTO && 
-        item.anio === anio && 
-        item.mes === mes &&
-        item.semana === semanaHorario &&
-        DIAS_LABORALES.some((d) => d.key === item.dia)
-      )
-      .sort((a, b) => diaLaboralAIndice(a.dia) - diaLaboralAIndice(b.dia));
-  }, [horariosFijosGuardados, centroHorarioSeleccionado, anio, mes, semanaHorario]);
-
-  const eventosCalendarioPeriodo = useMemo(() => {
-    const eventosBase: EventoCalendario[] = horariosCentroPeriodo.map((item) => ({
-      empleadoCedula: item.empleadoCedula,
-      empleadoNombre: item.empleadoNombre,
-      dia: item.dia,
-      horaEntrada: item.horaEntrada,
-      horaSalida: item.horaSalida,
-      esAdicional: false,
-    }));
-
-    if (!centroHorarioSeleccionado) return eventosBase;
-
-    const adicionales: EventoCalendario[] = asignacionesCentro
-      .filter((item) => item.centroCostoId === centroHorarioSeleccionado.IDCENTROCOSTO)
-      .flatMap((asignacion) => {
-        const config = adicionalesPorEmpleado[asignacion.id];
-        if (!config?.habilitarDiaAdicional) return [];
-        if (config.diaAdicionalAnio !== anio || config.diaAdicionalMes !== mes) return [];
-
-        const semana = config.diaAdicionalSemanas.find((item) => item.semana === semanaHorario && item.habilitado);
-        if (!semana) return [];
-
-        return semana.dias
-          .filter((diaAdicional) => diaAdicional.horaEntrada && diaAdicional.horaSalida)
-          .map((diaAdicional) => ({
-            empleadoCedula: asignacion.empleadoCedula,
-            empleadoNombre: asignacion.empleadoNombre,
-            dia: diaAdicional.dia,
-            horaEntrada: diaAdicional.horaEntrada,
-            horaSalida: diaAdicional.horaSalida,
-            esAdicional: true,
-          }));
-      });
-
-    return [...eventosBase, ...adicionales];
-  }, [horariosCentroPeriodo, centroHorarioSeleccionado, asignacionesCentro, adicionalesPorEmpleado, anio, mes, semanaHorario]);
-
-  const colorIndexPorCedula = useMemo(() => {
-    const mapa = new Map<string, number>();
-    for (const evento of eventosCalendarioPeriodo) {
-      if (!mapa.has(evento.empleadoCedula)) {
-        mapa.set(evento.empleadoCedula, mapa.size % COLORES_EMPLEADO.length);
-      }
-    }
-    return mapa;
-  }, [eventosCalendarioPeriodo]);
-
-  const colorPorCedulaLocal = (cedula: string) => {
-    const idx = colorIndexPorCedula.get(cedula) ?? (hashCedula(cedula) % COLORES_EMPLEADO.length);
-    return COLORES_EMPLEADO[idx]!;
-  };
-
-  const diasCalendario = useMemo(() => {
-    return [...DIAS_LABORALES];
+    cargarCatalogos();
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
+  useEffect(() => {
+    let isMounted = true;
+
+    const cargarHorariosValet = async () => {
+      setLoadingHorariosDb(true);
+      try {
+        const response = await dbApi.valets.horarios.list<ValetHorariosListResponse>();
+        const registros = Array.isArray(response?.registros) ? response.registros : [];
+
+        if (!isMounted) return;
+        setHorariosRegistrados(
+          registros
+            .map((item) => ({
+              id: String(item.id || `${item.centroCostoId}-${item.empleadoCedula}-${item.fechaTurno}`),
+              centro: composeCentroDisplay(String(item.centroCostoId || ''), String(item.centroCostoNombre || '')),
+              empleado: String(item.empleadoNombre || '').trim(),
+              fecha: String(item.fechaTurno || '').trim(),
+              horaEntrada: String(item.horaEntrada || '').trim(),
+              horaSalida: String(item.horaSalida || '').trim(),
+              adicional: Boolean(item.esAdicional),
+              aprobado: item.aprobado === undefined ? true : Boolean(item.aprobado),
+            }))
+            .filter((item) => item.centro && item.empleado && item.fecha && item.horaEntrada && item.horaSalida)
+        );
+      } catch (error) {
+        if (!isMounted) return;
+        alert(error instanceof Error ? error.message : 'No se pudieron cargar horarios de valet fijo desde la base de datos.');
+      } finally {
+        if (isMounted) {
+          setLoadingHorariosDb(false);
+        }
+      }
+    };
+
+    void cargarHorariosValet();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const cargarEmpleadosValet = async () => {
+      setLoadingEmpleadosDb(true);
+      try {
+        const response = await dbApi.valets.empleados.list<ValetEmpleadosListResponse>();
+        const registros = Array.isArray(response?.registros) ? response.registros : [];
+
+        if (!isMounted) return;
+        setEmpleadosValet(
+          registros
+            .map((item) => ({
+              id: String(item.id || `${item.centroCostoId}-${item.empleadoCedula}`),
+              centro: composeCentroDisplay(String(item.centroCostoId || ''), String(item.centroCostoNombre || '')),
+              nombre: String(item.empleadoNombre || '').trim(),
+              valor: Number(item.valorFijo || 0).toFixed(2),
+              cedula: String(item.empleadoCedula || '').trim(),
+            }))
+            .filter((item) => item.centro && item.nombre && item.cedula)
+        );
+      } catch (error) {
+        if (!isMounted) return;
+        alert(error instanceof Error ? error.message : 'No se pudo cargar empleados de valet fijo desde la base de datos.');
+      } finally {
+        if (isMounted) {
+          setLoadingEmpleadosDb(false);
+        }
+      }
+    };
+
+    void cargarEmpleadosValet();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const empleadosParaIngreso = empleadosValet.filter(e => e.centro === ingresoCentro);
+  const empleadosCentroGestion = empleadosValet.filter(e => e.centro === gestionarCentro);
+  const empleadosActivosFiltrados = empleadosActivos
+    .filter((emp) => {
+      const q = empleadoBusqueda.trim().toLowerCase();
+      if (!q) return true;
+      return emp.nombreCompleto.toLowerCase().includes(q) || emp.cedula.toLowerCase().includes(q);
+    });
+
+  const calcularTotalCentro = (centro: string): number => {
+    const empAdicCentro = horariosRegistrados.filter(h => h.centro === centro && h.adicional);
+    let total = 0;
+    const emps = [...new Set(empAdicCentro.map(h => h.empleado))];
+    
+    emps.forEach(empName => {
+      const evs = empAdicCentro.filter(h => h.empleado === empName);
+      const domingosMap = new Map();
+      
+      evs.forEach(ev => {
+        const isAprobado = ev.aprobado !== false;
+        if (!isAprobado) return;
+        
+        const d = new Date(`${ev.fecha}T12:00:00`);
+        if (d.getDay() === 0) {
+          domingosMap.set(ev.fecha, true);
+        } else {
+          total += calcularValorNum(ev.horaEntrada, ev.horaSalida);
+        }
+      });
+      total += domingosMap.size * 10;
+    });
+    return total;
+  };
+
+  const getMonthGrid = (): { grid: CalendarDay[], monthName: string, year: number } => {
+    let baseDate = new Date();
+    if (horariosRegistrados.length > 0) {
+      const lastEv = horariosRegistrados[horariosRegistrados.length - 1];
+      baseDate = new Date(`${lastEv.fecha}T12:00:00`);
+    }
+    const year = baseDate.getFullYear();
+    const month = baseDate.getMonth();
+    
+    const firstDay = new Date(year, month, 1).getDay();
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const daysInPrevMonth = new Date(year, month, 0).getDate();
+    
+    let startOffset = firstDay === 0 ? 6 : firstDay - 1;
+    
+    const grid: CalendarDay[] = [];
+    for (let i = startOffset - 1; i >= 0; i--) {
+      grid.push({ d: daysInPrevMonth - i, curr: false, m: month === 0 ? 12 : month, y: month === 0 ? year - 1 : year });
+    }
+    for (let i = 1; i <= daysInMonth; i++) {
+      const isToday = new Date().toDateString() === new Date(year, month, i).toDateString();
+      grid.push({ d: i, curr: true, m: month + 1, y: year, active: isToday });
+    }
+    const remaining = (Math.ceil(grid.length / 7) * 7) - grid.length;
+    for (let i = 1; i <= remaining; i++) {
+      grid.push({ d: i, curr: false, m: month === 11 ? 1 : month + 2, y: month === 11 ? year + 1 : year });
+    }
+    return { grid, monthName: monthNames[month], year };
+  };
+
+  const getWeekDays = (): WeekDay[] => {
+    let baseDate = new Date();
+    if (horariosRegistrados.length > 0) {
+      const lastEv = horariosRegistrados[horariosRegistrados.length - 1];
+      baseDate = new Date(`${lastEv.fecha}T12:00:00`);
+    }
+    const dayOfWeek = baseDate.getDay();
+    const diff = baseDate.getDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1);
+    const monday = new Date(baseDate.setDate(diff));
+    
+    const names = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
+    const wDays: WeekDay[] = [];
+    for (let i = 0; i < 7; i++) {
+      const cur = new Date(monday);
+      cur.setDate(monday.getDate() + i);
+      const isToday = new Date().toDateString() === cur.toDateString();
+      wDays.push({
+        d: cur.getDate(),
+        m: cur.getMonth() + 1,
+        y: cur.getFullYear(),
+        n: names[i],
+        active: isToday
+      });
+    }
+    return wDays;
+  };
+
+  const { grid: currentCalendarGrid, monthName: currentMonthName, year: currentYear } = getMonthGrid();
+  const currentWeekDays = getWeekDays();
+  
+  const startW = currentWeekDays[0];
+  const endW = currentWeekDays[6];
+  const weekHeaderText = `${monthNames[startW.m - 1]} ${startW.d.toString().padStart(2, '0')} – ${endW.d.toString().padStart(2, '0')}`;
+  const headerText = calendarView === 'semana' ? weekHeaderText : `${currentMonthName} ${currentYear}`;
+
+  const handleGuardarHorario = async () => {
+    if (!ingresoCentro || !ingresoEmpleado || !ingresoFecha || !ingresoHoraEntrada || !ingresoHoraSalida) {
+      alert('Por favor, completa todos los campos del horario.');
+      return;
+    }
+
+    const dateObj = new Date(`${ingresoFecha}T12:00:00`);
+    const isSunday = dateObj.getDay() === 0;
+
+    if (isSunday && !ingresoAdicional) {
+      alert('No se puede registrar un turno en domingo a menos que agregues el check adicional.');
+      return;
+    }
+
+    const centro = parseCentroCompuesto(ingresoCentro);
+    if (!centro.centroCostoId) {
+      alert('Selecciona un centro de costo valido.');
+      return;
+    }
+
+    const empleadoAsignado = empleadosValet.find((emp) =>
+      emp.centro === ingresoCentro && emp.nombre === ingresoEmpleado && Boolean(emp.cedula)
+    );
+
+    if (!empleadoAsignado?.cedula) {
+      alert('No se pudo identificar la cedula del empleado seleccionado.');
+      return;
+    }
+
+    const entradaMin = parseHora24AMinutos(ingresoHoraEntrada);
+    const salidaMin = parseHora24AMinutos(ingresoHoraSalida);
+    if (entradaMin === null || salidaMin === null) {
+      alert('Las horas deben tener formato valido HH:MM.');
+      return;
+    }
+
+    if (salidaMin <= entradaMin) {
+      alert('La hora de salida debe ser mayor que la hora de entrada.');
+      return;
+    }
+
+    const existeSolape = horariosRegistrados
+      .filter((item) => item.centro === ingresoCentro && item.empleado === ingresoEmpleado && item.fecha === ingresoFecha)
+      .some((item) => {
+        const inicioExistente = parseHora24AMinutos(item.horaEntrada);
+        const finExistente = parseHora24AMinutos(item.horaSalida);
+        if (inicioExistente === null || finExistente === null) return false;
+        return horariosSeSolapan(entradaMin, salidaMin, inicioExistente, finExistente);
+      });
+
+    if (existeSolape) {
+      alert('No se puede guardar porque el rango horario se cruza con otro ya registrado ese mismo dia.');
+      return;
+    }
+
+    const valorFijoEmpleado = Number(String(empleadoAsignado.valor || '0').replace(',', '.'));
+    if (!Number.isFinite(valorFijoEmpleado) || valorFijoEmpleado <= 0) {
+      alert('El empleado seleccionado no tiene un valor fijo valido.');
+      return;
+    }
+
+    setGuardandoHorario(true);
+    try {
+      const response = await dbApi.valets.horarios.save<ValetHorarioSaveResponse>({
+        centroCostoId: centro.centroCostoId,
+        centroCostoNombre: centro.centroCostoNombre,
+        empleadoCedula: empleadoAsignado.cedula,
+        empleadoNombre: empleadoAsignado.nombre,
+        valorFijo: valorFijoEmpleado,
+        fechaTurno: ingresoFecha,
+        horaEntrada: ingresoHoraEntrada,
+        horaSalida: ingresoHoraSalida,
+        esAdicional: ingresoAdicional,
+        aprobado: true,
+      });
+
+      const registro = response?.registro;
+      const nuevoHorario: HorarioRegistrado = {
+        id: String(registro?.id || `${centro.centroCostoId}-${empleadoAsignado.cedula}-${ingresoFecha}`),
+        centro: composeCentroDisplay(
+          String(registro?.centroCostoId || centro.centroCostoId),
+          String(registro?.centroCostoNombre || centro.centroCostoNombre)
+        ),
+        empleado: String(registro?.empleadoNombre || empleadoAsignado.nombre),
+        fecha: String(registro?.fechaTurno || ingresoFecha),
+        horaEntrada: String(registro?.horaEntrada || ingresoHoraEntrada),
+        horaSalida: String(registro?.horaSalida || ingresoHoraSalida),
+        adicional: Boolean(registro?.esAdicional ?? ingresoAdicional),
+        aprobado: registro?.aprobado === undefined ? true : Boolean(registro.aprobado),
+      };
+
+      setHorariosRegistrados((prev) => {
+        const sinDuplicado = prev.filter((item) => item.id !== nuevoHorario.id);
+        return [...sinDuplicado, nuevoHorario];
+      });
+
+      setShowSuccessHorario(true);
+      setTimeout(() => setShowSuccessHorario(false), 3000);
+      setIngresoFecha('');
+      setIngresoHoraEntrada('');
+      setIngresoHoraSalida('');
+      setIngresoAdicional(false);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'No se pudo guardar el horario en la base de datos.');
+    } finally {
+      setGuardandoHorario(false);
+    }
+  };
+
+  const handleGuardarEmpleado = async () => {
+    const valorEmpleado = empleadoBusqueda.trim();
+    if (!gestionarCentro || !valorEmpleado || !valorFijo.trim()) {
+      alert('Por favor selecciona un centro, un empleado activo y completa el valor fijo.');
+      return;
+    }
+
+    const criterio = valorEmpleado.toLowerCase();
+    const empleadoSeleccionado = empleadosActivos.find((emp) => `${emp.nombreCompleto} - ${emp.cedula}`.toLowerCase() === criterio)
+      || empleadosActivos.find((emp) => emp.cedula.toLowerCase() === criterio)
+      || empleadosActivos.find((emp) => emp.nombreCompleto.toLowerCase() === criterio);
+
+    if (!empleadoSeleccionado) {
+      alert('No se encontro el empleado seleccionado.');
+      return;
+    }
+
+    const valorFijoNormalizado = Number(valorFijo.replace(',', '.').trim());
+    if (!Number.isFinite(valorFijoNormalizado) || valorFijoNormalizado <= 0) {
+      alert('El valor fijo debe ser numerico y mayor a 0.');
+      return;
+    }
+
+    const centro = parseCentroCompuesto(gestionarCentro);
+    if (!centro.centroCostoId) {
+      alert('Selecciona un centro de costo valido.');
+      return;
+    }
+
+    setGuardandoEmpleado(true);
+    try {
+      const response = await dbApi.valets.empleados.save<ValetEmpleadoSaveResponse>({
+        centroCostoId: centro.centroCostoId,
+        centroCostoNombre: centro.centroCostoNombre,
+        empleadoCedula: empleadoSeleccionado.cedula,
+        empleadoNombre: empleadoSeleccionado.nombreCompleto,
+        valorFijo: valorFijoNormalizado,
+      });
+
+      const registro = response?.registro;
+      const nuevoEmpleado: EmpleadoValet = {
+        id: String(registro?.id || `${centro.centroCostoId}-${empleadoSeleccionado.cedula}`),
+        centro: composeCentroDisplay(
+          String(registro?.centroCostoId || centro.centroCostoId),
+          String(registro?.centroCostoNombre || centro.centroCostoNombre)
+        ),
+        nombre: String(registro?.empleadoNombre || empleadoSeleccionado.nombreCompleto),
+        valor: Number(registro?.valorFijo ?? valorFijoNormalizado).toFixed(2),
+        cedula: String(registro?.empleadoCedula || empleadoSeleccionado.cedula),
+      };
+
+      setEmpleadosValet((prev) => {
+        const sinDuplicado = prev.filter((item) => !(item.centro === nuevoEmpleado.centro && item.cedula === nuevoEmpleado.cedula));
+        return [...sinDuplicado, nuevoEmpleado];
+      });
+
+      setShowSuccessGuardado(true);
+      setTimeout(() => setShowSuccessGuardado(false), 3000);
+      setShowGestionarEmpleadosModal(false);
+      setEmpleadoBusqueda('');
+      setValorFijo('');
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'No se pudo guardar el empleado en la base de datos.');
+    } finally {
+      setGuardandoEmpleado(false);
+    }
+  };
+
+  const handleEliminarEmpleado = async (empleado: EmpleadoValet) => {
+    if (!empleado.cedula) {
+      alert('No se puede eliminar este empleado porque no tiene cedula asociada.');
+      return;
+    }
+
+    const centro = parseCentroCompuesto(empleado.centro);
+    if (!centro.centroCostoId) {
+      alert('No se pudo identificar el centro de costo para eliminar este registro.');
+      return;
+    }
+
+    setEliminandoEmpleadoId(empleado.id);
+    try {
+      await dbApi.valets.empleados.delete(centro.centroCostoId, empleado.cedula);
+      setEmpleadosValet((prev) => prev.filter((item) => item.id !== empleado.id));
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'No se pudo eliminar el empleado del centro de costo.');
+    } finally {
+      setEliminandoEmpleadoId('');
+    }
+  };
+
   return (
-    <div className="space-y-4">
-      <div className="bg-white rounded-2xl border border-slate-200 p-2 inline-flex gap-2">
-        <button
-          type="button"
-          onClick={() => setSeccionActiva('horario_fijo')}
-          className={`px-4 py-2 rounded-xl text-sm font-semibold transition ${
-            seccionActiva === 'horario_fijo'
-              ? 'bg-blue-600 text-white shadow-sm'
-              : 'text-slate-600 hover:bg-slate-100'
-          }`}
-        >
-          Ingreso Horario
-        </button>
-        <button
-          type="button"
-          onClick={() => setSeccionActiva('gestionar_valet')}
-          className={`px-4 py-2 rounded-xl text-sm font-semibold transition ${
-            seccionActiva === 'gestionar_valet'
-              ? 'bg-blue-600 text-white shadow-sm'
-              : 'text-slate-600 hover:bg-slate-100'
-          }`}
-        >
-          Gestionar valet
-        </button>
-      </div>
-
-      <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-6 space-y-6">
-
-        {mensaje.type && (
-          <div
-            className={`p-4 rounded-xl border text-sm font-semibold ${
-              mensaje.type === 'success'
-                ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
-                : 'bg-red-50 border-red-200 text-red-700'
-            }`}
-          >
-            {mensaje.text}
-          </div>
-        )}
-
-        {/* Datalists compartidos para ambas secciones */}
-        <datalist id="valets-fijos-empleados">
-          {empleados.map((empleado) => (
-            <option key={empleado.cedula} value={etiquetaEmpleado(empleado)} />
-          ))}
-        </datalist>
-        <datalist id="valets-fijos-centros-horario">
-          {centrosHorarioDisponibles.map((centro) => (
-            <option key={`horario-${centro.IDCENTROCOSTO}-${centro.CENTROCOSTO}`} value={etiquetaCentro(centro)} />
-          ))}
-        </datalist>
-        <datalist id="valets-horario-empleados-centro">
-          {empleadosCentroHorario.map((empleado) => (
-            <option key={`${empleado.cedula}-horario-centro`} value={etiquetaEmpleado(empleado)} />
-          ))}
-        </datalist>
-        <datalist id="valets-fijos-centros">
-          {centrosCosto.map((centro) => (
-            <option key={`${centro.IDCENTROCOSTO}-${centro.CENTROCOSTO}`} value={etiquetaCentro(centro)} />
-          ))}
-        </datalist>
-
-        {seccionActiva === 'horario_fijo' && (
-          <>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div>
-          <label className="block text-xs font-semibold text-slate-600 mb-1">Centro de costo</label>
-          <input
-            value={centroHorarioInput}
-            onChange={(e) => {
-              setCentroHorarioInput(e.target.value);
-              setEmpleadoInput('');
-            }}
-            list="valets-fijos-centros-horario"
-            placeholder={loadingCentros ? 'Cargando centros de costo...' : 'Escribe para buscar centro de costo'}
-            className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-        </div>
-        <div>
-          <label className="block text-xs font-semibold text-slate-600 mb-1">Empleado</label>
-          <input
-            value={empleadoInput}
-            onChange={(e) => setEmpleadoInput(e.target.value)}
-            list="valets-horario-empleados-centro"
-            disabled={!centroHorarioSeleccionado || empleadosCentroHorario.length === 0}
-            placeholder={!centroHorarioSeleccionado
-              ? 'Selecciona primero un centro de costo'
-              : empleadosCentroHorario.length === 0
-                ? 'No existen empleados en este centro'
-                : 'Escribe para buscar empleado del centro'}
-            className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-slate-100 disabled:text-slate-400"
-          />
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div>
-          <label className="block text-xs font-semibold text-slate-600 mb-1">Mes</label>
-          <select
-            value={mes}
-            onChange={(e) => setMes(Number(e.target.value))}
-            className="w-full border border-slate-300 rounded-lg px-2.5 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            {MESES.map((item) => (
-              <option key={item.value} value={item.value}>
-                {item.label}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="block text-xs font-semibold text-slate-600 mb-1">Año</label>
-          <input
-            type="number"
-            min={2020}
-            max={2100}
-            value={anio}
-            onChange={(e) => setAnio(Number(e.target.value) || hoy.getFullYear())}
-            className="w-full border border-slate-300 rounded-lg px-2.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-        </div>
-        <div>
-          <label className="block text-xs font-semibold text-slate-600 mb-1">Semana</label>
-          <select
-            value={semanaHorario}
-            onChange={(e) => setSemanaHorario(Number(e.target.value))}
-            className="w-full border border-slate-300 rounded-lg px-2.5 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            {[1, 2, 3, 4, 5].map((semana) => (
-              <option key={semana} value={semana}>Semana {semana}</option>
-            ))}
-          </select>
-        </div>
-      </div>
-
-      {centroHorarioSeleccionado && empleadosCentroHorario.length === 0 && (
-        <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm font-semibold text-amber-700">
-          No existen empleados dentro de ese centro de costo.
-        </div>
-      )}
-
-      <div className="overflow-x-auto border border-slate-200 rounded-xl">
-        <table className="min-w-full bg-white text-sm">
-          <thead className="bg-slate-50">
-            <tr>
-              <th className="text-left text-xs font-bold text-slate-600 px-4 py-3">Dia</th>
-              <th className="text-left text-xs font-bold text-slate-600 px-4 py-3">Hora de entrada</th>
-              <th className="text-left text-xs font-bold text-slate-600 px-4 py-3">Hora de salida</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr className="border-t border-slate-100">
-              <td className="px-4 py-3">
-                <select
-                  value={diaHorario}
-                  onChange={(e) => setDiaHorario(e.target.value as DiaLaboralKey)}
-                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  {diasDisponiblesIngreso.map((dia) => (
-                    <option key={dia.key} value={dia.key}>{dia.label}</option>
-                  ))}
-                </select>
-              </td>
-              <td className="px-4 py-3">
-                <select
-                  value={horaEntradaHorario}
-                  onChange={(e) => setHoraEntradaHorario(e.target.value)}
-                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="">Seleccionar</option>
-                  {OPCIONES_HORA_MEDIA.map((hora) => (
-                    <option key={`hf-entrada-${hora}`} value={hora}>{hora}</option>
-                  ))}
-                </select>
-              </td>
-              <td className="px-4 py-3">
-                <select
-                  value={horaSalidaHorario}
-                  onChange={(e) => setHoraSalidaHorario(e.target.value)}
-                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="">Seleccionar</option>
-                  {OPCIONES_HORA_MEDIA.map((hora) => (
-                    <option key={`hf-salida-${hora}`} value={hora}>{hora}</option>
-                  ))}
-                </select>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      <div className="flex justify-start">
-        <button
-          type="button"
-          onClick={handleRegistrar}
-          className="px-6 py-3 rounded-lg bg-[#001F3F] text-white font-semibold hover:bg-blue-900 transition-colors"
-        >
-          Guardar
-        </button>
-      </div>
-
-      <div className="overflow-x-auto border border-slate-200 rounded-xl [&::-webkit-scrollbar]:hidden" style={{ msOverflowStyle: 'none', scrollbarWidth: 'none' }}>
-        {!centroHorarioSeleccionado ? (
-          <div className="px-4 py-6 text-center text-slate-500">
-            Selecciona un centro de costo para ver el calendario de horarios.
-          </div>
-        ) : (
-          <div className="overflow-x-auto [&::-webkit-scrollbar]:hidden" style={{ msOverflowStyle: 'none', scrollbarWidth: 'none' }}>
-            <div className="inline-block min-w-full">
-              {/* Grid de calendario */}
-              {(() => {
-                const horasCalendario = generarHorasDelDia();
-                const slotHeight = 34;
-                const alturaTotal = horasCalendario.length * slotHeight;
-
-                return (
-              <div className="grid gap-0" style={{ gridTemplateColumns: `80px repeat(${diasCalendario.length}, 1fr)` }}>
-                <div className="bg-slate-100 border border-slate-300 px-2 py-2 text-xs font-bold text-slate-600"></div>
-
-                {/* Encabezados de días */}
-                {diasCalendario.map((dia) => (
-                  <div
-                    key={dia.key}
-                    className="bg-slate-100 border border-slate-300 px-3 py-2 text-xs font-bold text-slate-600 text-center"
-                  >
-                    {dia.label}
-                  </div>
-                ))}
-
-                {/* Columna de horas */}
-                <div className="border border-slate-200 bg-slate-50" style={{ height: `${alturaTotal}px` }}>
-                  {horasCalendario.map((hora) => (
-                    <div
-                      key={`hora-${hora}`}
-                      className="px-2 text-[11px] font-semibold text-slate-600 text-center flex items-center justify-center border-b border-slate-200"
-                      style={{ height: `${slotHeight}px` }}
-                    >
-                      {hora}
-                    </div>
-                  ))}
-                </div>
-
-                {/* Columnas por día con bloques continuos */}
-                {diasCalendario.map((dia) => {
-                  const bloques = obtenerBloquesCalendarioDia(eventosCalendarioPeriodo, dia.key, slotHeight);
-                  return (
-                    <div
-                      key={`col-${dia.key}`}
-                      className="relative border border-slate-200 bg-white"
-                      style={{ height: `${alturaTotal}px` }}
-                    >
-                      {horasCalendario.map((hora, idx) => (
-                        <div
-                          key={`linea-${dia.key}-${hora}`}
-                          className="absolute left-0 right-0 border-b border-slate-100"
-                          style={{ top: `${(idx + 1) * slotHeight}px` }}
-                        />
-                      ))}
-
-                      {bloques.map((bloque, idx) => {
-                        const color = colorPorCedulaLocal(bloque.cedula);
-                        return (
-                        <div
-                          key={`${dia.key}-${bloque.nombre}-${bloque.horaEntrada}-${bloque.horaSalida}-${idx}`}
-                          className="absolute rounded text-[10px] leading-tight px-1.5 py-0.5 overflow-visible group/bloque cursor-default z-10 hover:z-50"
-                          style={{
-                            top: `${bloque.top + 2}px`,
-                            height: `${Math.max(18, bloque.height - 4)}px`,
-                            left: `calc(${(bloque.lane * 100) / bloque.lanesTotal}% + 2px)`,
-                            width: `calc(${100 / bloque.lanesTotal}% - 4px)`,
-                            backgroundColor: color.bg,
-                            borderWidth: '1px',
-                            borderStyle: bloque.esAdicional ? 'dashed' : 'solid',
-                            borderColor: color.border,
-                            color: color.text,
-                          }}
-                        >
-                          <div className="font-semibold truncate overflow-hidden">{bloque.nombre}</div>
-                          <div className="text-[10px] opacity-75 truncate overflow-hidden">{bloque.horaEntrada} - {bloque.horaSalida}</div>
-                          {/* Tooltip hover */}
-                          <div
-                            className="pointer-events-none absolute z-50 hidden group-hover/bloque:block left-full top-0 ml-1 min-w-[160px] rounded-lg shadow-xl border text-xs p-2 whitespace-nowrap"
-                            style={{ backgroundColor: color.bg, borderColor: color.border, color: color.text }}
-                          >
-                            <div className="font-bold mb-0.5">{bloque.nombre}</div>
-                            <div className="opacity-80">CI: {bloque.cedula}</div>
-                            <div className="mt-1 font-semibold">{bloque.horaEntrada} – {bloque.horaSalida}</div>
-                            {bloque.esAdicional && <div className="mt-0.5 italic opacity-70">Día adicional</div>}
-                          </div>
-                        </div>
-                        );
-                      })}
-                    </div>
-                  );
-                })}
+    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500 relative w-full max-w-full">
+      
+      {/* MODAL: Gestionar empleados */}
+      {showGestionarEmpleadosModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm transition-opacity" onClick={() => setShowGestionarEmpleadosModal(false)} />
+          <div className="relative bg-white rounded-3xl w-full max-w-[500px] shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="px-6 py-6 flex justify-between items-start border-b border-slate-100">
+              <div>
+                <h3 className="font-black text-xl text-[#001F3F]">Gestionar empleados</h3>
+                <p className="text-xs text-slate-500 font-medium mt-1">Centro: {gestionarCentro}</p>
               </div>
-                );
-              })()}
+              <button onClick={() => setShowGestionarEmpleadosModal(false)} className="px-4 py-1.5 border border-slate-200 rounded-lg text-xs font-bold text-slate-600 hover:bg-slate-50 transition-colors">
+                Cerrar
+              </button>
+            </div>
+            <div className="p-6 space-y-5">
+              <div className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-300">
+                <div>
+                  <label className="text-[11px] font-bold text-slate-600 mb-1.5 block">Empleado activo</label>
+                  <input
+                    type="text"
+                    list="valets-empleados-activos"
+                    value={empleadoBusqueda}
+                    onChange={(e) => setEmpleadoBusqueda(e.target.value)}
+                    placeholder={loadingCatalogos ? 'Cargando empleados activos...' : 'Selecciona o escribe un empleado'}
+                    className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-lg text-sm font-medium text-slate-700 outline-none focus:border-[#2563EB] transition-all shadow-sm placeholder:text-slate-400"
+                  />
+                  <datalist id="valets-empleados-activos">
+                    {empleadosActivosFiltrados.map((emp) => (
+                      <option key={emp.cedula} value={`${emp.nombreCompleto} - ${emp.cedula}`} />
+                    ))}
+                  </datalist>
+                </div>
+                <div>
+                  <label className="text-[11px] font-bold text-slate-600 mb-1.5 block">Valor fijo a pagar</label>
+                  <input 
+                    type="text" 
+                    value={valorFijo}
+                    onChange={(e) => setValorFijo(e.target.value)}
+                    placeholder="0.00" 
+                    className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-lg text-sm font-medium text-slate-700 outline-none focus:border-[#2563EB] transition-all shadow-sm placeholder:text-slate-400" 
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="px-6 py-5 bg-white flex justify-end gap-3 border-t border-slate-100">
+              <button 
+                onClick={() => setShowGestionarEmpleadosModal(false)} 
+                className="px-6 py-2.5 rounded-xl font-bold text-slate-600 bg-white border border-slate-200 hover:bg-slate-50 transition-colors text-sm"
+              >
+                Cancelar
+              </button>
+              <button 
+                disabled={guardandoEmpleado}
+                className="px-6 py-2.5 rounded-xl bg-[#001F3F] text-white font-bold hover:bg-blue-900 transition-all text-sm shadow-md active:scale-95"
+                onClick={() => {
+                  void handleGuardarEmpleado();
+                }}
+              >
+                {guardandoEmpleado ? 'Guardando...' : 'Guardar empleado'}
+              </button>
             </div>
           </div>
-        )}
-      </div>
-        </>
+        </div>
       )}
 
-      {seccionActiva === 'gestionar_valet' && (
-        <>
-          <div className="max-w-2xl">
-            <label className="block text-xs font-semibold text-slate-600 mb-1">Centro de costo</label>
-            <input
-              value={centroGestionInput}
-              onChange={(e) => setCentroGestionInput(e.target.value)}
-              list="valets-fijos-centros"
-              placeholder={loadingCentros ? 'Cargando centros de costo...' : 'Escribe para buscar centro de costo'}
-              className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
+      {/* MODAL: Detalles de adicionales */}
+      {showDetallesModal && detalleEmpleado && (() => {
+        const empAdicionales = horariosRegistrados.filter(h => 
+          h.adicional && 
+          h.empleado === detalleEmpleado.nombre && 
+          h.centro === detalleEmpleado.centro
+        );
+        
+        const toggleAprobado = (id: string) => {
+          setHorariosRegistrados(prev => prev.map(h => h.id === id ? { ...h, aprobado: !h.aprobado } : h));
+        };
 
-          {!centroGestionSeleccionado && (
-            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-              Selecciona un centro de costo para ver los detalles de valet.
+        let totalCalculado = 0;
+        const dias: Array<{ id: string; fecha: string; dia: string; horario: string; valor: string; aprobado: boolean }> = [];
+        const domingosMap = new Map<string, { id: string; fecha: string; aprobado: boolean }>();
+        
+        empAdicionales.forEach(ev => {
+          const d = new Date(`${ev.fecha}T12:00:00`);
+          const isSunday = d.getDay() === 0;
+          const dayName = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'][d.getDay()];
+          const isAprobado = ev.aprobado !== false;
+          
+          if (isSunday) {
+            if(!domingosMap.has(ev.fecha)) {
+              domingosMap.set(ev.fecha, { id: ev.id, fecha: ev.fecha, aprobado: isAprobado });
+            }
+          } else {
+            const val = calcularValorStr(ev.horaEntrada, ev.horaSalida);
+            dias.push({ 
+              id: ev.id, 
+              fecha: ev.fecha, 
+              dia: dayName, 
+              horario: `${ev.horaEntrada} - ${ev.horaSalida}`,
+              valor: val,
+              aprobado: isAprobado
+            });
+          }
+        });
+        const domingosUnicos = Array.from(domingosMap.values());
+
+        dias.forEach((d: any) => { if (d.aprobado) totalCalculado += parseFloat(d.valor); });
+        domingosUnicos.forEach((dom: any) => { if (dom.aprobado) totalCalculado += 10.00; });
+
+        return (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm transition-opacity" onClick={() => setShowDetallesModal(false)} />
+            <div className="relative bg-white rounded-3xl w-full max-w-[650px] shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
+              <div className="px-8 py-8 flex justify-between items-start">
+                <div>
+                  <h3 className="font-black text-[22px] text-[#1c2938] tracking-tight mb-2">Detalles de adicionales</h3>
+                  <p className="text-[13px] text-slate-500">Empleado: {detalleEmpleado.nombre}</p>
+                  <p className="text-[13px] text-slate-500">Centro: {detalleEmpleado.centro}</p>
+                </div>
+                <div className="flex flex-col items-end gap-3">
+                  <button onClick={() => setShowDetallesModal(false)} className="px-5 py-2 border border-slate-200 rounded-lg text-sm font-bold text-slate-600 hover:bg-slate-50 transition-colors shadow-sm">
+                    Cerrar
+                  </button>
+                  <div className="bg-[#F0F8FF] border border-[#2173B9]/20 px-4 py-2 rounded-lg text-right">
+                    <span className="text-[11px] font-bold text-slate-500 uppercase block leading-none mb-1">Total Aprobado</span>
+                    <span className="text-xl font-black text-[#2173B9]">{totalCalculado.toFixed(2)} $</span>
+                  </div>
+                </div>
+              </div>
+              
+              <div className="px-8 pb-10 space-y-5">
+                {/* Días adicionales Card */}
+                <div className="border border-slate-200 rounded-2xl p-6 bg-slate-50/30 shadow-sm">
+                  <div className="flex justify-between items-center mb-5">
+                    <h4 className="font-bold text-[16px] text-[#1c2938]">Días adicionales</h4>
+                  </div>
+                  
+                  {dias.length > 0 ? (
+                    <div className="space-y-3">
+                      {dias.map((d: any) => (
+                        <div key={d.id} className="flex items-center justify-between border border-slate-100 rounded-xl p-4 bg-white shadow-sm hover:border-slate-200 transition-colors">
+                          <div className="flex items-center gap-4 sm:gap-8 flex-1">
+                            <span className="text-[13px] font-medium text-[#1c2938] shrink-0 w-20 sm:w-24">{d.fecha}</span>
+                            <span className="font-bold text-[13px] sm:text-[14px] text-[#1c2938] shrink-0 w-20">{d.dia}</span>
+                            <span className="text-[13px] sm:text-[14px] font-medium text-slate-600">{d.horario}</span>
+                          </div>
+                          <div className="flex items-center gap-3 sm:gap-4 shrink-0 pl-2">
+                            <span className={`font-black text-[14px] sm:text-[15px] ${d.aprobado ? 'text-slate-800' : 'text-slate-400 line-through'}`}>{d.valor} $</span>
+                            <button 
+                              onClick={() => toggleAprobado(d.id)}
+                              className={`w-7 h-7 sm:w-8 sm:h-8 rounded-lg border-2 flex items-center justify-center shadow-inner transition-colors cursor-pointer ${d.aprobado ? 'border-emerald-200 bg-emerald-50 hover:bg-emerald-100' : 'border-slate-200 bg-slate-50 hover:bg-slate-100'}`}
+                            >
+                              {d.aprobado && <Check size={16} className="text-emerald-600" strokeWidth={3} />}
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-[13px] text-slate-400 py-3 font-medium">No hay días adicionales registrados.</div>
+                  )}
+                </div>
+
+                {/* Domingos Card */}
+                <div className="border border-slate-200 rounded-2xl p-6 bg-slate-50/30 shadow-sm">
+                  <div className="flex justify-between items-center mb-5">
+                    <h4 className="font-bold text-[16px] text-[#1c2938]">Domingos</h4>
+                  </div>
+                  
+                  {domingosUnicos.length > 0 ? (
+                    <div className="space-y-3">
+                      {domingosUnicos.map((dom: any) => (
+                        <div key={dom.id} className="flex items-center justify-between">
+                          <div className="flex items-center gap-4 sm:gap-8 flex-1">
+                            <span className="px-4 py-1.5 border border-slate-200 rounded-full text-[13px] font-medium text-[#1c2938] shadow-sm bg-white">
+                              {dom.fecha}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-3 sm:gap-4 shrink-0 pl-2">
+                            <span className={`font-black text-[14px] sm:text-[15px] ${dom.aprobado ? 'text-slate-800' : 'text-slate-400 line-through'}`}>10.00 $</span>
+                            <button 
+                              onClick={() => toggleAprobado(dom.id)}
+                              className={`w-7 h-7 sm:w-8 sm:h-8 rounded-lg border-2 flex items-center justify-center shadow-inner transition-colors cursor-pointer ${dom.aprobado ? 'border-emerald-200 bg-emerald-50 hover:bg-emerald-100' : 'border-slate-200 bg-slate-50 hover:bg-slate-100'}`}
+                            >
+                              {dom.aprobado && <Check size={16} className="text-emerald-600" strokeWidth={3} />}
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-[13px] text-slate-400 py-2 font-medium">No hay domingos adicionales registrados.</div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      <div className="flex items-center gap-4 mb-2">
+        <div className="flex bg-white rounded-xl border border-slate-200 p-1 shadow-sm w-fit">
+          <button
+            onClick={() => setActiveSubTab('ingreso')}
+            className={`px-6 py-2 rounded-lg text-sm font-bold transition-all ${activeSubTab === 'ingreso' ? 'bg-[#2563EB] text-white shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+          >
+            Ingreso Horario
+          </button>
+          <button
+            onClick={() => setActiveSubTab('gestionar')}
+            className={`px-6 py-2 rounded-lg text-sm font-bold transition-all ${activeSubTab === 'gestionar' ? 'bg-[#2563EB] text-white shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+          >
+            Gestionar valet
+          </button>
+        </div>
+      </div>
+
+      {catalogosError && (
+        <div className="p-3 rounded-lg border border-red-200 bg-red-50 text-red-700 text-sm font-medium">
+          Error al cargar catalogos n8n: {catalogosError}
+        </div>
+      )}
+
+      {activeSubTab === 'ingreso' && (
+        <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-6 lg:p-8 shadow-sm animate-in fade-in duration-300">
+          
+          {showSuccessHorario && (
+            <div className="mb-6 p-4 bg-[#ECFDF5] border border-[#A7F3D0] rounded-xl text-[#059669] text-sm font-medium animate-in fade-in">
+              Horario guardado correctamente en la base de datos y agregado al calendario.
             </div>
           )}
 
-          {centroGestionSeleccionado && (
-            <>
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-3">
-                  <p className="text-xs font-semibold text-slate-500">Centro seleccionado</p>
-                  <p className="text-sm font-bold text-slate-800">
-                    {centroGestionSeleccionado.IDCENTROCOSTO} - {centroGestionSeleccionado.CENTROCOSTO}
-                  </p>
-                  <p className="text-sm text-slate-600">
-                    Empleados pertenecientes: <span className="font-bold text-slate-800">{detalleCentroSeleccionado.length}</span>
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setModalAgregarOpen(true);
-                      setModalGestionEmpleadoModo('agregar');
-                      setModalEmpleadoInput('');
-                      setModalEmpleadoEliminarCedula('');
-                      setModalValorFijo('');
-                    }}
-                    className="px-4 py-2 rounded-lg bg-[#001F3F] text-white text-sm font-semibold hover:bg-blue-900 transition-colors"
+          {loadingHorariosDb && (
+            <div className="mb-6 p-4 bg-slate-50 border border-slate-200 rounded-xl text-slate-600 text-sm font-medium animate-in fade-in">
+              Cargando horarios planificados desde la base de datos...
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+            <div>
+              <label className="text-[12px] font-medium text-slate-600 mb-2 block">Centro de costo</label>
+              <div className="relative">
+                <select 
+                  className={`w-full pl-4 pr-10 py-2.5 border rounded-lg text-sm outline-none appearance-none text-slate-700 shadow-sm cursor-pointer transition-colors ${ingresoCentro ? 'border-blue-500 ring-1 ring-blue-500' : 'border-slate-200 focus:border-[#2563EB]'}`}
+                  value={ingresoCentro}
+                  onChange={(e) => {
+                    setIngresoCentro(e.target.value);
+                    setIngresoEmpleado('');
+                  }}
+                >
+                  <option value="" disabled>{loadingCatalogos ? 'Cargando centros de costo...' : 'Selecciona un centro de costo'}</option>
+                  {centrosCosto.map((centro) => (
+                    <option key={centro.IDCENTROCOSTO} value={`${centro.IDCENTROCOSTO} - ${centro.CENTROCOSTO}`}>
+                      {centro.IDCENTROCOSTO} - {centro.CENTROCOSTO}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
+              </div>
+            </div>
+            <div>
+              <label className="text-[12px] font-medium text-slate-600 mb-2 block">Empleado</label>
+              <div className="relative">
+                <select 
+                  className={`w-full pl-4 pr-10 py-2.5 border rounded-lg text-sm outline-none appearance-none text-slate-700 shadow-sm cursor-pointer transition-colors ${!ingresoCentro ? 'bg-slate-50 border-slate-200 text-slate-400 cursor-not-allowed' : 'border-slate-200 focus:border-[#2563EB] bg-white'}`}
+                  disabled={!ingresoCentro}
+                  value={ingresoEmpleado}
+                  onChange={(e) => setIngresoEmpleado(e.target.value)}
+                >
+                  <option value="" disabled>
+                    {!ingresoCentro ? 'Selecciona primero un centro de costo' : (empleadosParaIngreso.length === 0 ? 'No hay empleados en este centro' : 'Selecciona un empleado')}
+                  </option>
+                  {empleadosParaIngreso.map((emp, idx) => (
+                    <option key={idx} value={emp.nombre}>{emp.nombre}</option>
+                  ))}
+                </select>
+                <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-slate-50 border border-slate-100 p-5 rounded-xl grid grid-cols-1 md:grid-cols-4 gap-6 mb-6 items-end">
+            <div>
+              <label className="text-[12px] font-medium text-slate-600 mb-2 block">Fecha</label>
+              <input 
+                type="date" 
+                value={ingresoFecha}
+                onChange={(e) => setIngresoFecha(e.target.value)}
+                className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-lg text-sm outline-none focus:border-[#2563EB] text-slate-700 shadow-sm cursor-pointer"
+              />
+            </div>
+            <div>
+              <label className="text-[12px] font-medium text-slate-600 mb-2 block">Hora de entrada</label>
+              <input 
+                type="time" 
+                value={ingresoHoraEntrada}
+                onChange={(e) => setIngresoHoraEntrada(e.target.value)}
+                className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-lg text-sm outline-none focus:border-[#2563EB] text-slate-700 shadow-sm cursor-pointer"
+              />
+            </div>
+            <div>
+              <label className="text-[12px] font-medium text-slate-600 mb-2 block">Hora de salida</label>
+              <input 
+                type="time" 
+                value={ingresoHoraSalida}
+                onChange={(e) => setIngresoHoraSalida(e.target.value)}
+                className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-lg text-sm outline-none focus:border-[#2563EB] text-slate-700 shadow-sm cursor-pointer"
+              />
+            </div>
+            <div className="flex items-center pb-3">
+              <label className="flex items-center gap-2 cursor-pointer group">
+                <div className={`w-5 h-5 rounded border flex items-center justify-center transition-colors ${ingresoAdicional ? 'bg-[#F97316] border-[#F97316]' : 'border-slate-300 bg-white'}`}>
+                  {ingresoAdicional && <Check size={14} className="text-white" strokeWidth={3} />}
+                </div>
+                <input type="checkbox" className="hidden" checked={ingresoAdicional} onChange={(e) => setIngresoAdicional(e.target.checked)} />
+                <span className="text-[12px] font-bold text-slate-600 select-none">Adicional</span>
+              </label>
+            </div>
+          </div>
+
+          <div className="mb-10 flex">
+            <button 
+              disabled={guardandoHorario}
+              onClick={() => {
+                void handleGuardarHorario();
+              }}
+              className="px-8 py-2.5 bg-[#001F3F] text-white rounded-lg text-sm font-bold hover:bg-blue-900 transition-all shadow-sm active:scale-95"
+            >
+              {guardandoHorario ? 'Guardando...' : 'Guardar'}
+            </button>
+          </div>
+
+          {/* CONTENEDOR DEL CALENDARIO */}
+          <div className="pt-6 border-t border-slate-200 animate-in fade-in duration-500">
+            <div className="flex flex-col xl:flex-row justify-between items-start mb-6 gap-6">
+              {/* Controles Izquierdos */}
+              <div className="space-y-4">
+                <div className="flex items-center gap-1 border border-slate-200 rounded-full p-1 shadow-sm w-fit bg-white">
+                  <button 
+                    onClick={() => setCalendarView('semana')} 
+                    className={`px-4 py-1.5 text-xs font-medium rounded-full transition-colors ${calendarView === 'semana' ? 'font-bold text-blue-600 border border-blue-200 bg-blue-50' : 'text-slate-500 hover:text-slate-800'}`}
+                  >
+                    Semana
+                  </button>
+                  <button 
+                    onClick={() => setCalendarView('mes')} 
+                    className={`px-4 py-1.5 text-xs font-medium rounded-full transition-colors ${calendarView === 'mes' ? 'font-bold text-blue-600 border border-blue-200 bg-blue-50' : 'text-slate-500 hover:text-slate-800'}`}
+                  >
+                    Mes
+                  </button>
+                </div>
+              </div>
+
+              {/* Controles Derechos */}
+              <div className="flex flex-col items-end gap-3 w-full xl:w-auto">
+                <div className="flex flex-wrap md:flex-nowrap items-center gap-3 w-full xl:w-auto justify-end">
+                  <div>
+                    <label className="text-[10px] text-slate-400 mb-1 block">Estado</label>
+                    <div className="relative">
+                      <select 
+                        value={filtroEstado}
+                        onChange={(e) => setFiltroEstado(e.target.value)}
+                        className="pl-3 pr-8 py-1.5 text-[11px] border border-slate-200 rounded-full outline-none text-slate-500 cursor-pointer appearance-none bg-white min-w-[140px] shadow-sm"
+                      >
+                        <option value="">Todos</option>
+                        <option value="general">General</option>
+                        <option value="adicionales">Adicionales</option>
+                      </select>
+                      <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-300 pointer-events-none" size={14} />
+                    </div>
+                  </div>
+                </div>
+                <h3 className="text-[17px] font-medium text-[#2173B9] capitalize">
+                  {headerText}
+                </h3>
+              </div>
+            </div>
+
+            {/* VISTA MES */}
+            {calendarView === 'mes' && (
+              <div className="w-full overflow-x-auto rounded-xl">
+                <div className="border-l border-t border-slate-200 bg-white grid grid-cols-7 min-w-[800px] animate-in fade-in duration-300">
+                  {daysOfWeek.map((day, idx) => (
+                    <div key={idx} className="p-3 border-r border-b border-slate-200 text-[#2173B9] text-sm capitalize">
+                      {day}
+                    </div>
+                  ))}
+                  
+                  {currentCalendarGrid.map((dayObj, idx) => {
+                    const eventosDia = dayObj.curr ? horariosRegistrados.filter(h => {
+                      if (filtroEstado === 'adicionales' && !h.adicional) return false;
+                      if (filtroEstado === 'general' && h.adicional) return false;
+
+                      const parts = h.fecha.split('-');
+                      if(parts.length === 3) {
+                        return parseInt(parts[2], 10) === dayObj.d && parseInt(parts[1], 10) === dayObj.m && parseInt(parts[0], 10) === dayObj.y;
+                      }
+                      return false;
+                    }) : [];
+
+                    return (
+                      <div key={idx} className={`relative min-h-[140px] border-r border-b border-slate-200 p-1 flex flex-col ${dayObj.curr ? 'bg-white' : 'bg-slate-50/50'}`}>
+                        {eventosDia.length > 0 && (
+                          <div className="flex flex-col gap-1 mt-6 z-10">
+                            {eventosDia.map((ev, eIdx) => {
+                              const nombreCentro = ev.centro.split('-')[1]?.trim() || ev.centro;
+                              const nombreCorto = ev.empleado.split(' ')[0] || ev.empleado;
+                              const isAdic = ev.adicional;
+
+                              return (
+                                <div key={eIdx} className={`flex items-center gap-1.5 text-[9px] font-medium bg-white border rounded p-1 shadow-sm whitespace-nowrap overflow-hidden text-ellipsis w-full ${isAdic ? 'border-amber-200 text-amber-700' : 'border-slate-200 text-slate-600'}`}>
+                                  <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${isAdic ? 'bg-amber-500' : 'bg-[#2173B9]'}`}></div>
+                                  <span className={`font-bold shrink-0 ${isAdic ? 'text-amber-600' : 'text-[#2173B9]'}`}>{ev.horaEntrada}</span>
+                                  <span className="truncate" title={`${nombreCentro} - ${ev.empleado}`}>{nombreCentro} - {nombreCorto}</span>
+                                </div>
+                              )
+                            })}
+                          </div>
+                        )}
+
+                        <div className="absolute bottom-2 right-2 flex items-center justify-center pointer-events-none">
+                          {dayObj.active ? (
+                            <div className="w-6 h-6 flex items-center justify-center rounded-full border border-blue-400 text-[#2173B9] font-bold bg-white text-xs">
+                              {dayObj.d}
+                            </div>
+                          ) : (
+                            <span className={`text-xs ${dayObj.curr ? 'text-slate-600' : 'text-slate-400 font-light'}`}>
+                              {dayObj.d}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* VISTA SEMANA */}
+            {calendarView === 'semana' && (
+              <div className="w-full overflow-x-auto rounded-xl">
+                <div className="border border-slate-200 bg-white min-w-[800px] animate-in fade-in duration-300">
+                  {/* Encabezados de días */}
+                  <div className="flex border-b border-slate-200 bg-white">
+                    <div className="w-16 shrink-0 border-r border-slate-200"></div>
+                    {currentWeekDays.map(day => (
+                      <div key={day.d} className={`flex-1 min-w-[120px] py-4 text-center border-r border-slate-200 last:border-r-0 ${day.active ? 'bg-[#F0F8FF]' : ''}`}>
+                        <div className={`mx-auto flex items-center justify-center rounded-full text-lg ${day.active ? 'w-8 h-8 bg-[#2173B9] text-white font-bold' : 'text-slate-700'}`}>
+                          {day.d}
+                        </div>
+                        <div className="text-[11px] text-slate-500 mt-1 capitalize">{day.n}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Grid con flex: columna de horas + grid de días/bloques */}
+                  <div className="flex h-[600px] overflow-y-auto custom-scrollbar">
+                    {/* Columna izquierda: horas */}
+                    <div className="w-16 shrink-0 border-r border-slate-200">
+                      {hours.map(h => (
+                        <div key={`hour-${h}`} className="h-24 border-b border-slate-100 p-3 text-right text-[11px] font-bold text-[#2173B9] flex items-start justify-end">
+                          {h}:00
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Columna derecha: cuadrícula de días + bloques */}
+                    <div className="flex-1 relative" style={{ position: 'relative' }}>
+                      {/* Filas de horas como referencia */}
+                      <div style={{ position: 'absolute', left: 0, right: 0, top: 0, width: '100%', height: `${24 * 96}px` }}>
+                        {hours.map(h => (
+                          <div key={`hour-row-${h}`} className="flex border-b border-slate-100 h-24">
+                            {currentWeekDays.map(day => (
+                              <div key={`cell-${day.d}-${h}`} className={`flex-1 min-w-[120px] border-r border-slate-100 last:border-r-0 transition-colors ${day.active ? 'bg-[#F4F9FF]' : 'hover:bg-slate-50'}`}></div>
+                            ))}
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Bloques de eventos posicionados absolutamente */}
+                      <div style={{ position: 'absolute', left: 0, right: 0, top: 0, width: '100%', height: `${24 * 96}px` }}>
+                        {currentWeekDays.map((day, dayIdx) => {
+                          const eventosDelDia = horariosRegistrados.filter(ev => {
+                            if (filtroEstado === 'adicionales' && !ev.adicional) return false;
+                            if (filtroEstado === 'general' && ev.adicional) return false;
+
+                            const parts = ev.fecha.split('-');
+                            if(parts.length === 3 && parseInt(parts[2], 10) === day.d && parseInt(parts[1], 10) === day.m && parseInt(parts[0], 10) === day.y) {
+                              return true;
+                            }
+                            return false;
+                          });
+
+                          const bloques = calcularBloquesCalendario(eventosDelDia);
+                          const pixelsPorMinuto = 96 / 60;
+
+                          return bloques.map((bloque) => {
+                            const nombreCentro = bloque.evento.centro.split('-')[1]?.trim() || bloque.evento.centro;
+                            const nombreCorto = bloque.evento.empleado.split(' ')[0] || bloque.evento.empleado;
+                            const isAdic = bloque.evento.adicional;
+                            const alturaBloque = Math.max(32, bloque.duracionMin * pixelsPorMinuto);
+                            const topPx = bloque.inicioMin * pixelsPorMinuto;
+                            const anchoColumnaDia = 100 / currentWeekDays.length;
+                            const anchoLane = anchoColumnaDia / bloque.lanesTotal;
+                            const leftPercent = (dayIdx * anchoColumnaDia) + (bloque.lane * anchoLane);
+
+                            return (
+                              <div
+                                key={bloque.id}
+                                className={`absolute rounded-lg shadow-md overflow-hidden transition-all hover:shadow-lg hover:z-50 border flex flex-col justify-start p-1.5 text-[9px] font-medium ${isAdic ? 'border-amber-400/60 bg-amber-50/90 text-amber-700' : 'border-[#2173B9]/40 bg-[#E0F0FF]/90 text-slate-700'}`}
+                                style={{
+                                  top: `${topPx}px`,
+                                  left: `${leftPercent}%`,
+                                  width: `${anchoLane}%`,
+                                  height: `${alturaBloque}px`,
+                                  zIndex: 10,
+                                }}
+                                title={`${bloque.evento.horaEntrada}-${bloque.evento.horaSalida}: ${nombreCentro} - ${bloque.evento.empleado}`}
+                              >
+                                <div className="flex items-center gap-1 mb-0.5">
+                                  <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${isAdic ? 'bg-amber-500' : 'bg-[#2173B9]'}`}></div>
+                                  <span className={`font-bold shrink-0 ${isAdic ? 'text-amber-600' : 'text-[#2173B9]'}`}>{bloque.evento.horaEntrada}</span>
+                                </div>
+                                <span className="truncate leading-tight">{nombreCentro}</span>
+                                <span className="truncate leading-tight">{nombreCorto}</span>
+                                {alturaBloque > 50 && (
+                                  <span className="text-[8px] opacity-75 mt-0.5">{bloque.evento.horaSalida}</span>
+                                )}
+                              </div>
+                            );
+                          });
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {activeSubTab === 'gestionar' && (
+        <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-6 lg:p-8 shadow-sm animate-in fade-in duration-300">
+          
+          {showSuccessGuardado && (
+            <div className="mb-6 p-4 bg-[#ECFDF5] border border-[#A7F3D0] rounded-xl text-[#059669] text-sm font-medium animate-in fade-in">
+              Empleado guardado correctamente en la base de datos.
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+            <div>
+              <label className="text-[12px] font-medium text-slate-600 mb-2 block">Centro de costo</label>
+              <div className="relative">
+                <select 
+                  className={`w-full pl-4 pr-10 py-2.5 border rounded-lg text-sm outline-none appearance-none text-slate-700 shadow-sm cursor-pointer transition-colors ${gestionarCentro ? 'border-blue-500 ring-1 ring-blue-500' : 'border-slate-200 focus:border-[#2563EB]'}`}
+                  value={gestionarCentro}
+                  onChange={(e) => setGestionarCentro(e.target.value)}
+                >
+                  <option value="" disabled>{loadingCatalogos ? 'Cargando centros de costo...' : 'Escribe para buscar centro de costo'}</option>
+                  {centrosCosto.map((centro) => (
+                    <option key={centro.IDCENTROCOSTO} value={`${centro.IDCENTROCOSTO} - ${centro.CENTROCOSTO}`}>
+                      {centro.IDCENTROCOSTO} - {centro.CENTROCOSTO}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
+              </div>
+            </div>
+          </div>
+
+          {gestionarCentro ? (
+            <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+              {/* Panel Izquierdo */}
+              <div className="xl:col-span-4 border border-slate-200 rounded-xl p-6 bg-slate-50/50 flex flex-col justify-between min-h-[160px]">
+                <div>
+                  <h5 className="text-[11px] font-bold text-slate-400 mb-4 tracking-wide">Centro seleccionado</h5>
+                  <h3 className="text-lg font-black text-slate-800 mb-4 break-words">{gestionarCentro}</h3>
+                  <p className="text-[13px] text-slate-600 mb-2 font-medium">Empleados pertenecientes: <span className="font-black text-slate-800">{empleadosCentroGestion.length}</span></p>
+                  
+                  {centroAutorizadoList[gestionarCentro] && (
+                    <p className="text-[13px] text-slate-600 mb-6 font-medium border-t border-slate-200 pt-3 animate-in fade-in duration-300">
+                      Adicional: <span className="font-black text-emerald-600">{calcularTotalCentro(gestionarCentro).toFixed(2)} $</span>
+                    </p>
+                  )}
+                </div>
+                <div className={!centroAutorizadoList[gestionarCentro] ? 'mt-6' : ''}>
+                  <button 
+                    onClick={() => setShowGestionarEmpleadosModal(true)}
+                    className="px-6 py-2.5 bg-[#001F3F] text-white font-bold rounded-lg text-sm hover:bg-blue-900 transition-colors shadow-sm active:scale-95"
                   >
                     Gestionar empleados
                   </button>
                 </div>
-
-                <div className="overflow-x-auto border border-slate-200 rounded-xl bg-white">
-                  <table className="min-w-full text-sm">
-                    <thead className="bg-slate-50">
-                      <tr>
-                        <th className="text-left px-4 py-3 text-xs font-bold text-slate-600">Empleado</th>
-                        <th className="text-left px-4 py-3 text-xs font-bold text-slate-600">Valor fijo a pagar</th>
-                        <th className="text-left px-4 py-3 text-xs font-bold text-slate-600">Gestionar adicionales</th>
-                        <th className="text-center px-4 py-3 text-xs font-bold text-slate-600">Detalles</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {detalleCentroSeleccionado.length === 0 && (
-                        <tr>
-                          <td colSpan={4} className="px-4 py-6 text-center text-slate-500">
-                            Empleados no asignados
-                          </td>
-                        </tr>
-                      )}
-                      {detalleCentroSeleccionado.map((item) => (
-                        <tr key={`${item.centroCostoId}-${item.empleadoCedula}`} className="border-t border-slate-100">
-                          <td className="px-4 py-3">{item.empleadoNombre}</td>
-                          <td className="px-4 py-3 font-semibold text-slate-700">{formatearMoneda(item.valorFijo)}</td>
-                          <td className="px-4 py-3">
-                            <div className="flex items-center gap-2">
-                              <button
-                                type="button"
-                                onClick={() => abrirModalAdicionales(item)}
-                                className="px-3 py-1.5 rounded-lg border border-slate-300 text-slate-700 text-xs font-semibold hover:bg-slate-100"
-                              >
-                                Gestionar adicionales
-                              </button>
-                            </div>
-                          </td>
-                          <td className="px-4 py-3 text-center">
-                            <button
-                              type="button"
-                              onClick={() => setEmpleadoDetallesAbierto(item)}
-                              className="inline-flex items-center justify-center p-2 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-100 transition-colors"
-                              title="Ver detalles"
-                            >
-                              <Eye size={16} />
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
               </div>
-            </>
-          )}
-        </>
-      )}
-
-      {modalAgregarOpen && centroGestionSeleccionado && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
-          <div className="w-full max-w-lg rounded-2xl bg-white border border-slate-200 shadow-xl p-6 space-y-4">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <h4 className="text-lg font-black text-slate-800">Gestionar empleados</h4>
-                <p className="text-xs text-slate-500 mt-1">
-                  Centro: {centroGestionSeleccionado.IDCENTROCOSTO} - {centroGestionSeleccionado.CENTROCOSTO}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setModalAgregarOpen(false)}
-                className="px-3 py-1.5 rounded-lg border border-slate-300 text-slate-600 text-xs font-semibold hover:bg-slate-100"
-              >
-                Cerrar
-              </button>
-            </div>
-
-            <div className="inline-flex rounded-xl border border-slate-300 p-1 bg-slate-50">
-              <button
-                type="button"
-                onClick={() => {
-                  setModalGestionEmpleadoModo('agregar');
-                  setModalEmpleadoEliminarCedula('');
-                }}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
-                  modalGestionEmpleadoModo === 'agregar'
-                    ? 'bg-[#001F3F] text-white'
-                    : 'text-slate-700 hover:bg-slate-100'
-                }`}
-              >
-                Agregar
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setModalGestionEmpleadoModo('eliminar');
-                  setModalEmpleadoInput('');
-                  setModalValorFijo('');
-                }}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
-                  modalGestionEmpleadoModo === 'eliminar'
-                    ? 'bg-[#001F3F] text-white'
-                    : 'text-slate-700 hover:bg-slate-100'
-                }`}
-              >
-                Eliminar
-              </button>
-            </div>
-
-            {modalGestionEmpleadoModo === 'agregar' ? (
-              <>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">Buscar empleado</label>
-                  <input
-                    value={modalEmpleadoInput}
-                    onChange={(e) => setModalEmpleadoInput(e.target.value)}
-                    list="valets-fijos-empleados"
-                    placeholder={loadingEmpleados ? 'Cargando empleados...' : 'Escribe para buscar empleado'}
-                    className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
+              
+              {/* Panel Derecho */}
+              <div className="xl:col-span-8 flex flex-col gap-4">
+                <div className="border border-slate-200 rounded-xl overflow-hidden flex flex-col min-h-[160px] bg-white">
+                  {loadingEmpleadosDb ? (
+                    <div className="p-8 flex items-center justify-center flex-1 bg-white">
+                      <p className="text-[13px] font-medium text-slate-400">Cargando empleados asignados...</p>
+                    </div>
+                  ) : empleadosCentroGestion.length > 0 ? (
+                    <div className="overflow-x-auto w-full">
+                      <table className="w-full text-left">
+                        <thead className="bg-slate-50/80 border-b border-slate-100">
+                          <tr>
+                            <th className="px-6 py-4 text-[11px] font-bold text-slate-600">Empleado</th>
+                            <th className="px-6 py-4 text-[11px] font-bold text-slate-600 text-center">Valor fijo a pagar</th>
+                            <th className="px-6 py-4 text-[11px] font-bold text-slate-600 text-center">Detalles</th>
+                            <th className="px-6 py-4 text-[11px] font-bold text-slate-600 text-center">Eliminar</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {empleadosCentroGestion.map((emp, idx) => (
+                            <tr key={idx} className="hover:bg-slate-50 transition-colors">
+                              <td className="px-6 py-4">
+                                <div className="text-[12px] font-bold text-slate-700 uppercase max-w-[240px] leading-tight break-words">
+                                  {emp.nombre}
+                                </div>
+                              </td>
+                              <td className="px-6 py-4 text-center text-[13px] font-black text-slate-800">
+                                ${emp.valor}
+                              </td>
+                              <td className="px-6 py-4 text-center">
+                                <button 
+                                  onClick={() => {
+                                    setDetalleEmpleado(emp);
+                                    setShowDetallesModal(true);
+                                  }}
+                                  className="p-2 border border-slate-200 rounded-lg text-slate-400 hover:text-[#001F3F] hover:bg-slate-100 hover:border-slate-300 transition-colors shadow-sm bg-white mx-auto block"
+                                >
+                                  <Eye size={18} />
+                                </button>
+                              </td>
+                              <td className="px-6 py-4 text-center">
+                                <button 
+                                  disabled={eliminandoEmpleadoId === emp.id}
+                                  onClick={() => {
+                                    void handleEliminarEmpleado(emp);
+                                  }}
+                                  className="p-2 border border-slate-200 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 hover:border-red-200 transition-colors shadow-sm bg-white mx-auto block"
+                                >
+                                  <Trash2 size={18} />
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="bg-slate-50/80 border-b border-slate-200 p-4">
+                        <div className="grid grid-cols-4 gap-2 text-center items-center">
+                          <span className="text-[11px] font-bold text-slate-600">Empleado</span>
+                          <span className="text-[11px] font-bold text-slate-600">Valor fijo a pagar</span>
+                          <span className="text-[11px] font-bold text-slate-600">Detalles</span>
+                          <span className="text-[11px] font-bold text-slate-600">Eliminar</span>
+                        </div>
+                      </div>
+                      <div className="p-8 flex items-center justify-center flex-1 bg-white">
+                        <p className="text-[13px] font-medium text-slate-400">Empleados no asignados</p>
+                      </div>
+                    </>
+                  )}
                 </div>
 
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">Valor fijo a pagar</label>
-                  <input
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={modalValorFijo}
-                    onChange={(e) => setModalValorFijo(e.target.value)}
-                    placeholder="0.00"
-                    className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-              </>
-            ) : (
-              <div>
-                <label className="block text-xs font-semibold text-slate-600 mb-1">Seleccionar empleado existente</label>
-                <select
-                  value={modalEmpleadoEliminarCedula}
-                  onChange={(e) => setModalEmpleadoEliminarCedula(e.target.value)}
-                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="">Seleccionar</option>
-                  {empleadosCentroGestion.map((empleado) => (
-                    <option key={`eliminar-${empleado.centroCostoId}-${empleado.empleadoCedula}`} value={empleado.empleadoCedula}>
-                      {empleado.empleadoNombre} - {empleado.empleadoCedula}
-                    </option>
-                  ))}
-                </select>
-                {empleadosCentroGestion.length === 0 && (
-                  <p className="text-xs text-slate-500 mt-2">No hay empleados en este centro para eliminar.</p>
+                {empleadosCentroGestion.length > 0 && (
+                  <div className="flex justify-end animate-in fade-in duration-300">
+                    <button 
+                      onClick={() => setCentroAutorizadoList(prev => ({...prev, [gestionarCentro]: true}))}
+                      className="px-6 py-2.5 bg-emerald-600 text-white font-bold rounded-lg text-sm hover:bg-emerald-700 transition-colors shadow-sm active:scale-95 flex items-center gap-2"
+                    >
+                      <CheckCircle2 size={16} strokeWidth={2.5} />
+                      Autorizar Adicionales
+                    </button>
+                  </div>
                 )}
               </div>
-            )}
-
-            <div className="flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setModalAgregarOpen(false)}
-                className="px-4 py-2 rounded-lg border border-slate-300 text-slate-600 text-sm font-semibold hover:bg-slate-100"
-              >
-                Cancelar
-              </button>
-              <button
-                type="button"
-                onClick={modalGestionEmpleadoModo === 'agregar' ? handleGuardarEmpleadoCentro : handleEliminarEmpleadoCentro}
-                className="px-4 py-2 rounded-lg bg-[#001F3F] text-white text-sm font-semibold hover:bg-blue-900 transition-colors"
-              >
-                {modalGestionEmpleadoModo === 'agregar' ? 'Guardar empleado' : 'Eliminar empleado'}
-              </button>
             </div>
-          </div>
+          ) : (
+            <div className="border border-slate-200 rounded-lg p-5 text-[13px] font-medium text-slate-500 bg-slate-50/50">
+              Selecciona un centro de costo para ver los detalles de valet.
+            </div>
+          )}
         </div>
       )}
-
-      {modalAdicionalesOpen && empleadoAdicionalSeleccionado && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
-          <div className="w-full max-w-2xl rounded-2xl bg-white border border-slate-200 shadow-xl p-6 space-y-5 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <h4 className="text-lg font-black text-slate-800">Gestionar adicionales</h4>
-                <p className="text-xs text-slate-500 mt-1">Empleado: {empleadoAdicionalSeleccionado.empleadoNombre}</p>
-                <p className="text-xs text-slate-500">Centro: {empleadoAdicionalSeleccionado.centroCostoId} - {empleadoAdicionalSeleccionado.centroCostoNombre}</p>
-              </div>
-              <button
-                type="button"
-                onClick={cerrarModalAdicionales}
-                className="px-3 py-1.5 rounded-lg border border-slate-300 text-slate-600 text-xs font-semibold hover:bg-slate-100"
-              >
-                Cerrar
-              </button>
-            </div>
-
-            <div className="space-y-3 rounded-xl border border-slate-200 p-4 bg-slate-50">
-              <label className="flex items-center gap-2 text-sm font-semibold text-slate-700 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={modalHabilitarDiaAdicional}
-                  onChange={(e) => setModalHabilitarDiaAdicional(e.target.checked)}
-                  className="h-4 w-4"
-                />
-                Habilitar dia adicional
-              </label>
-
-              {modalHabilitarDiaAdicional && (
-                <div className="space-y-3 rounded-lg border border-slate-200 bg-white p-3">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1">Año (periodo)</label>
-                    <input
-                      type="number"
-                      min={2020}
-                      max={2100}
-                      value={modalDiaAdicionalAnio}
-                      onChange={(e) => setModalDiaAdicionalAnio(Number(e.target.value) || hoy.getFullYear())}
-                      className="w-full border border-slate-300 rounded-lg px-2.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1">Mes (periodo)</label>
-                    <select
-                      value={modalDiaAdicionalMes}
-                      onChange={(e) => setModalDiaAdicionalMes(Number(e.target.value))}
-                      className="w-full border border-slate-300 rounded-lg px-2.5 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    >
-                      {MESES.map((item) => (
-                        <option key={`dia-adicional-mes-${item.value}`} value={item.value}>{item.label}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="space-y-2">
-                    <p className="text-xs font-semibold text-slate-600">Semanas</p>
-                    {modalDiaAdicionalSemanas.map((semanaConfig) => (
-                      <div key={`dia-adicional-semana-${semanaConfig.semana}`} className="rounded-lg border border-slate-200 p-3">
-                        <div className="flex items-center justify-between gap-2">
-                          <label className="flex items-center gap-2 text-sm font-semibold text-slate-700 cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={semanaConfig.habilitado}
-                              onChange={(e) => handleToggleDiaAdicionalSemana(semanaConfig.semana, e.target.checked)}
-                              className="h-4 w-4"
-                            />
-                            Semana {semanaConfig.semana}
-                          </label>
-                          {semanaConfig.habilitado && (
-                            <button
-                              type="button"
-                              onClick={() => handleAgregarDiaAdicional(semanaConfig.semana)}
-                              disabled={semanaConfig.dias.length >= 5 || !obtenerSiguienteDiaDisponible(semanaConfig.dias)}
-                              className="px-2 py-1 text-xs rounded-lg border border-blue-300 bg-blue-50 text-blue-700 font-semibold hover:bg-blue-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                            >
-                              + Agregar dia
-                            </button>
-                          )}
-                        </div>
-
-                        {semanaConfig.habilitado && (
-                          <div className="space-y-2 mt-3">
-                            {semanaConfig.dias.length === 0 ? (
-                              <p className="text-xs text-slate-500 italic">No hay dias. Haz clic en "+ Agregar dia" para añadir.</p>
-                            ) : (
-                              semanaConfig.dias.map((diaDia, indexDia) => (
-                                <div key={`dia-adicional-${semanaConfig.semana}-${indexDia}`} className="grid grid-cols-1 md:grid-cols-4 gap-2 rounded-lg border border-slate-100 bg-slate-50 p-2">
-                                  <div>
-                                    <label className="block text-xs font-semibold text-slate-600 mb-0.5">Dia</label>
-                                    <select
-                                      value={diaDia.dia}
-                                      onChange={(e) => handleActualizarDiaAdicional(semanaConfig.semana, indexDia, 'dia', e.target.value)}
-                                      className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                    >
-                                      {obtenerDiasDisponiblesPorIndice(semanaConfig.dias, indexDia).map((diaKey) => {
-                                        const dia = DIAS_LABORALES_SIN_DOMINGO.find((item) => item.key === diaKey);
-                                        if (!dia) return null;
-                                        return <option key={`dia-sel-${semanaConfig.semana}-${indexDia}-${dia.key}`} value={dia.key}>{dia.label}</option>;
-                                      })}
-                                    </select>
-                                  </div>
-
-                                  <div>
-                                    <label className="block text-xs font-semibold text-slate-600 mb-0.5">Entrada</label>
-                                    <select
-                                      value={diaDia.horaEntrada}
-                                      onChange={(e) => handleActualizarDiaAdicional(semanaConfig.semana, indexDia, 'horaEntrada', e.target.value)}
-                                      className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                    >
-                                      <option value="">Seleccionar</option>
-                                      {OPCIONES_HORA_MEDIA.map((hora) => (
-                                        <option key={`entrada-${semanaConfig.semana}-${indexDia}-${hora}`} value={hora}>{hora}</option>
-                                      ))}
-                                    </select>
-                                  </div>
-
-                                  <div>
-                                    <label className="block text-xs font-semibold text-slate-600 mb-0.5">Salida</label>
-                                    <select
-                                      value={diaDia.horaSalida}
-                                      onChange={(e) => handleActualizarDiaAdicional(semanaConfig.semana, indexDia, 'horaSalida', e.target.value)}
-                                      className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                    >
-                                      <option value="">Seleccionar</option>
-                                      {OPCIONES_HORA_MEDIA.map((hora) => (
-                                        <option key={`salida-${semanaConfig.semana}-${indexDia}-${hora}`} value={hora}>{hora}</option>
-                                      ))}
-                                    </select>
-                                  </div>
-
-                                  <div className="flex items-end">
-                                    <button
-                                      type="button"
-                                      onClick={() => handleRemoverDiaAdicional(semanaConfig.semana, indexDia)}
-                                      className="w-full px-2 py-1.5 text-xs rounded-lg border border-red-300 bg-red-50 text-red-700 font-semibold hover:bg-red-100 transition-colors"
-                                    >
-                                      Remover
-                                    </button>
-                                  </div>
-                                </div>
-                              ))
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div className="space-y-3 rounded-xl border border-slate-200 p-4 bg-slate-50">
-              <label className="flex items-center gap-2 text-sm font-semibold text-slate-700 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={modalHabilitarDomingo}
-                  onChange={(e) => setModalHabilitarDomingo(e.target.checked)}
-                  className="h-4 w-4"
-                />
-                Habilitar domingo
-              </label>
-
-              {modalHabilitarDomingo && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 rounded-lg border border-slate-200 bg-white p-3">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1">Año (periodo)</label>
-                    <input
-                      type="number"
-                      min={2020}
-                      max={2100}
-                      value={modalDomingoAnio}
-                      onChange={(e) => setModalDomingoAnio(Number(e.target.value) || hoy.getFullYear())}
-                      className="w-full border border-slate-300 rounded-lg px-2.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1">Mes (periodo)</label>
-                    <select
-                      value={modalDomingoMes}
-                      onChange={(e) => setModalDomingoMes(Number(e.target.value))}
-                      className="w-full border border-slate-300 rounded-lg px-2.5 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    >
-                      {MESES.map((item) => (
-                        <option key={`domingo-mes-${item.value}`} value={item.value}>{item.label}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="md:col-span-2">
-                    <label className="block text-xs font-semibold text-slate-600 mb-2">Semanas habilitadas</label>
-                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2">
-                      {SEMANAS_DISPONIBLES.map((semana) => (
-                        <label
-                          key={`domingo-semana-${semana}`}
-                          className="flex items-center gap-2 rounded-lg border border-slate-200 px-2 py-2 text-sm text-slate-700 cursor-pointer"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={modalDomingoSemanas.includes(semana)}
-                            onChange={(e) => handleToggleDomingoSemana(semana, e.target.checked)}
-                            className="h-4 w-4"
-                          />
-                          Semana {semana}
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div className="flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={cerrarModalAdicionales}
-                className="px-4 py-2 rounded-lg border border-slate-300 text-slate-600 text-sm font-semibold hover:bg-slate-100"
-              >
-                Cancelar
-              </button>
-              <button
-                type="button"
-                onClick={handleGuardarAdicionales}
-                className="px-4 py-2 rounded-lg bg-[#001F3F] text-white text-sm font-semibold hover:bg-blue-900 transition-colors"
-              >
-                Guardar adicionales
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {empleadoDetallesAbierto && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
-          <div
-            className="absolute inset-0"
-            onClick={() => setEmpleadoDetallesAbierto(null)}
-          />
-          <div className="relative w-full max-w-2xl rounded-2xl bg-white border border-slate-200 shadow-xl p-6 space-y-5 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <h4 className="text-lg font-black text-slate-800">Detalles de adicionales</h4>
-                <p className="text-xs text-slate-500 mt-1">Empleado: {empleadoDetallesAbierto.empleadoNombre}</p>
-                <p className="text-xs text-slate-500">Centro: {empleadoDetallesAbierto.centroCostoId} - {empleadoDetallesAbierto.centroCostoNombre}</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setEmpleadoDetallesAbierto(null)}
-                className="px-3 py-1.5 rounded-lg border border-slate-300 text-slate-600 text-xs font-semibold hover:bg-slate-100"
-              >
-                Cerrar
-              </button>
-            </div>
-
-            {(() => {
-              const config = adicionalesPorEmpleado[empleadoDetallesAbierto.id];
-              const hayDias = Boolean(config?.habilitarDiaAdicional && config.diaAdicionalSemanas?.some((s) => s.habilitado));
-              const hayDomingos = Boolean(config?.habilitarDomingo && config.domingoSemanas?.length);
-
-              if (!config || (!hayDias && !hayDomingos)) {
-                return (
-                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-                    No hay configuración activa para este empleado.
-                  </div>
-                );
-              }
-
-              return (
-                <div className="space-y-4">
-                  {hayDias && (
-                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-3">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <p className="text-sm font-bold text-slate-800">Días adicionales</p>
-                        <p className="text-xs text-slate-500">Periodo: {config.diaAdicionalAnio}/{String(config.diaAdicionalMes).padStart(2, '0')}</p>
-                      </div>
-
-                      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2">
-                        {config.diaAdicionalSemanas
-                          .filter((semana) => semana.habilitado)
-                          .map((semana) => (
-                            <div key={`detalle-dia-${config.diaAdicionalAnio}-${config.diaAdicionalMes}-${semana.semana}`} className="rounded-lg border border-slate-200 bg-white p-3 h-full">
-                              <p className="text-xs font-semibold text-slate-600 mb-2">Semana {semana.semana}</p>
-                              <div className="space-y-1.5">
-                                {semana.dias.map((dia, indexDia) => (
-                                  <div
-                                    key={`detalle-dia-item-${semana.semana}-${indexDia}`}
-                                    className="flex flex-wrap items-center justify-between gap-2 text-sm"
-                                  >
-                                    <span className="font-medium text-slate-700">
-                                      {DIAS_LABORALES_SIN_DOMINGO.find((d) => d.key === dia.dia)?.label || dia.dia}
-                                    </span>
-                                    <span className="text-slate-600">{dia.horaEntrada} - {dia.horaSalida}</span>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {hayDomingos && (
-                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-3">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <p className="text-sm font-bold text-slate-800">Domingos</p>
-                        <p className="text-xs text-slate-500">Periodo: {config.domingoAnio}/{String(config.domingoMes).padStart(2, '0')}</p>
-                      </div>
-
-                      <div className="flex flex-wrap gap-2">
-                        {config.domingoSemanas.map((semana) => (
-                          <span
-                            key={`detalle-domingo-${config.domingoAnio}-${config.domingoMes}-${semana}`}
-                            className="inline-flex items-center rounded-full border border-slate-300 px-3 py-1 text-xs font-semibold text-slate-700 bg-white"
-                          >
-                            Semana {semana}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })()}
-          </div>
-        </div>
-      )}
-      </div>
     </div>
   );
 };

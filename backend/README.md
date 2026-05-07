@@ -92,9 +92,6 @@ El backend valida/crea estructura necesaria al iniciar para tablas de descuentos
 - `DELETE /api/valets/empleados`
 - `GET /api/valets/horarios`
 - `POST /api/valets/horarios`
-- `GET /api/valets/adicionales`
-- `GET /api/valets/adicionales/lista`
-- `POST /api/valets/adicionales`
 
 ## Notas de integracion
 
