@@ -223,6 +223,7 @@ const ValetsFijosView = () => {
   const [loadingHorariosDb, setLoadingHorariosDb] = useState(false);
   const [guardandoHorario, setGuardandoHorario] = useState(false);
   const [filtroEstado, setFiltroEstado] = useState('');
+  const [filtroEmpleadoCalendario, setFiltroEmpleadoCalendario] = useState('');
   const [horariosRegistrados, setHorariosRegistrados] = useState<HorarioRegistrado[]>([]);
   const [calendarView, setCalendarView] = useState('mes');
 
@@ -456,6 +457,15 @@ const ValetsFijosView = () => {
 
   const { grid: currentCalendarGrid, monthName: currentMonthName, year: currentYear } = getMonthGrid();
   const currentWeekDays = getWeekDays();
+  const empleadosFiltroCalendario = Array.from(new Set(horariosRegistrados.map((h) => h.empleado)))
+    .sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
+
+  const cumpleFiltrosCalendario = (ev: HorarioRegistrado): boolean => {
+    if (filtroEstado === 'adicionales' && !ev.adicional) return false;
+    if (filtroEstado === 'general' && ev.adicional) return false;
+    if (filtroEmpleadoCalendario && ev.empleado !== filtroEmpleadoCalendario) return false;
+    return true;
+  };
   
   const startW = currentWeekDays[0];
   const endW = currentWeekDays[6];
@@ -1035,6 +1045,22 @@ const ValetsFijosView = () => {
                       <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-300 pointer-events-none" size={14} />
                     </div>
                   </div>
+                  <div>
+                    <label className="text-[10px] text-slate-400 mb-1 block">Empleado</label>
+                    <div className="relative">
+                      <select
+                        value={filtroEmpleadoCalendario}
+                        onChange={(e) => setFiltroEmpleadoCalendario(e.target.value)}
+                        className="pl-3 pr-8 py-1.5 text-[11px] border border-slate-200 rounded-full outline-none text-slate-500 cursor-pointer appearance-none bg-white min-w-[220px] shadow-sm"
+                      >
+                        <option value="">Todos</option>
+                        {empleadosFiltroCalendario.map((empleado) => (
+                          <option key={empleado} value={empleado}>{empleado}</option>
+                        ))}
+                      </select>
+                      <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-300 pointer-events-none" size={14} />
+                    </div>
+                  </div>
                 </div>
                 <h3 className="text-[17px] font-medium text-[#2173B9] capitalize">
                   {headerText}
@@ -1054,8 +1080,7 @@ const ValetsFijosView = () => {
                   
                   {currentCalendarGrid.map((dayObj, idx) => {
                     const eventosDia = dayObj.curr ? horariosRegistrados.filter(h => {
-                      if (filtroEstado === 'adicionales' && !h.adicional) return false;
-                      if (filtroEstado === 'general' && h.adicional) return false;
+                      if (!cumpleFiltrosCalendario(h)) return false;
 
                       const parts = h.fecha.split('-');
                       if(parts.length === 3) {
@@ -1147,8 +1172,7 @@ const ValetsFijosView = () => {
                       <div style={{ position: 'absolute', left: 0, right: 0, top: 0, width: '100%', height: `${24 * 96}px` }}>
                         {currentWeekDays.map((day, dayIdx) => {
                           const eventosDelDia = horariosRegistrados.filter(ev => {
-                            if (filtroEstado === 'adicionales' && !ev.adicional) return false;
-                            if (filtroEstado === 'general' && ev.adicional) return false;
+                            if (!cumpleFiltrosCalendario(ev)) return false;
 
                             const parts = ev.fecha.split('-');
                             if(parts.length === 3 && parseInt(parts[2], 10) === day.d && parseInt(parts[1], 10) === day.m && parseInt(parts[0], 10) === day.y) {

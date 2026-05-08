@@ -160,6 +160,84 @@ const ensureValetFijoHorarioTable = async () => {
     )
   `);
 
+  // Compatibilidad con esquemas previos: agrega columnas faltantes y migra fecha_turno.
+  await pool.query(`
+    ALTER TABLE valet_fijo_horario
+    ADD COLUMN IF NOT EXISTS centro_costo_nombre TEXT NOT NULL DEFAULT ''
+  `);
+
+  await pool.query(`
+    ALTER TABLE valet_fijo_horario
+    ADD COLUMN IF NOT EXISTS empleado_nombre TEXT NOT NULL DEFAULT ''
+  `);
+
+  await pool.query(`
+    ALTER TABLE valet_fijo_horario
+    ADD COLUMN IF NOT EXISTS fecha_turno DATE
+  `);
+
+  await pool.query(`
+    ALTER TABLE valet_fijo_horario
+    ADD COLUMN IF NOT EXISTS aprobado BOOLEAN NOT NULL DEFAULT TRUE
+  `);
+
+  await pool.query(`
+    ALTER TABLE valet_fijo_horario
+    ADD COLUMN IF NOT EXISTS fecha_creacion TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  `);
+
+  await pool.query(`
+    ALTER TABLE valet_fijo_horario
+    ADD COLUMN IF NOT EXISTS fecha_actualizacion TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  `);
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'valet_fijo_horario' AND column_name = 'anio'
+      )
+      AND EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'valet_fijo_horario' AND column_name = 'mes'
+      )
+      AND EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'valet_fijo_horario' AND column_name = 'dia'
+      ) THEN
+        UPDATE valet_fijo_horario
+        SET fecha_turno = make_date(
+          CASE
+            WHEN COALESCE(anio::text, '') ~ '^\\d{4}$' THEN anio::int
+            ELSE EXTRACT(YEAR FROM CURRENT_DATE)::int
+          END,
+          GREATEST(1, LEAST(12,
+            CASE WHEN COALESCE(mes::text, '') ~ '^\\d{1,2}$' THEN mes::int ELSE 1 END
+          )),
+          GREATEST(1, LEAST(31,
+            CASE WHEN COALESCE(dia::text, '') ~ '^\\d{1,2}$' THEN dia::int ELSE 1 END
+          ))
+        )
+        WHERE fecha_turno IS NULL;
+      END IF;
+    END $$
+  `);
+
+  await pool.query(`
+    UPDATE valet_fijo_horario
+    SET fecha_turno = CURRENT_DATE
+    WHERE fecha_turno IS NULL
+  `);
+
+  await pool.query(`
+    ALTER TABLE valet_fijo_horario
+    ALTER COLUMN fecha_turno SET NOT NULL
+  `);
+
   await pool.query(`
     ALTER TABLE valet_fijo_horario
     DROP CONSTRAINT IF EXISTS uq_valet_fijo_horario
