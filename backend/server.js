@@ -235,6 +235,14 @@ const ensureValetFijoHorarioTable = async () => {
 
   await pool.query(`
     ALTER TABLE valet_fijo_horario
+    DROP COLUMN IF EXISTS anio,
+    DROP COLUMN IF EXISTS mes,
+    DROP COLUMN IF EXISTS semana,
+    DROP COLUMN IF EXISTS dia
+  `);
+
+  await pool.query(`
+    ALTER TABLE valet_fijo_horario
     ALTER COLUMN fecha_turno SET NOT NULL
   `);
 
