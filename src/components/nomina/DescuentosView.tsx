@@ -303,7 +303,8 @@ const DescuentosView = () => {
         const coincideTipo =
             !tipo ||
             tipo === 'otro' ||
-            tipo === 'faltantes_incidentes';
+            tipo === 'faltantes_incidentes' ||
+            tipo === 'descuento_sancion';
 
         return coincideBusqueda && coincideEstado && coincideTipo;
     });
@@ -398,6 +399,7 @@ const DescuentosView = () => {
                             >
                                 <option value="">Tipo de descuento - Selecciona una opción</option>
                                 <option value="faltantes_incidentes">Faltantes e incidentes de recaudación</option>
+                                <option value="descuento_sancion">Descuento por sanción</option>
                                 <option value="multas">Multas por memos</option>
                                 <option value="otro">Otro descuento</option>
                             </select>
@@ -525,6 +527,7 @@ const DescuentosView = () => {
                                 <option value="subsidio_enfermedad">Subsidio de enfermedad</option>
                                 <option value="subsidio_maternidad">Subsidio de maternidad</option>
                                 <option value="faltantes_incidentes">Faltantes e incidentes de recaudación</option>
+                                <option value="descuento_sancion">Descuento por sanción</option>
                                 <option value="descuentos_varios">Descuentos varios</option>
                                 <option value="multas_memos">Multas por memos</option>
                             </select>
