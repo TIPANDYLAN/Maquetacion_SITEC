@@ -126,8 +126,18 @@ const ensureValetFijoEmpleadoTable = async () => {
       fecha_creacion TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       fecha_actualizacion TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       CONSTRAINT uq_valet_fijo_empleado UNIQUE (centro_costo_id, empleado_cedula),
-      CONSTRAINT chk_valet_fijo_empleado_valor_fijo_positivo CHECK (valor_fijo > 0)
+      CONSTRAINT chk_valet_fijo_empleado_valor_fijo_positivo CHECK (valor_fijo >= 0)
     )
+  `);
+
+  await pool.query(`
+    ALTER TABLE valet_fijo_empleado
+    DROP CONSTRAINT IF EXISTS chk_valet_fijo_empleado_valor_fijo_positivo
+  `);
+
+  await pool.query(`
+    ALTER TABLE valet_fijo_empleado
+    ADD CONSTRAINT chk_valet_fijo_empleado_valor_fijo_positivo CHECK (valor_fijo >= 0)
   `);
 
   await pool.query(`
@@ -1536,8 +1546,8 @@ app.post('/api/valets/empleados', async (req, res) => {
     return;
   }
 
-  if (!Number.isFinite(valorFijo) || valorFijo <= 0) {
-    res.status(400).json({ error: 'El campo valorFijo debe ser numerico y mayor a 0' });
+  if (!Number.isFinite(valorFijo) || valorFijo < 0) {
+    res.status(400).json({ error: 'El campo valorFijo debe ser numerico y mayor o igual a 0' });
     return;
   }
 
@@ -1776,6 +1786,45 @@ app.post('/api/valets/horarios', async (req, res) => {
     console.error('[POST /api/valets/horarios] Error:', error instanceof Error ? error.message : String(error));
     res.status(500).json({
       error: 'No se pudo guardar horario valet fijo',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+app.delete('/api/valets/horarios', async (req, res) => {
+  const idRaw = String(req.query.id || '').trim();
+  const id = Number(idRaw);
+
+  if (!Number.isInteger(id) || id <= 0) {
+    res.status(400).json({ error: 'El parametro id es requerido y debe ser numerico' });
+    return;
+  }
+
+  try {
+    await ensureValetFijoHorarioTable();
+
+    const result = await pool.query(
+      `DELETE FROM valet_fijo_horario
+       WHERE id = $1
+       RETURNING id, centro_costo_id, centro_costo_nombre, empleado_cedula, empleado_nombre,
+                 fecha_turno, hora_entrada, hora_salida, es_adicional, aprobado,
+                 fecha_creacion, fecha_actualizacion`,
+      [id]
+    );
+
+    if (result.rowCount === 0) {
+      res.status(404).json({ error: 'No se encontro el horario solicitado' });
+      return;
+    }
+
+    res.status(200).json({
+      ok: true,
+      registro: mapDbRowToValetFijoHorario(result.rows[0]),
+    });
+  } catch (error) {
+    console.error('[DELETE /api/valets/horarios] Error:', error instanceof Error ? error.message : String(error));
+    res.status(500).json({
+      error: 'No se pudo eliminar horario valet fijo',
       details: error instanceof Error ? error.message : 'Unknown error',
     });
   }

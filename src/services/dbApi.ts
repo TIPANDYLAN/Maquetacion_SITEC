@@ -269,6 +269,12 @@ export const dbApi = {
       save: async <T = unknown>(payload: unknown): Promise<T> => {
         return await saveResource<T>(DB_API_CATALOG.valetsHorarios, payload);
       },
+
+      delete: async <T = unknown>(id: string): Promise<T> => {
+        return await deleteResource<T>(withQuery(DB_API_CATALOG.valetsHorarios, {
+          id,
+        }));
+      },
     },
   },
 

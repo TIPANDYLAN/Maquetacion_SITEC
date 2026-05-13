@@ -14,7 +14,7 @@ CREATE TABLE valet_fijo_empleado (
   fecha_creacion TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   fecha_actualizacion TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT uq_valet_fijo_empleado UNIQUE (centro_costo_id, empleado_cedula),
-  CONSTRAINT chk_valet_fijo_empleado_valor_fijo_positivo CHECK (valor_fijo > 0)
+  CONSTRAINT chk_valet_fijo_empleado_valor_fijo_positivo CHECK (valor_fijo >= 0)
 );
 
 CREATE INDEX idx_valet_fijo_empleado_centro ON valet_fijo_empleado (centro_costo_id);

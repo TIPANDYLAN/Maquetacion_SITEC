@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Eye, Trash2, ChevronDown, Check, CheckCircle2 } from 'lucide-react';
-import { getNominaCostCenters, getNominaEmployeesActive, type NominaCostCenter } from '../../services/n8nApi';
+import { ListarValetsFijos, getNominaCostCenters, getNominaEmployeesActive, type NominaCostCenter } from '../../services/n8nApi';
 import { dbApi } from '../../services/dbApi';
 import type { EmpleadoNominaApiItem } from '../../types/nomina';
 
@@ -52,6 +52,11 @@ interface ValetHorariosListResponse {
 }
 
 interface ValetHorarioSaveResponse {
+  ok?: boolean;
+  registro?: ValetHorarioDbRegistro;
+}
+
+interface ValetHorarioDeleteResponse {
   ok?: boolean;
   registro?: ValetHorarioDbRegistro;
 }
@@ -141,6 +146,11 @@ const horariosSeSolapan = (inicioA: number, finA: number, inicioB: number, finB:
   return inicioA < finB && inicioB < finA;
 };
 
+const esFechaDomingo = (fechaIso: string): boolean => {
+  const d = new Date(`${fechaIso}T12:00:00`);
+  return !Number.isNaN(d.getTime()) && d.getDay() === 0;
+};
+
 interface Bloque {
   id: string;
   evento: HorarioRegistrado;
@@ -205,7 +215,7 @@ const ValetsFijosView = () => {
   const [guardandoEmpleado, setGuardandoEmpleado] = useState(false);
   const [eliminandoEmpleadoId, setEliminandoEmpleadoId] = useState('');
   const [catalogosError, setCatalogosError] = useState('');
-  const [centrosCosto, setCentrosCosto] = useState<NominaCostCenter[]>([]);
+  const [centrosCostoValet, setCentrosCostoValet] = useState<NominaCostCenter[]>([]);
   const [empleadosActivos, setEmpleadosActivos] = useState<EmpleadoActivoOption[]>([]);
   const [centroAutorizadoList, setCentroAutorizadoList] = useState<Record<string, boolean>>({});
   const [showDetallesModal, setShowDetallesModal] = useState(false);
@@ -235,12 +245,17 @@ const ValetsFijosView = () => {
       setCatalogosError('');
 
       try {
-        const [centrosData, empleadosData] = await Promise.all([
+        const [centrosData, centrosValetData, empleadosData] = await Promise.all([
           getNominaCostCenters(),
+          ListarValetsFijos(),
           getNominaEmployeesActive<EmpleadoNominaApiItem[]>(),
         ]);
 
         const centrosNormalizados = (Array.isArray(centrosData) ? centrosData : [])
+          .filter((cc) => cc.IDCENTROCOSTO || cc.CENTROCOSTO)
+          .sort((a, b) => `${a.IDCENTROCOSTO} ${a.CENTROCOSTO}`.localeCompare(`${b.IDCENTROCOSTO} ${b.CENTROCOSTO}`, 'es', { sensitivity: 'base' }));
+
+        const centrosValetNormalizados = (Array.isArray(centrosValetData) ? centrosValetData : [])
           .filter((cc) => cc.IDCENTROCOSTO || cc.CENTROCOSTO)
           .sort((a, b) => `${a.IDCENTROCOSTO} ${a.CENTROCOSTO}`.localeCompare(`${b.IDCENTROCOSTO} ${b.CENTROCOSTO}`, 'es', { sensitivity: 'base' }));
 
@@ -269,7 +284,7 @@ const ValetsFijosView = () => {
           .sort((a, b) => a.nombreCompleto.localeCompare(b.nombreCompleto, 'es', { sensitivity: 'base' }));
 
         if (!isMounted) return;
-        setCentrosCosto(centrosNormalizados);
+        setCentrosCostoValet(centrosValetNormalizados.length > 0 ? centrosValetNormalizados : centrosNormalizados);
         setEmpleadosActivos(empleadosNormalizados);
       } catch (error) {
         if (!isMounted) return;
@@ -374,7 +389,7 @@ const ValetsFijosView = () => {
     });
 
   const calcularTotalCentro = (centro: string): number => {
-    const empAdicCentro = horariosRegistrados.filter(h => h.centro === centro && h.adicional);
+    const empAdicCentro = horariosRegistrados.filter(h => h.centro === centro && (h.adicional || esFechaDomingo(h.fecha)));
     let total = 0;
     const emps = [...new Set(empAdicCentro.map(h => h.empleado))];
     
@@ -385,9 +400,8 @@ const ValetsFijosView = () => {
       evs.forEach(ev => {
         const isAprobado = ev.aprobado !== false;
         if (!isAprobado) return;
-        
-        const d = new Date(`${ev.fecha}T12:00:00`);
-        if (d.getDay() === 0) {
+
+        if (esFechaDomingo(ev.fecha) && !ev.adicional) {
           domingosMap.set(ev.fecha, true);
         } else {
           total += calcularValorNum(ev.horaEntrada, ev.horaSalida);
@@ -457,12 +471,26 @@ const ValetsFijosView = () => {
 
   const { grid: currentCalendarGrid, monthName: currentMonthName, year: currentYear } = getMonthGrid();
   const currentWeekDays = getWeekDays();
-  const empleadosFiltroCalendario = Array.from(new Set(horariosRegistrados.map((h) => h.empleado)))
+  const empleadosFiltroCalendario = Array.from(new Set(
+    horariosRegistrados
+      .filter((h) => !ingresoCentro || h.centro === ingresoCentro)
+      .map((h) => h.empleado)
+  ))
     .sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
 
+  useEffect(() => {
+    if (filtroEmpleadoCalendario && !empleadosFiltroCalendario.includes(filtroEmpleadoCalendario)) {
+      setFiltroEmpleadoCalendario('');
+    }
+  }, [filtroEmpleadoCalendario, empleadosFiltroCalendario]);
+
   const cumpleFiltrosCalendario = (ev: HorarioRegistrado): boolean => {
-    if (filtroEstado === 'adicionales' && !ev.adicional) return false;
-    if (filtroEstado === 'general' && ev.adicional) return false;
+    if (!ingresoCentro) return false;
+    if (ev.centro !== ingresoCentro) return false;
+
+    const esAdicionalODomingo = ev.adicional || esFechaDomingo(ev.fecha);
+    if (filtroEstado === 'adicionales' && !esAdicionalODomingo) return false;
+    if (filtroEstado === 'general' && esAdicionalODomingo) return false;
     if (filtroEmpleadoCalendario && ev.empleado !== filtroEmpleadoCalendario) return false;
     return true;
   };
@@ -475,14 +503,6 @@ const ValetsFijosView = () => {
   const handleGuardarHorario = async () => {
     if (!ingresoCentro || !ingresoEmpleado || !ingresoFecha || !ingresoHoraEntrada || !ingresoHoraSalida) {
       alert('Por favor, completa todos los campos del horario.');
-      return;
-    }
-
-    const dateObj = new Date(`${ingresoFecha}T12:00:00`);
-    const isSunday = dateObj.getDay() === 0;
-
-    if (isSunday && !ingresoAdicional) {
-      alert('No se puede registrar un turno en domingo a menos que agregues el check adicional.');
       return;
     }
 
@@ -528,7 +548,7 @@ const ValetsFijosView = () => {
     }
 
     const valorFijoEmpleado = Number(String(empleadoAsignado.valor || '0').replace(',', '.'));
-    if (!Number.isFinite(valorFijoEmpleado) || valorFijoEmpleado <= 0) {
+    if (!Number.isFinite(valorFijoEmpleado) || valorFijoEmpleado < 0) {
       alert('El empleado seleccionado no tiene un valor fijo valido.');
       return;
     }
@@ -599,8 +619,8 @@ const ValetsFijosView = () => {
     }
 
     const valorFijoNormalizado = Number(valorFijo.replace(',', '.').trim());
-    if (!Number.isFinite(valorFijoNormalizado) || valorFijoNormalizado <= 0) {
-      alert('El valor fijo debe ser numerico y mayor a 0.');
+    if (!Number.isFinite(valorFijoNormalizado) || valorFijoNormalizado < 0) {
+      alert('El valor fijo debe ser numerico y mayor o igual a 0.');
       return;
     }
 
@@ -669,6 +689,37 @@ const ValetsFijosView = () => {
       alert(error instanceof Error ? error.message : 'No se pudo eliminar el empleado del centro de costo.');
     } finally {
       setEliminandoEmpleadoId('');
+    }
+  };
+
+  const handleEliminarHorario = async (horario: HorarioRegistrado) => {
+    const idNumerico = Number(String(horario.id || '').trim());
+    if (!Number.isInteger(idNumerico) || idNumerico <= 0) {
+      alert('No se pudo eliminar el horario porque su identificador no es valido.');
+      return;
+    }
+
+    const confirmado = window.confirm(`Deseas eliminar este horario de ${horario.empleado} (${horario.horaEntrada} - ${horario.horaSalida})?`);
+    if (!confirmado) return;
+
+    try {
+      await dbApi.valets.horarios.delete<ValetHorarioDeleteResponse>(String(idNumerico));
+      setHorariosRegistrados((prev) => prev.filter((item) => item.id !== horario.id));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'No se pudo eliminar el horario seleccionado.';
+
+      if (message.toLowerCase().includes('no se encontro el horario solicitado')) {
+        setHorariosRegistrados((prev) => prev.filter((item) => item.id !== horario.id));
+        alert('Ese horario ya no existe en la base de datos. Se removio de la vista para sincronizar.');
+        return;
+      }
+
+      if (message.toLowerCase() === 'not found') {
+        alert('No se encontro la ruta DELETE de horarios en el backend. Reinicia el backend para cargar los ultimos cambios.');
+        return;
+      }
+
+      alert(message);
     }
   };
 
@@ -743,7 +794,7 @@ const ValetsFijosView = () => {
       {/* MODAL: Detalles de adicionales */}
       {showDetallesModal && detalleEmpleado && (() => {
         const empAdicionales = horariosRegistrados.filter(h => 
-          h.adicional && 
+          (h.adicional || esFechaDomingo(h.fecha)) && 
           h.empleado === detalleEmpleado.nombre && 
           h.centro === detalleEmpleado.centro
         );
@@ -754,7 +805,7 @@ const ValetsFijosView = () => {
 
         let totalCalculado = 0;
         const dias: Array<{ id: string; fecha: string; dia: string; horario: string; valor: string; aprobado: boolean }> = [];
-        const domingosMap = new Map<string, { id: string; fecha: string; aprobado: boolean }>();
+        const domingosMap = new Map<string, { id: string; fecha: string; aprobado: boolean; horarios: string[] }>();
         
         empAdicionales.forEach(ev => {
           const d = new Date(`${ev.fecha}T12:00:00`);
@@ -762,9 +813,15 @@ const ValetsFijosView = () => {
           const dayName = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'][d.getDay()];
           const isAprobado = ev.aprobado !== false;
           
-          if (isSunday) {
+          if (isSunday && !ev.adicional) {
+            const horario = `${ev.horaEntrada} - ${ev.horaSalida}`;
             if(!domingosMap.has(ev.fecha)) {
-              domingosMap.set(ev.fecha, { id: ev.id, fecha: ev.fecha, aprobado: isAprobado });
+              domingosMap.set(ev.fecha, { id: ev.id, fecha: ev.fecha, aprobado: isAprobado, horarios: [horario] });
+            } else {
+              const existente = domingosMap.get(ev.fecha);
+              if (existente && !existente.horarios.includes(horario)) {
+                existente.horarios.push(horario);
+              }
             }
           } else {
             const val = calcularValorStr(ev.horaEntrada, ev.horaSalida);
@@ -848,9 +905,12 @@ const ValetsFijosView = () => {
                       {domingosUnicos.map((dom: any) => (
                         <div key={dom.id} className="flex items-center justify-between">
                           <div className="flex items-center gap-4 sm:gap-8 flex-1">
-                            <span className="px-4 py-1.5 border border-slate-200 rounded-full text-[13px] font-medium text-[#1c2938] shadow-sm bg-white">
-                              {dom.fecha}
-                            </span>
+                            <div className="px-4 py-1.5 border border-slate-200 rounded-xl text-[13px] font-medium text-[#1c2938] shadow-sm bg-white">
+                              <div>{dom.fecha}</div>
+                              <div className="text-[12px] font-medium text-slate-500 mt-1">
+                                {Array.isArray(dom.horarios) && dom.horarios.length > 0 ? dom.horarios.join(' | ') : 'Sin horario registrado'}
+                              </div>
+                            </div>
                           </div>
                           <div className="flex items-center gap-3 sm:gap-4 shrink-0 pl-2">
                             <span className={`font-black text-[14px] sm:text-[15px] ${dom.aprobado ? 'text-slate-800' : 'text-slate-400 line-through'}`}>10.00 $</span>
@@ -925,7 +985,7 @@ const ValetsFijosView = () => {
                   }}
                 >
                   <option value="" disabled>{loadingCatalogos ? 'Cargando centros de costo...' : 'Selecciona un centro de costo'}</option>
-                  {centrosCosto.map((centro) => (
+                  {centrosCostoValet.map((centro) => (
                     <option key={centro.IDCENTROCOSTO} value={`${centro.IDCENTROCOSTO} - ${centro.CENTROCOSTO}`}>
                       {centro.IDCENTROCOSTO} - {centro.CENTROCOSTO}
                     </option>
@@ -1099,7 +1159,18 @@ const ValetsFijosView = () => {
                               const isAdic = ev.adicional;
 
                               return (
-                                <div key={eIdx} className={`flex items-center gap-1.5 text-[9px] font-medium bg-white border rounded p-1 shadow-sm whitespace-nowrap overflow-hidden text-ellipsis w-full ${isAdic ? 'border-amber-200 text-amber-700' : 'border-slate-200 text-slate-600'}`}>
+                                <div key={`${ev.id}-${eIdx}`} className={`relative flex items-center gap-1.5 text-[9px] font-medium bg-white border rounded p-1 pr-4 shadow-sm whitespace-nowrap overflow-hidden text-ellipsis w-full ${isAdic ? 'border-amber-200 text-amber-700' : 'border-slate-200 text-slate-600'}`}>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      void handleEliminarHorario(ev);
+                                    }}
+                                    className="absolute top-0.5 right-0.5 w-3.5 h-3.5 rounded-full bg-white/90 border border-slate-300 text-slate-500 hover:text-red-600 hover:border-red-300 leading-none flex items-center justify-center"
+                                    title="Eliminar horario"
+                                  >
+                                    x
+                                  </button>
                                   <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${isAdic ? 'bg-amber-500' : 'bg-[#2173B9]'}`}></div>
                                   <span className={`font-bold shrink-0 ${isAdic ? 'text-amber-600' : 'text-[#2173B9]'}`}>{ev.horaEntrada}</span>
                                   <span className="truncate" title={`${nombreCentro} - ${ev.empleado}`}>{nombreCentro} - {nombreCorto}</span>
@@ -1207,6 +1278,17 @@ const ValetsFijosView = () => {
                                 }}
                                 title={`${bloque.evento.horaEntrada}-${bloque.evento.horaSalida}: ${nombreCentro} - ${bloque.evento.empleado}`}
                               >
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    void handleEliminarHorario(bloque.evento);
+                                  }}
+                                  className="absolute top-0.5 right-0.5 w-3.5 h-3.5 rounded-full bg-white/90 border border-slate-300 text-slate-500 hover:text-red-600 hover:border-red-300 leading-none flex items-center justify-center"
+                                  title="Eliminar horario"
+                                >
+                                  x
+                                </button>
                                 <div className="flex items-center gap-1 mb-0.5">
                                   <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${isAdic ? 'bg-amber-500' : 'bg-[#2173B9]'}`}></div>
                                   <span className={`font-bold shrink-0 ${isAdic ? 'text-amber-600' : 'text-[#2173B9]'}`}>{bloque.evento.horaEntrada}</span>
@@ -1249,7 +1331,7 @@ const ValetsFijosView = () => {
                   onChange={(e) => setGestionarCentro(e.target.value)}
                 >
                   <option value="" disabled>{loadingCatalogos ? 'Cargando centros de costo...' : 'Escribe para buscar centro de costo'}</option>
-                  {centrosCosto.map((centro) => (
+                  {centrosCostoValet.map((centro) => (
                     <option key={centro.IDCENTROCOSTO} value={`${centro.IDCENTROCOSTO} - ${centro.CENTROCOSTO}`}>
                       {centro.IDCENTROCOSTO} - {centro.CENTROCOSTO}
                     </option>

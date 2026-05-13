@@ -2,6 +2,7 @@ export const N8N_API_CATALOG = {
   movimientosHumanaEmpleados: '/api/n8n/webhook/lista/empleados/nomina/entsal',
   empleadosActivos: '/api/n8n/webhook/empleados/activos',
   listaCentroCosto: '/api/n8n/webhook/centrocostos/empleados',
+  listarValetsFijos: '/api/n8n/webhook/centrocostos/empleados/valet',
   listaCentroCostoFallback: '/api/n8n/webhook/centrocostos/empleados/test',
   detalleEmpleadoCentroCostos: '/api/n8n/webhook/centrocostos/empleados',
   familiaresEmpleados: '/api/n8n/webhook/detalle/familiares/nomina',
@@ -162,6 +163,28 @@ export const getNominaCostCentersRaw = async <T = N8nCostCenterRawItem[]>(): Pro
 
 export const getNominaCostCenters = async (): Promise<NominaCostCenter[]> => {
   const data = await getNominaCostCentersRaw<N8nCostCenterRawItem[]>();
+  const rows = Array.isArray(data) ? data : [];
+
+  return rows
+    .map((item) => ({
+      IDCENTROCOSTO: String(item?.COD_CCOSTO || '').trim(),
+      CENTROCOSTO: String(item?.NOMBRE || '').trim(),
+      estado: String(item?.estado || '').trim(),
+      Acuerdo_Horas: String(item?.Acuerdo_Horas || '').trim(),
+      Acuerdo_Movilizacion: String(item?.Acuerdo_Movilizacion || '').trim(),
+      Tipo: String(item?.Tipo || '').trim(),
+    }))
+    .filter((item) => item.IDCENTROCOSTO || item.CENTROCOSTO);
+};
+
+export const ListarValetsFijos = async (): Promise<NominaCostCenter[]> => {
+  const response = await fetchGetWithRetry(N8N_API_CATALOG.listarValetsFijos);
+
+  if (!response.ok) {
+    throw new Error(await parseErrorMessage(response));
+  }
+
+  const data = await parseJsonResponse<N8nCostCenterRawItem[]>(response, []);
   const rows = Array.isArray(data) ? data : [];
 
   return rows
