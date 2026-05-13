@@ -22,6 +22,10 @@ interface FormularioDescuento {
     codigoComprobante: string;
     centroCosto: string;
     observacion: string;
+    fecha?: string;
+    tipoSancion?: string;
+    descripcionFalta?: string;
+    sancionAplicada?: string;
 }
 
 interface DescuentoRow {
@@ -67,6 +71,10 @@ const DescuentosView = () => {
         codigoComprobante: '',
         centroCosto: '',
         observacion: '',
+        fecha: '',
+        tipoSancion: '',
+        descripcionFalta: '',
+        sancionAplicada: '',
     });
 
     // Cargar centros de costo cuando se selecciona "faltantes_incidentes"
@@ -153,6 +161,27 @@ const DescuentosView = () => {
                 codigoComprobante: '',
                 centroCosto: '',
                 observacion: '',
+                fecha: '',
+                tipoSancion: '',
+                descripcionFalta: '',
+                sancionAplicada: '',
+            });
+            setModalAbierto(false);
+            setMostrarFormulario(true);
+        } else if (tipoDescuentoSeleccionado === 'multas_memos') {
+            void cargarCentrosCosto();
+            void cargarEmpleados();
+            setFormulario({
+                tipoDescuento: 'multas_memos',
+                usuario: '',
+                valorTotal: '',
+                codigoComprobante: '',
+                centroCosto: '',
+                observacion: '',
+                fecha: '',
+                tipoSancion: '',
+                descripcionFalta: '',
+                sancionAplicada: '',
             });
             setModalAbierto(false);
             setMostrarFormulario(true);
@@ -180,17 +209,43 @@ const DescuentosView = () => {
     };
 
     const handleEnviarFormulario = async () => {
+        // Validaciones comunes
         if (!formulario.usuario.trim()) {
             alert('Por favor ingresa el usuario');
-            return;
-        }
-        if (!formulario.valorTotal.trim()) {
-            alert('Por favor ingresa el valor total');
             return;
         }
         if (!formulario.centroCosto) {
             alert('Por favor selecciona un centro de costo');
             return;
+        }
+
+        // Validaciones específicas por tipo
+        if (formulario.tipoDescuento === 'faltantes_incidentes') {
+            if (!formulario.valorTotal.trim()) {
+                alert('Por favor ingresa el valor total');
+                return;
+            }
+        } else if (formulario.tipoDescuento === 'multas_memos') {
+            if (!formulario.fecha) {
+                alert('Por favor selecciona la fecha del evento');
+                return;
+            }
+            if (!formulario.tipoSancion) {
+                alert('Por favor selecciona el tipo de sanción');
+                return;
+            }
+            if (!formulario.descripcionFalta?.trim()) {
+                alert('Por favor describe la falta');
+                return;
+            }
+            if (!formulario.sancionAplicada) {
+                alert('Por favor selecciona la sanción aplicada');
+                return;
+            }
+            if (formulario.sancionAplicada === 'multa_porcentaje' && !formulario.valorTotal.trim()) {
+                alert('Por favor ingresa el valor de la multa');
+                return;
+            }
         }
 
         const usuarioValido = empleadosDisponibles.some(
@@ -212,16 +267,34 @@ const DescuentosView = () => {
         try {
             setGuardandoDescuento(true);
 
-            const data = await dbApi.descuentos.incidentesCajaChica.save<GuardarDescuentoResponse>({
-                nombre: formulario.usuario,
-                valor: formulario.valorTotal,
-                codigoComprobante: formulario.codigoComprobante,
-                centroCosto: formulario.centroCosto,
-                observacion: formulario.observacion,
-            });
+            let data;
+            
+            if (formulario.tipoDescuento === 'faltantes_incidentes') {
+                data = await dbApi.descuentos.incidentesCajaChica.save<GuardarDescuentoResponse>({
+                    nombre: formulario.usuario,
+                    valor: formulario.valorTotal,
+                    codigoComprobante: formulario.codigoComprobante,
+                    centroCosto: formulario.centroCosto,
+                    observacion: formulario.observacion,
+                    tipo: 'faltantes_incidentes',
+                });
+            } else if (formulario.tipoDescuento === 'multas_memos') {
+                // Para multas por memos usamos el mismo endpoint pero con tipo específico
+                data = await dbApi.descuentos.incidentesCajaChica.save<GuardarDescuentoResponse>({
+                    nombre: formulario.usuario,
+                    valor: formulario.sancionAplicada === 'multa_porcentaje' ? formulario.valorTotal : '0',
+                    codigoComprobante: formulario.fecha,
+                    centroCosto: formulario.centroCosto,
+                    observacion: formulario.observacion,
+                    tipo: 'multas_memos',
+                    tipoSancion: formulario.tipoSancion,
+                    descripcionFalta: formulario.descripcionFalta,
+                    sancionAplicada: formulario.sancionAplicada,
+                });
+            }
 
-            if (!data.ok) {
-                throw new Error(data.error || 'No se pudo guardar el descuento');
+            if (!data?.ok) {
+                throw new Error(data?.error || 'No se pudo guardar el descuento');
             }
 
             const periodoGuardado = data.descuento?.periodo || 'N/A';
@@ -254,6 +327,10 @@ const DescuentosView = () => {
                 codigoComprobante: '',
                 centroCosto: '',
                 observacion: '',
+                fecha: '',
+                tipoSancion: '',
+                descripcionFalta: '',
+                sancionAplicada: '',
             });
         } catch (error) {
             alert(error instanceof Error ? error.message : 'Error guardando descuento');
@@ -303,8 +380,7 @@ const DescuentosView = () => {
         const coincideTipo =
             !tipo ||
             tipo === 'otro' ||
-            tipo === 'faltantes_incidentes' ||
-            tipo === 'descuento_sancion';
+            tipo === 'faltantes_incidentes';
 
         return coincideBusqueda && coincideEstado && coincideTipo;
     });
@@ -399,7 +475,6 @@ const DescuentosView = () => {
                             >
                                 <option value="">Tipo de descuento - Selecciona una opción</option>
                                 <option value="faltantes_incidentes">Faltantes e incidentes de recaudación</option>
-                                <option value="descuento_sancion">Descuento por sanción</option>
                                 <option value="multas">Multas por memos</option>
                                 <option value="otro">Otro descuento</option>
                             </select>
@@ -527,7 +602,6 @@ const DescuentosView = () => {
                                 <option value="subsidio_enfermedad">Subsidio de enfermedad</option>
                                 <option value="subsidio_maternidad">Subsidio de maternidad</option>
                                 <option value="faltantes_incidentes">Faltantes e incidentes de recaudación</option>
-                                <option value="descuento_sancion">Descuento por sanción</option>
                                 <option value="descuentos_varios">Descuentos varios</option>
                                 <option value="multas_memos">Multas por memos</option>
                             </select>
@@ -746,6 +820,207 @@ const DescuentosView = () => {
                                         </datalist>
                                     </div>
                                 </div>
+
+                        <div className="flex gap-3 justify-end mt-6">
+                            <button
+                                onClick={() => {
+                                    setMostrarFormulario(false);
+                                    setTipoDescuentoSeleccionado('');
+                                }}
+                                className="px-6 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-sm font-semibold transition"
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                onClick={handleEnviarFormulario}
+                                disabled={guardandoDescuento}
+                                className="px-6 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white rounded-lg text-sm font-semibold transition flex items-center gap-2"
+                            >
+                                <span>{guardandoDescuento ? 'Guardando...' : 'Enviar'}</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {mostrarFormulario && tipoDescuentoSeleccionado === 'multas_memos' && (
+                <div className="fixed inset-0 z-50 bg-slate-900/45 flex items-center justify-center p-2 sm:p-4">
+                    <div className="w-full max-w-2xl bg-white rounded-2xl border border-slate-200 shadow-xl max-h-[92vh] overflow-y-auto p-6">
+                        <div className="flex justify-between items-start mb-4">
+                            <h3 className="text-lg font-bold text-slate-800">Multas por Memos</h3>
+                            <button
+                                onClick={() => {
+                                    setMostrarFormulario(false);
+                                    setTipoDescuentoSeleccionado('');
+                                }}
+                                className="text-slate-400 hover:text-slate-600 transition"
+                            >
+                                <X size={24} />
+                            </button>
+                        </div>
+
+                        <div className="flex gap-3 mb-6 p-4 bg-blue-50 rounded-lg border border-blue-200">
+                            <AlertCircle size={20} className="text-blue-600 flex-shrink-0 mt-0.5" />
+                            <p className="text-sm text-slate-700">
+                                Por favor, completa todos los campos del formulario para registrar la multa por memo
+                            </p>
+                        </div>
+
+                        <div className="space-y-4">
+                            {/* Empleado */}
+                            <div>
+                                <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">
+                                    Nombre del Empleado
+                                </label>
+                                <input
+                                    type="text"
+                                    placeholder={cargandoEmpleados ? 'Cargando usuarios...' : 'Escribe para buscar empleado'}
+                                    value={formulario.usuario}
+                                    onChange={(e) => setFormulario({ ...formulario, usuario: e.target.value })}
+                                    list="usuarios-multas"
+                                    disabled={cargandoEmpleados}
+                                    className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:border-blue-500 transition-all"
+                                />
+                                <datalist id="usuarios-multas">
+                                    {obtenerEmpleadosPorNombre(formulario.usuario).map((emp) => (
+                                        <option key={emp.cedula} value={`${emp.apellidos} ${emp.nombres}`}>
+                                            {emp.cedula}
+                                        </option>
+                                    ))}
+                                </datalist>
+                            </div>
+
+                            {/* Fecha */}
+                            <div>
+                                <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">
+                                    Fecha del Evento
+                                </label>
+                                <input
+                                    type="date"
+                                    value={formulario.fecha || ''}
+                                    onChange={(e) => setFormulario({ ...formulario, fecha: e.target.value })}
+                                    className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:border-blue-500 transition-all"
+                                />
+                            </div>
+
+                            {/* Tipo de Sanción */}
+                            <div>
+                                <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">
+                                    Tipo de Sanción
+                                </label>
+                                <select
+                                    value={formulario.tipoSancion || ''}
+                                    onChange={(e) => setFormulario({ ...formulario, tipoSancion: e.target.value })}
+                                    className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:border-blue-500 transition-all"
+                                >
+                                    <option value="">Selecciona un tipo de sanción</option>
+                                    <option value="amonestacion_verbal">Amonestación verbal</option>
+                                    <option value="amonestacion_escrita">Amonestación escrita</option>
+                                    <option value="suspension">Suspensión</option>
+                                    <option value="multa">Multa</option>
+                                </select>
+                            </div>
+
+                            {/* Descripción de la Falta */}
+                            <div>
+                                <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">
+                                    Descripción de la Falta
+                                </label>
+                                <textarea
+                                    placeholder="Describe la falta o incidencia"
+                                    value={formulario.descripcionFalta || ''}
+                                    onChange={(e) => setFormulario({ ...formulario, descripcionFalta: e.target.value })}
+                                    rows={3}
+                                    className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:border-blue-500 transition-all resize-none"
+                                />
+                            </div>
+
+                            {/* Sanción Aplicada */}
+                            <div>
+                                <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">
+                                    Sanción Aplicada
+                                </label>
+                                <div className="space-y-2">
+                                    <label className="flex items-center gap-2 cursor-pointer">
+                                        <input
+                                            type="radio"
+                                            name="sancion"
+                                            value="llamado_verbal"
+                                            checked={formulario.sancionAplicada === 'llamado_verbal'}
+                                            onChange={(e) => setFormulario({ ...formulario, sancionAplicada: e.target.value })}
+                                            className="w-4 h-4"
+                                        />
+                                        <span className="text-sm text-slate-700">Llamado de atención verbal</span>
+                                    </label>
+                                    <label className="flex items-center gap-2 cursor-pointer">
+                                        <input
+                                            type="radio"
+                                            name="sancion"
+                                            value="llamado_escrito"
+                                            checked={formulario.sancionAplicada === 'llamado_escrito'}
+                                            onChange={(e) => setFormulario({ ...formulario, sancionAplicada: e.target.value })}
+                                            className="w-4 h-4"
+                                        />
+                                        <span className="text-sm text-slate-700">Llamado de atención escrito</span>
+                                    </label>
+                                    <label className="flex items-center gap-2 cursor-pointer">
+                                        <input
+                                            type="radio"
+                                            name="sancion"
+                                            value="multa_porcentaje"
+                                            checked={formulario.sancionAplicada === 'multa_porcentaje'}
+                                            onChange={(e) => setFormulario({ ...formulario, sancionAplicada: e.target.value })}
+                                            className="w-4 h-4"
+                                        />
+                                        <span className="text-sm text-slate-700">Multa del X% de la remuneración</span>
+                                    </label>
+                                    <label className="flex items-center gap-2 cursor-pointer">
+                                        <input
+                                            type="radio"
+                                            name="sancion"
+                                            value="multa_dias"
+                                            checked={formulario.sancionAplicada === 'multa_dias'}
+                                            onChange={(e) => setFormulario({ ...formulario, sancionAplicada: e.target.value })}
+                                            className="w-4 h-4"
+                                        />
+                                        <span className="text-sm text-slate-700">Multa por días no trabajados</span>
+                                    </label>
+                                </div>
+                            </div>
+
+                            {/* Valor (solo si es multa porcentaje) */}
+                            {formulario.sancionAplicada === 'multa_porcentaje' && (
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">
+                                        Valor de la Multa
+                                    </label>
+                                    <input
+                                        type="text"
+                                        placeholder="Ingresa el valor o porcentaje de la multa"
+                                        value={formulario.valorTotal}
+                                        onChange={(e) => setFormulario({ ...formulario, valorTotal: e.target.value })}
+                                        className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:border-blue-500 transition-all"
+                                    />
+                                </div>
+                            )}
+
+                            {/* Número de días (solo si es multa por días) */}
+                            {formulario.sancionAplicada === 'multa_dias' && (
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">
+                                        Número de Días No Trabajados
+                                    </label>
+                                    <input
+                                        type="number"
+                                        placeholder="Ingresa el número de días"
+                                        value={formulario.valorTotal}
+                                        onChange={(e) => setFormulario({ ...formulario, valorTotal: e.target.value })}
+                                        min="1"
+                                        className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:border-blue-500 transition-all"
+                                    />
+                                </div>
+                            )}
+                        </div>
 
                         <div className="flex gap-3 justify-end mt-6">
                             <button
