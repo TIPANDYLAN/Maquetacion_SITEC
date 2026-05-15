@@ -11,7 +11,6 @@ const RevisionView = ({ ordenesCompra, onGuardarRevision }: RevisionViewProps) =
   const [expandedOrden, setExpandedOrden] = useState<string | null>(null);
   const [ordenEnRevision, setOrdenEnRevision] = useState<OrdenCompraResumen | null>(null);
   const [facturasPorAccesorio, setFacturasPorAccesorio] = useState<Partial<Record<AccesorioTipo, string>>>({});
-  const [cuotasPorAccesorio, setCuotasPorAccesorio] = useState<Record<string, string>>({});
   const [guardandoRevision, setGuardandoRevision] = useState(false);
 
   const formatUsd = (value: number) =>
@@ -23,13 +22,11 @@ const RevisionView = ({ ordenesCompra, onGuardarRevision }: RevisionViewProps) =
   const abrirRevision = (orden: OrdenCompraResumen) => {
     setOrdenEnRevision(orden);
     setFacturasPorAccesorio(orden.facturasPorAccesorio ?? {});
-    setCuotasPorAccesorio(orden.cuotasPorAccesorio ?? {});
   };
 
   const cerrarRevision = () => {
     setOrdenEnRevision(null);
     setFacturasPorAccesorio({});
-    setCuotasPorAccesorio({});
   };
 
   const guardarRevision = async () => {
@@ -41,10 +38,15 @@ const RevisionView = ({ ordenesCompra, onGuardarRevision }: RevisionViewProps) =
       return;
     }
 
+    const cuotasFijas = ordenEnRevision.filas.reduce<Record<string, string>>((acc, fila) => {
+      acc[fila.id] = '2';
+      return acc;
+    }, {});
+
     setGuardandoRevision(true);
     const ok = await onGuardarRevision(ordenEnRevision.solicitudId, {
       facturasPorAccesorio,
-      cuotasPorAccesorio,
+      cuotasPorAccesorio: cuotasFijas,
     });
     setGuardandoRevision(false);
 
@@ -272,7 +274,7 @@ const RevisionView = ({ ordenesCompra, onGuardarRevision }: RevisionViewProps) =
             <div className="px-6 py-5 border-b border-slate-200 bg-gradient-to-r from-blue-50 to-slate-50 flex items-center justify-between">
               <div>
                 <h3 className="text-lg font-bold text-slate-800">Revisar Orden {ordenEnRevision.numeroOrden}</h3>
-                <p className="text-sm text-slate-500">Agrega numero de factura y cuotas por accesorio.</p>
+                <p className="text-sm text-slate-500">Agrega el número de factura. Las cuotas se registran automáticamente en 2.</p>
               </div>
               <button
                 onClick={cerrarRevision}
@@ -308,7 +310,7 @@ const RevisionView = ({ ordenesCompra, onGuardarRevision }: RevisionViewProps) =
                         <div>Persona</div>
                         <div>Accesorio</div>
                         <div>Valor</div>
-                        <div>Cuota</div>
+                        <div>Cuotas</div>
                       </div>
                       <div className="divide-y divide-slate-100">
                         {filasDelTipo.map((fila) => (
@@ -316,19 +318,7 @@ const RevisionView = ({ ordenesCompra, onGuardarRevision }: RevisionViewProps) =
                             <div className="font-semibold text-slate-700">{fila.empleadoNombre}</div>
                             <div className="text-slate-700">{fila.accesorio === 'botas' ? `Botas talla ${fila.talla}` : 'Auriculares'}</div>
                             <div className="text-slate-600 font-semibold">{fila.valor != null ? `$${formatUsd(fila.valor)}` : '—'}</div>
-                            <input
-                              type="number"
-                              min="1"
-                              value={cuotasPorAccesorio[fila.id] ?? ''}
-                              onChange={(e) =>
-                                setCuotasPorAccesorio((prev) => ({
-                                  ...prev,
-                                  [fila.id]: e.target.value,
-                                }))
-                              }
-                              className="no-spinner px-3 py-2 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-300 bg-white"
-                              placeholder="Cuota"
-                            />
+                            <span className="text-slate-700 font-semibold">2</span>
                           </div>
                         ))}
                       </div>

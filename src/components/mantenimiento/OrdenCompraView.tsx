@@ -14,12 +14,11 @@ interface OrdenCompraViewProps {
   ordenesCompra: OrdenCompraResumen[];
   onUpdateEstado: (solicitudId: string, estado: SolicitudGuardada['estado']) => void;
   onOrdenCompraSubida: (orden: OrdenCompraResumen) => void;
-  onPedidoRealizado: (solicitudId: string) => void;
 }
 
 interface ArchivoSubido {
   solicitudId: string;
-  tipo: 'orden' | 'acta' | 'orden_validada';
+  tipo: 'orden' | 'acta';
   nombre: string;
   fecha: string;
   accesorio?: AccesorioTipo;
@@ -29,7 +28,7 @@ interface ArchivoSubido {
 
 interface ArchivoRegistrado {
   solicitudId: string;
-  tipo: 'orden' | 'acta' | 'orden_validada';
+  tipo: 'orden' | 'acta';
   nombreArchivo: string;
   accesorio?: AccesorioTipo;
   empleadoCedula?: string;
@@ -75,25 +74,36 @@ const construirResumenOrden = (
   const totalValor = detalles.reduce((total, detalle) => total + Number(detalle.totalValor || 0), 0);
   const fecha = detalles[0]?.fecha || new Date().toLocaleDateString('es-ES');
   const totalOrdenes = detalles.filter((detalle) => detalle.archivoOrdenNombre).length;
-  const totalValidadas = detalles.filter((detalle) => detalle.archivoValidadaNombre).length;
+  const cantidadPorAccesorio = solicitud.filas.reduce<Record<AccesorioTipo, number>>(
+    (acc, fila) => {
+      acc[fila.accesorio] = (acc[fila.accesorio] || 0) + 1;
+      return acc;
+    },
+    { botas: 0, auriculares: 0 },
+  );
+
+  const filasConValor = solicitud.filas.map((fila) => {
+    const totalAccesorio = Number(ordenesPorAccesorio[fila.accesorio]?.totalValor || 0);
+    const cantidad = Number(cantidadPorAccesorio[fila.accesorio] || 0);
+    const valorCalculado = cantidad > 0 && totalAccesorio > 0 ? totalAccesorio / cantidad : fila.valor;
+
+    return {
+      ...fila,
+      valor: Number.isFinite(Number(valorCalculado)) ? Number(valorCalculado) : fila.valor,
+    };
+  });
 
   return {
     solicitudId: solicitud.id,
     numeroOrden,
     totalValor,
     fecha,
-    filas: solicitud.filas,
+    filas: filasConValor,
     archivoOrdenNombre:
       totalOrdenes > 0
         ? totalOrdenes === 1
           ? detalles.find((detalle) => detalle.archivoOrdenNombre)?.archivoOrdenNombre
           : `${totalOrdenes} ordenes cargadas`
-        : undefined,
-    archivoValidadaNombre:
-      totalValidadas > 0
-        ? totalValidadas === 1
-          ? detalles.find((detalle) => detalle.archivoValidadaNombre)?.archivoValidadaNombre
-          : `${totalValidadas} ordenes validadas`
         : undefined,
     ordenesPorAccesorio,
     facturasPorAccesorio: ordenActual?.facturasPorAccesorio,
@@ -101,7 +111,7 @@ const construirResumenOrden = (
   };
 };
 
-const OrdenCompraView = ({ solicitudes, ordenesCompra, onUpdateEstado, onOrdenCompraSubida, onPedidoRealizado }: OrdenCompraViewProps) => {
+const OrdenCompraView = ({ solicitudes, ordenesCompra, onUpdateEstado, onOrdenCompraSubida }: OrdenCompraViewProps) => {
   const [archivos, setArchivos] = useState<ArchivoSubido[]>([]);
   const [archivosRegistrados, setArchivosRegistrados] = useState<ArchivoRegistrado[]>([]);
   const [filaSeleccionada, setFilaSeleccionada] = useState<FilaSeleccionadaContext | null>(null);
@@ -165,7 +175,7 @@ const OrdenCompraView = ({ solicitudes, ordenesCompra, onUpdateEstado, onOrdenCo
 
   const getOrden = (solicitudId: string) => ordenesCompra.find((orden) => orden.solicitudId === solicitudId);
 
-  const getArchivoSolicitud = (solicitudId: string, tipo: 'orden' | 'orden_validada', accesorio: AccesorioTipo) => {
+  const getArchivoSolicitud = (solicitudId: string, tipo: 'orden', accesorio: AccesorioTipo) => {
     return [...archivos]
       .reverse()
       .find((archivo) => archivo.solicitudId === solicitudId && archivo.tipo === tipo && archivo.accesorio === accesorio);
@@ -210,7 +220,7 @@ const OrdenCompraView = ({ solicitudes, ordenesCompra, onUpdateEstado, onOrdenCo
 
   const existeArchivoRegistrado = (
     solicitudId: string,
-    tipo: 'orden' | 'orden_validada',
+    tipo: 'orden',
     accesorio: AccesorioTipo,
   ) => {
     return archivosRegistrados.some(
@@ -231,7 +241,7 @@ const OrdenCompraView = ({ solicitudes, ordenesCompra, onUpdateEstado, onOrdenCo
 
   const registrarArchivoEnBD = async (payload: {
     solicitudId: string;
-    tipo: 'orden' | 'acta' | 'orden_validada';
+    tipo: 'orden' | 'acta';
     nombreArchivo: string;
     accesorio?: AccesorioTipo;
     empleadoCedula?: string;
@@ -288,7 +298,7 @@ const OrdenCompraView = ({ solicitudes, ordenesCompra, onUpdateEstado, onOrdenCo
     }
   };
 
-  const descargarArchivo = (solicitudId: string, tipo: 'orden' | 'orden_validada', accesorio: AccesorioTipo) => {
+  const descargarArchivo = (solicitudId: string, tipo: 'orden', accesorio: AccesorioTipo) => {
     const archivo = getArchivoSolicitud(solicitudId, tipo, accesorio);
 
     if (!archivo?.file) {
@@ -330,7 +340,7 @@ const OrdenCompraView = ({ solicitudes, ordenesCompra, onUpdateEstado, onOrdenCo
   };
 
   const handleUploadArchivo = (
-    tipo: 'orden' | 'acta' | 'orden_validada',
+    tipo: 'orden' | 'acta',
     solicitud: SolicitudGuardada,
     accesorio?: AccesorioTipo,
     empleadoCedulaSeleccionada?: string,
@@ -362,10 +372,6 @@ const OrdenCompraView = ({ solicitudes, ordenesCompra, onUpdateEstado, onOrdenCo
           return;
         }
 
-        if (tipo === 'orden_validada' && existeArchivoRegistrado(solicitudId, 'orden_validada', accesorio!)) {
-          return;
-        }
-
         let numeroOrden = ordenActual?.ordenesPorAccesorio?.[accesorio!]?.numeroOrden || '';
         let totalValor = ordenActual?.ordenesPorAccesorio?.[accesorio!]?.totalValor || 0;
 
@@ -383,11 +389,6 @@ const OrdenCompraView = ({ solicitudes, ordenesCompra, onUpdateEstado, onOrdenCo
             window.alert('El total debe ser un numero mayor a 0.');
             return;
           }
-        }
-
-        if (tipo === 'orden_validada' && !existeArchivoRegistrado(solicitudId, 'orden', accesorio!)) {
-          window.alert('Primero debe subir la orden de compra de este accesorio.');
-          return;
         }
 
         const guardadoEnBD = await registrarArchivoEnBD({
@@ -417,7 +418,7 @@ const OrdenCompraView = ({ solicitudes, ordenesCompra, onUpdateEstado, onOrdenCo
           },
         ]);
 
-        if (tipo === 'orden' || tipo === 'orden_validada') {
+        if (tipo === 'orden') {
           const ordenesPorAccesorio: Partial<Record<AccesorioTipo, OrdenAccesorioResumen>> = {
             ...(ordenActual?.ordenesPorAccesorio ?? {}),
             [accesorio!]: {
@@ -425,13 +426,7 @@ const OrdenCompraView = ({ solicitudes, ordenesCompra, onUpdateEstado, onOrdenCo
               totalValor,
               fecha: new Date().toLocaleDateString('es-ES'),
               archivoOrdenNombre:
-                tipo === 'orden'
-                  ? file.name
-                  : ordenActual?.ordenesPorAccesorio?.[accesorio!]?.archivoOrdenNombre,
-              archivoValidadaNombre:
-                tipo === 'orden_validada'
-                  ? file.name
-                  : ordenActual?.ordenesPorAccesorio?.[accesorio!]?.archivoValidadaNombre,
+                file.name,
             },
           };
 
@@ -439,24 +434,35 @@ const OrdenCompraView = ({ solicitudes, ordenesCompra, onUpdateEstado, onOrdenCo
           onOrdenCompraSubida(resumenOrden);
 
           const todasOrdenesSubidas = tiposSolicitud.every((tipoAccesorio) => {
-            if (tipo === 'orden' && tipoAccesorio === accesorio) {
-              return true;
-            }
             return existeArchivoRegistrado(solicitudId, 'orden', tipoAccesorio);
-          });
-          const todasOrdenesValidadas = tiposSolicitud.every((tipoAccesorio) => {
-            if (tipo === 'orden_validada' && tipoAccesorio === accesorio) {
-              return true;
-            }
-            return existeArchivoRegistrado(solicitudId, 'orden_validada', tipoAccesorio);
           });
 
           if (tipo === 'orden' && todasOrdenesSubidas) {
             onUpdateEstado(solicitudId, 'orden_generada');
           }
 
-          if (tipo === 'orden_validada' && todasOrdenesValidadas) {
-            onPedidoRealizado(solicitudId);
+        }
+
+        if (tipo === 'acta') {
+          const actasExistentes = new Set(
+            archivosRegistrados
+              .filter((archivo) => archivo.solicitudId === solicitudId && archivo.tipo === 'acta')
+              .map((archivo) => String(archivo.empleadoCedula || '').trim() || extraerCedulaDesdeNombreActa(archivo.nombreArchivo))
+              .filter(Boolean),
+          );
+
+          if (empleadoCedulaActa) {
+            actasExistentes.add(empleadoCedulaActa);
+          }
+
+          const totalPersonasSolicitud = new Set(
+            solicitud.filas
+              .map((fila) => String(fila.empleadoCedula || '').trim())
+              .filter(Boolean),
+          ).size;
+
+          if (totalPersonasSolicitud > 0 && actasExistentes.size >= totalPersonasSolicitud) {
+            onUpdateEstado(solicitudId, 'pedido_realizado');
           }
         }
       })();
@@ -500,14 +506,11 @@ const OrdenCompraView = ({ solicitudes, ordenesCompra, onUpdateEstado, onOrdenCo
           const panelAbierto = expandedSolicitud === solicitud.id;
           const tiposSolicitud = obtenerTiposAccesorio(solicitud.filas);
           const todasOrdenesSubidas = tiposSolicitud.every((tipoAccesorio) => existeArchivoRegistrado(solicitud.id, 'orden', tipoAccesorio));
-          const todasOrdenesValidadas = tiposSolicitud.every((tipoAccesorio) => existeArchivoRegistrado(solicitud.id, 'orden_validada', tipoAccesorio));
           const pasoPendiente = !todasOrdenesSubidas
             ? 'ordenes'
             : !todasActasCompletas
               ? 'actas'
-              : !todasOrdenesValidadas
-                ? 'validacion'
-                : 'completado';
+              : 'completado';
 
           return (
             <div key={solicitud.id} className="bg-white overflow-hidden">
@@ -554,15 +557,23 @@ const OrdenCompraView = ({ solicitudes, ordenesCompra, onUpdateEstado, onOrdenCo
                       Fecha: <span className="font-medium text-slate-700">{solicitud.fecha}</span>
                     </p>
                     <p>
+                      Estado actual:{' '}
+                      <span className="font-medium text-slate-700">
+                        {solicitud.estado === 'pedido_realizado'
+                          ? 'Pedido realizado'
+                          : solicitud.estado === 'orden_generada'
+                            ? 'Orden generada'
+                            : 'Solicitud creada'}
+                      </span>
+                    </p>
+                    <p>
                       Paso pendiente:{' '}
                       <span className="font-medium text-slate-700">
                         {pasoPendiente === 'ordenes'
                           ? 'Subir órdenes'
                           : pasoPendiente === 'actas'
                             ? 'Subir actas'
-                            : pasoPendiente === 'validacion'
-                              ? 'Subir órdenes validadas'
-                              : 'Flujo completo'}
+                            : 'Flujo completo'}
                       </span>
                     </p>
                   </div>
@@ -709,80 +720,10 @@ const OrdenCompraView = ({ solicitudes, ordenesCompra, onUpdateEstado, onOrdenCo
 
                   {todasOrdenesSubidas && !todasActasCompletas && (
                     <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-700">
-                      No se puede subir la orden de compra validada hasta que se hayan subido todas las actas de los empleados.
+                      No se puede continuar con el flujo hasta que se hayan subido todas las actas de los empleados.
                     </div>
                   )}
 
-                  {todasOrdenesSubidas && todasActasCompletas && (
-                  <div className="border-t border-slate-200 pt-6 space-y-4">
-                    <div className="flex flex-col gap-1 lg:flex-row lg:items-center lg:justify-between">
-                      <h4 className="text-base font-bold text-slate-700">Validar</h4>
-                      <p className="text-sm text-slate-500">La validación se carga por tipo de accesorio.</p>
-                    </div>
-
-                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                      {tiposSolicitud.map((accesorio) => {
-                        const detalle = orden?.ordenesPorAccesorio?.[accesorio];
-                        const tieneOrden = existeArchivoRegistrado(solicitud.id, 'orden', accesorio);
-                        const tieneValidada = existeArchivoRegistrado(solicitud.id, 'orden_validada', accesorio);
-
-                        return (
-                          <div key={`${solicitud.id}-validacion-${accesorio}`} className="border border-slate-200 rounded-2xl overflow-hidden bg-white">
-                            <div className="p-4 border-b border-slate-200 bg-emerald-50/60 flex items-center justify-between gap-3">
-                              <div>
-                                <h5 className="font-bold text-emerald-800 text-sm">Validación de {getAccesorioLabel(accesorio)}</h5>
-                                <p className="text-xs text-emerald-700 mt-1">Sube la orden validada de este accesorio.</p>
-                              </div>
-                              <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ${ACCESORIOS_CONFIG[accesorio].badgeClassName}`}>
-                                {getAccesorioLabel(accesorio)}
-                              </span>
-                            </div>
-
-                            <div className="p-4 space-y-3">
-                              {!tieneOrden && (
-                                <p className="text-xs text-amber-700">Primero debes subir la orden de compra de {getAccesorioLabel(accesorio).toLowerCase()}.</p>
-                              )}
-
-                              {tieneValidada && detalle?.archivoValidadaNombre && (
-                                <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-3 text-xs text-emerald-800 space-y-1">
-                                  <p><span className="font-semibold">Archivo:</span> {detalle.archivoValidadaNombre}</p>
-                                  <p><span className="font-semibold">Orden:</span> {detalle.numeroOrden}</p>
-                                </div>
-                              )}
-
-                              {tieneValidada && !detalle?.archivoValidadaNombre && (
-                                <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-3 text-xs text-emerald-800">
-                                  Orden validada registrada en BD.
-                                </div>
-                              )}
-
-                              <div className="flex flex-col sm:flex-row gap-2">
-                                {tieneValidada ? (
-                                  <button
-                                    onClick={() => descargarArchivo(solicitud.id, 'orden_validada', accesorio)}
-                                    className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-semibold transition"
-                                  >
-                                    <Download size={16} />
-                                    Descargar validada {getAccesorioLabel(accesorio)}
-                                  </button>
-                                ) : (
-                                  <button
-                                    onClick={() => handleUploadArchivo('orden_validada', solicitud, accesorio)}
-                                    disabled={!todasActasCompletas || !tieneOrden}
-                                    className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-200 disabled:text-slate-400 text-white rounded-xl text-sm font-semibold transition"
-                                  >
-                                    <Upload size={16} />
-                                    Subir validada {getAccesorioLabel(accesorio)}
-                                  </button>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                  )}
                 </div>
               )}
             </div>

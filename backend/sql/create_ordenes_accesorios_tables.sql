@@ -40,7 +40,7 @@ DROP TABLE IF EXISTS ordenes_accesorios CASCADE;
 CREATE TABLE IF NOT EXISTS archivos_accesorios (
   id BIGSERIAL PRIMARY KEY,
   solicitud_id VARCHAR(50) NOT NULL REFERENCES solicitudes_accesorios(id) ON DELETE CASCADE,
-  tipo VARCHAR(50) NOT NULL CHECK (tipo IN ('orden', 'acta', 'orden_validada')),
+  tipo VARCHAR(50) NOT NULL CHECK (tipo IN ('orden', 'acta')),
   nombre_archivo VARCHAR(255) NOT NULL,
   accesorio VARCHAR(50) CHECK (accesorio IN ('botas', 'auriculares')),
   empleado_cedula VARCHAR(20),

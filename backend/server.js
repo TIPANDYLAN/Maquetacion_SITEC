@@ -2347,7 +2347,7 @@ const ensureAccesoriosTable = async () => {
     CREATE TABLE IF NOT EXISTS archivos_accesorios (
       id BIGSERIAL PRIMARY KEY,
       solicitud_id VARCHAR(50) NOT NULL REFERENCES solicitudes_accesorios(id) ON DELETE CASCADE,
-      tipo VARCHAR(50) NOT NULL CHECK (tipo IN ('orden', 'acta', 'orden_validada')),
+      tipo VARCHAR(50) NOT NULL CHECK (tipo IN ('orden', 'acta')),
       nombre_archivo VARCHAR(255) NOT NULL,
       accesorio VARCHAR(50) CHECK (accesorio IN ('botas', 'auriculares')),
       empleado_cedula VARCHAR(20),
@@ -2538,7 +2538,7 @@ app.get('/api/accesorios/ordenes', async (req, res) => {
         total_valor,
         fecha_carga
       FROM archivos_accesorios
-      WHERE LOWER(TRIM(tipo)) IN ('orden', 'orden_validada')
+      WHERE LOWER(TRIM(tipo)) IN ('orden', 'acta')
         AND NULLIF(TRIM(COALESCE(accesorio, '')), '') IS NOT NULL
       ORDER BY fecha_carga DESC
     `);
@@ -2550,7 +2550,7 @@ app.get('/api/accesorios/ordenes', async (req, res) => {
       const accesorio = String(row.accesorio || '').trim();
       const tipo = String(row.tipo || '').trim();
 
-      if (!solicitudId || !accesorio || (tipo !== 'orden' && tipo !== 'orden_validada')) {
+      if (!solicitudId || !accesorio || (tipo !== 'orden' && tipo !== 'acta')) {
         continue;
       }
 
@@ -2562,7 +2562,6 @@ app.get('/api/accesorios/ordenes', async (req, res) => {
           fecha: '',
           filas: [],
           archivoOrdenNombre: undefined,
-          archivoValidadaNombre: undefined,
           ordenesPorAccesorio: {},
           numeroFactura: undefined,
           cuotasPorAccesorio: {},
@@ -2592,10 +2591,6 @@ app.get('/api/accesorios/ordenes', async (req, res) => {
         }
       }
 
-      if (tipo === 'orden_validada' && !detalleActual.archivoValidadaNombre && nombreArchivo) {
-        detalleActual.archivoValidadaNombre = nombreArchivo;
-      }
-
       current.ordenesPorAccesorio[accesorio] = detalleActual;
     }
 
@@ -2607,7 +2602,6 @@ app.get('/api/accesorios/ordenes', async (req, res) => {
       const totalValor = detalles.reduce((acc, detalle) => acc + Number(detalle?.totalValor || 0), 0);
       const fecha = String(detalles[0]?.fecha || '');
       const totalOrdenesConArchivo = detalles.filter((detalle) => Boolean(detalle?.archivoOrdenNombre)).length;
-      const totalValidadasConArchivo = detalles.filter((detalle) => Boolean(detalle?.archivoValidadaNombre)).length;
 
       return {
         ...item,
@@ -2619,12 +2613,6 @@ app.get('/api/accesorios/ordenes', async (req, res) => {
             ? totalOrdenesConArchivo === 1
               ? detalles.find((detalle) => detalle?.archivoOrdenNombre)?.archivoOrdenNombre
               : `${totalOrdenesConArchivo} ordenes cargadas`
-            : undefined,
-        archivoValidadaNombre:
-          totalValidadasConArchivo > 0
-            ? totalValidadasConArchivo === 1
-              ? detalles.find((detalle) => detalle?.archivoValidadaNombre)?.archivoValidadaNombre
-              : `${totalValidadasConArchivo} ordenes validadas`
             : undefined,
       };
     });
@@ -2798,33 +2786,6 @@ app.post('/api/accesorios/archivos', async (req, res) => {
 
   try {
     await ensureAccesoriosTable();
-
-    if (tipo === 'orden_validada' && accesorio) {
-      const validacionActas = await pool.query(
-        `SELECT
-           COUNT(*)::int AS total,
-           COUNT(*) FILTER (WHERE acta = TRUE)::int AS con_acta
-         FROM lineas_solicitud
-         WHERE solicitud_id = $1
-           AND accesorio = $2`,
-        [solicitudId, accesorio]
-      );
-
-      const total = Number(validacionActas.rows[0]?.total || 0);
-      const conActa = Number(validacionActas.rows[0]?.con_acta || 0);
-
-      if (total === 0) {
-        res.status(400).json({ error: 'No hay lineas para validar en este accesorio' });
-        return;
-      }
-
-      if (conActa < total) {
-        res.status(400).json({
-          error: 'No se puede generar la orden validada: faltan actas por cargar',
-        });
-        return;
-      }
-    }
 
     const result = await pool.query(
       `INSERT INTO archivos_accesorios

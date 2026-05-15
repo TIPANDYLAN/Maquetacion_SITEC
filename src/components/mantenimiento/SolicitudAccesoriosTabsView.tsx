@@ -31,7 +31,6 @@ export interface OrdenAccesorioResumen {
   totalValor: number;
   fecha: string;
   archivoOrdenNombre?: string;
-  archivoValidadaNombre?: string;
 }
 
 export interface OrdenCompraResumen {
@@ -41,7 +40,6 @@ export interface OrdenCompraResumen {
   fecha: string;
   filas: FilaEmpleado[];
   archivoOrdenNombre?: string;
-  archivoValidadaNombre?: string;
   ordenesPorAccesorio?: Partial<Record<AccesorioTipo, OrdenAccesorioResumen>>;
   facturasPorAccesorio?: Partial<Record<AccesorioTipo, string>>;
   cuotasPorAccesorio?: Record<string, string>;
@@ -74,7 +72,7 @@ const SolicitudAccesoriosTabsView = () => {
         const archivosOrden = archivos.filter((item) => {
           const tipo = String(item.tipo || '').trim().toLowerCase();
           const accesorio = String(item.accesorio || '').trim();
-          return (tipo === 'orden' || tipo === 'orden_validada') && Boolean(accesorio);
+          return (tipo === 'orden' || tipo === 'acta') && Boolean(accesorio);
         });
 
         if (archivosOrden.length === 0) {
@@ -109,10 +107,6 @@ const SolicitudAccesoriosTabsView = () => {
             }
           }
 
-          if (tipo === 'orden_validada' && !actual.archivoValidadaNombre) {
-            actual.archivoValidadaNombre = String(archivo.nombre_archivo || '').trim() || undefined;
-          }
-
           ordenesPorAccesorio[accesorio] = actual;
         }
 
@@ -120,7 +114,6 @@ const SolicitudAccesoriosTabsView = () => {
         const numeroOrden = detalles.map((d) => String(d?.numeroOrden || '').trim()).filter(Boolean).join(' / ');
         const totalValor = detalles.reduce((acc, d) => acc + Number(d?.totalValor || 0), 0);
         const totalOrdenesConArchivo = detalles.filter((d) => Boolean(d?.archivoOrdenNombre)).length;
-        const totalValidadasConArchivo = detalles.filter((d) => Boolean(d?.archivoValidadaNombre)).length;
 
         return {
           solicitudId: solicitud.id,
@@ -133,12 +126,6 @@ const SolicitudAccesoriosTabsView = () => {
               ? totalOrdenesConArchivo === 1
                 ? detalles.find((d) => d?.archivoOrdenNombre)?.archivoOrdenNombre
                 : `${totalOrdenesConArchivo} ordenes cargadas`
-              : undefined,
-          archivoValidadaNombre:
-            totalValidadasConArchivo > 0
-              ? totalValidadasConArchivo === 1
-                ? detalles.find((d) => d?.archivoValidadaNombre)?.archivoValidadaNombre
-                : `${totalValidadasConArchivo} ordenes validadas`
               : undefined,
           ordenesPorAccesorio,
           facturasPorAccesorio: {},
@@ -288,11 +275,6 @@ const SolicitudAccesoriosTabsView = () => {
     }
   };
 
-  const handlePedidoRealizado = (solicitudId: string) => {
-    handleUpdateEstado(solicitudId, 'pedido_realizado');
-    setTab('revision');
-  };
-
   const renderContenido = () => {
     switch (tab) {
       case 'solicitar':
@@ -304,7 +286,6 @@ const SolicitudAccesoriosTabsView = () => {
             ordenesCompra={ordenesCompra}
             onUpdateEstado={handleUpdateEstado}
             onOrdenCompraSubida={handleOrdenCompraSubida}
-            onPedidoRealizado={handlePedidoRealizado}
           />
         );
       case 'revision':

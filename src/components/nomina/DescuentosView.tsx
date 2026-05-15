@@ -26,6 +26,7 @@ interface FormularioDescuento {
     tipoSancion?: string;
     descripcionFalta?: string;
     sancionAplicada?: string;
+    mediaJornada?: boolean;
 }
 
 interface DescuentoRow {
@@ -46,6 +47,21 @@ type GuardarDescuentoResponse = NominaApiRecordResponse<DescuentoRow, 'descuento
 type ListarDescuentosResponse = NominaApiListResponse<DescuentoRow, 'descuentos'>;
 
 type ActualizarEstadoDescuentoResponse = NominaApiRecordResponse<DescuentoRow, 'descuento'>;
+
+const TIPOS_SANCION_DIAS_NO_TRABAJADOS = [
+    {
+        id: 'art_66',
+        resumen: 'Art. 66 - Ausencia injustificada y descuento proporcional semanal.',
+        detalle:
+            'Art.- 66. La falta de justificacion en el lapso de un dia habil de una ausencia podra considerarse como falta injustificada, haciendose el trabajador acreedor al descuento del tiempo respectivo de conformidad con lo siguiente: El trabajador que faltare injustificadamente a media jornada continua de trabajo en el curso de la semana, tendra derecho a la remuneracion de seis dias, y el trabajador que faltare injustificadamente a una jornada completa de trabajo en la semana, solo tendra derecho a la remuneracion de cinco jornadas.',
+    },
+    {
+        id: 'art_67',
+        resumen: 'Art. 67 - Permisos/licencias no previstas y descuentos por falta injustificada.',
+        detalle:
+            'Art.- 67. Se aplicara el siguiente regimen para los permisos y licencias no establecidas en el Codigo del Trabajo: I. Cuando un trabajador pida y le sea aprobado un permiso debera recuperar las horas de permiso en otro u otros dias segun determine la Compania sin pago de recargo; y, II. En caso de falta injustificada de un dia se le descontara el equivalente a dos dias de trabajo, de faltar injustificadamente cuatro horas o menos se le descontara el equivalente a un dia de trabajo.',
+    },
+] as const;
 
 const DescuentosView = () => {
     const [searchDescuentos, setSearchDescuentos] = useState('');
@@ -75,6 +91,7 @@ const DescuentosView = () => {
         tipoSancion: '',
         descripcionFalta: '',
         sancionAplicada: '',
+        mediaJornada: false,
     });
 
     // Cargar centros de costo cuando se selecciona "faltantes_incidentes"
@@ -165,6 +182,7 @@ const DescuentosView = () => {
                 tipoSancion: '',
                 descripcionFalta: '',
                 sancionAplicada: '',
+                mediaJornada: false,
             });
             setModalAbierto(false);
             setMostrarFormulario(true);
@@ -179,9 +197,10 @@ const DescuentosView = () => {
                 centroCosto: '',
                 observacion: '',
                 fecha: '',
-                tipoSancion: 'Artículo: 42 - Literal: f\nCapítulo: CAPÍTULO XVI – OBLIGACIONES, DERECHOS Y PROHIBICIONES DEL TRABAJADOR\nSanción por ausencia no autorizada',
+                tipoSancion: '',
                 descripcionFalta: '',
-                sancionAplicada: '',
+                sancionAplicada: 'dias_no_trabajados',
+                mediaJornada: false,
             });
             setModalAbierto(false);
             setMostrarFormulario(true);
@@ -231,19 +250,26 @@ const DescuentosView = () => {
                 return;
             }
             if (!formulario.tipoSancion) {
-                alert('Por favor selecciona el tipo de sanción');
+                alert('Por favor selecciona el articulo de sancion');
                 return;
             }
             if (!formulario.descripcionFalta?.trim()) {
                 alert('Por favor describe la falta');
                 return;
             }
-            if (!formulario.sancionAplicada) {
-                alert('Por favor selecciona la sanción aplicada');
+            if (!formulario.mediaJornada && !formulario.valorTotal.trim()) {
+                alert('Selecciona los días no trabajados o marca media jornada');
                 return;
             }
-            if (formulario.sancionAplicada === 'multa_porcentaje' && !formulario.valorTotal.trim()) {
-                alert('Por favor ingresa el valor de la multa');
+            if (!formulario.mediaJornada) {
+                const dias = Number(formulario.valorTotal);
+                if (!Number.isInteger(dias) || dias < 1) {
+                    alert('Selecciona un número válido de días no trabajados');
+                    return;
+                }
+            }
+            if (formulario.mediaJornada && formulario.valorTotal.trim()) {
+                alert('Si marcas media jornada no debes seleccionar días no trabajados');
                 return;
             }
         }
@@ -279,17 +305,22 @@ const DescuentosView = () => {
                     tipo: 'faltantes_incidentes',
                 });
             } else if (formulario.tipoDescuento === 'dias_no_trabajados') {
+                const sancionAplicada = formulario.mediaJornada ? 'media_jornada' : 'dias_no_trabajados';
+                const valorReporte = formulario.mediaJornada ? '0.5' : formulario.valorTotal;
+                const tipoSancionSeleccionada = TIPOS_SANCION_DIAS_NO_TRABAJADOS.find(
+                    (item) => item.id === formulario.tipoSancion,
+                );
                 // Para dias no trabajados usamos el mismo endpoint con tipo especifico.
                 data = await dbApi.descuentos.incidentesCajaChica.save<GuardarDescuentoResponse>({
                     nombre: formulario.usuario,
-                    valor: formulario.sancionAplicada === 'multa_porcentaje' ? formulario.valorTotal : '0',
+                    valor: valorReporte,
                     codigoComprobante: formulario.fecha,
                     centroCosto: formulario.centroCosto,
                     observacion: formulario.observacion,
                     tipo: 'dias_no_trabajados',
-                    tipoSancion: formulario.tipoSancion,
+                    tipoSancion: tipoSancionSeleccionada?.detalle || formulario.tipoSancion,
                     descripcionFalta: formulario.descripcionFalta,
-                    sancionAplicada: formulario.sancionAplicada,
+                    sancionAplicada,
                 });
             }
 
@@ -331,6 +362,7 @@ const DescuentosView = () => {
                 tipoSancion: '',
                 descripcionFalta: '',
                 sancionAplicada: '',
+                mediaJornada: false,
             });
         } catch (error) {
             alert(error instanceof Error ? error.message : 'Error guardando descuento');
@@ -907,14 +939,30 @@ const DescuentosView = () => {
                             {/* Tipo de Sanción */}
                             <div>
                                 <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">
-                                    Tipo de Sanción
+                                    Tipo de Sancion
                                 </label>
-                                <textarea
+                                <select
                                     value={formulario.tipoSancion || ''}
-                                    readOnly
-                                    rows={4}
-                                    className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl text-sm bg-slate-50 focus:outline-none cursor-not-allowed resize-none whitespace-pre-wrap"
-                                />
+                                    onChange={(e) => setFormulario({ ...formulario, tipoSancion: e.target.value })}
+                                    className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:border-blue-500 transition-all"
+                                >
+                                    <option value="">Selecciona un articulo</option>
+                                    {TIPOS_SANCION_DIAS_NO_TRABAJADOS.map((tipo) => (
+                                        <option key={tipo.id} value={tipo.id}>
+                                            {tipo.resumen}
+                                        </option>
+                                    ))}
+                                </select>
+                                {formulario.tipoSancion && (
+                                    <div className="mt-2 p-3 rounded-lg border border-slate-200 bg-slate-50">
+                                        <p className="text-xs text-slate-700 whitespace-pre-wrap">
+                                            {
+                                                TIPOS_SANCION_DIAS_NO_TRABAJADOS.find((tipo) => tipo.id === formulario.tipoSancion)
+                                                    ?.detalle
+                                            }
+                                        </p>
+                                    </div>
+                                )}
                             </div>
 
                             {/* Descripción de la Falta */}
@@ -934,88 +982,32 @@ const DescuentosView = () => {
                             {/* Sanción Aplicada */}
                             <div>
                                 <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">
-                                    Sanción Aplicada
+                                    Días No Trabajados
                                 </label>
-                                <div className="space-y-2">
-                                    <label className="flex items-center gap-2 cursor-pointer">
-                                        <input
-                                            type="radio"
-                                            name="sancion"
-                                            value="llamado_verbal"
-                                            checked={formulario.sancionAplicada === 'llamado_verbal'}
-                                            onChange={(e) => setFormulario({ ...formulario, sancionAplicada: e.target.value })}
-                                            className="w-4 h-4"
-                                        />
-                                        <span className="text-sm text-slate-700">Llamado de atención verbal</span>
-                                    </label>
-                                    <label className="flex items-center gap-2 cursor-pointer">
-                                        <input
-                                            type="radio"
-                                            name="sancion"
-                                            value="llamado_escrito"
-                                            checked={formulario.sancionAplicada === 'llamado_escrito'}
-                                            onChange={(e) => setFormulario({ ...formulario, sancionAplicada: e.target.value })}
-                                            className="w-4 h-4"
-                                        />
-                                        <span className="text-sm text-slate-700">Llamado de atención escrito</span>
-                                    </label>
-                                    <label className="flex items-center gap-2 cursor-pointer">
-                                        <input
-                                            type="radio"
-                                            name="sancion"
-                                            value="multa_porcentaje"
-                                            checked={formulario.sancionAplicada === 'multa_porcentaje'}
-                                            onChange={(e) => setFormulario({ ...formulario, sancionAplicada: e.target.value })}
-                                            className="w-4 h-4"
-                                        />
-                                        <span className="text-sm text-slate-700">Multa del X% de la remuneración</span>
-                                    </label>
-                                    <label className="flex items-center gap-2 cursor-pointer">
-                                        <input
-                                            type="radio"
-                                            name="sancion"
-                                            value="multa_dias"
-                                            checked={formulario.sancionAplicada === 'multa_dias'}
-                                            onChange={(e) => setFormulario({ ...formulario, sancionAplicada: e.target.value })}
-                                            className="w-4 h-4"
-                                        />
-                                        <span className="text-sm text-slate-700">Multa por días no trabajados</span>
-                                    </label>
-                                </div>
+                                <label className="mt-3 inline-flex items-center gap-2 cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        checked={Boolean(formulario.mediaJornada)}
+                                        onChange={(e) => setFormulario({
+                                            ...formulario,
+                                            mediaJornada: e.target.checked,
+                                            valorTotal: e.target.checked ? '' : formulario.valorTotal,
+                                        })}
+                                        className="w-4 h-4"
+                                    />
+                                    <span className="text-sm text-slate-700">Media jornada</span>
+                                </label>
+                                <input
+                                    type="number"
+                                    min="1"
+                                    step="1"
+                                    placeholder="Ingresa cantidad de días"
+                                    value={formulario.valorTotal}
+                                    onChange={(e) => setFormulario({ ...formulario, valorTotal: e.target.value })}
+                                    disabled={Boolean(formulario.mediaJornada)}
+                                    className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:border-blue-500 transition-all disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed"
+                                />
                             </div>
-
-                            {/* Valor (solo si es multa porcentaje) */}
-                            {formulario.sancionAplicada === 'multa_porcentaje' && (
-                                <div>
-                                    <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">
-                                        Valor de la Multa
-                                    </label>
-                                    <input
-                                        type="text"
-                                        placeholder="Ingresa el valor o porcentaje de la multa"
-                                        value={formulario.valorTotal}
-                                        onChange={(e) => setFormulario({ ...formulario, valorTotal: e.target.value })}
-                                        className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:border-blue-500 transition-all"
-                                    />
-                                </div>
-                            )}
-
-                            {/* Número de días (solo si es multa por días) */}
-                            {formulario.sancionAplicada === 'multa_dias' && (
-                                <div>
-                                    <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">
-                                        Número de Días No Trabajados
-                                    </label>
-                                    <input
-                                        type="number"
-                                        placeholder="Ingresa el número de días"
-                                        value={formulario.valorTotal}
-                                        onChange={(e) => setFormulario({ ...formulario, valorTotal: e.target.value })}
-                                        min="1"
-                                        className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:border-blue-500 transition-all"
-                                    />
-                                </div>
-                            )}
                         </div>
 
                         <div className="flex gap-3 justify-end mt-6">
