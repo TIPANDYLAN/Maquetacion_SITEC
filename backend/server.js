@@ -164,6 +164,11 @@ const ensureValetFijoHorarioTable = async () => {
       hora_salida TEXT NOT NULL,
       es_adicional BOOLEAN NOT NULL DEFAULT FALSE,
       aprobado BOOLEAN NOT NULL DEFAULT TRUE,
+      recurrencia BOOLEAN NOT NULL DEFAULT FALSE,
+      observacion TEXT NOT NULL DEFAULT '',
+      evidencia_blob BYTEA,
+      evidencia_mime_type TEXT NOT NULL DEFAULT '',
+      evidencia_nombre_archivo TEXT NOT NULL DEFAULT '',
       fecha_creacion TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       fecha_actualizacion TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       CONSTRAINT uq_valet_fijo_horario UNIQUE (centro_costo_id, empleado_cedula, fecha_turno, hora_entrada, hora_salida)
@@ -279,6 +284,31 @@ const ensureValetFijoHorarioTable = async () => {
   await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_valet_fijo_horario_fecha_turno
       ON valet_fijo_horario (fecha_turno)
+  `);
+
+  await pool.query(`
+    ALTER TABLE valet_fijo_horario
+    ADD COLUMN IF NOT EXISTS recurrencia BOOLEAN NOT NULL DEFAULT FALSE
+  `);
+
+  await pool.query(`
+    ALTER TABLE valet_fijo_horario
+    ADD COLUMN IF NOT EXISTS observacion TEXT NOT NULL DEFAULT ''
+  `);
+
+  await pool.query(`
+    ALTER TABLE valet_fijo_horario
+    ADD COLUMN IF NOT EXISTS evidencia_blob BYTEA
+  `);
+
+  await pool.query(`
+    ALTER TABLE valet_fijo_horario
+    ADD COLUMN IF NOT EXISTS evidencia_mime_type TEXT NOT NULL DEFAULT ''
+  `);
+
+  await pool.query(`
+    ALTER TABLE valet_fijo_horario
+    ADD COLUMN IF NOT EXISTS evidencia_nombre_archivo TEXT NOT NULL DEFAULT ''
   `);
 };
 
@@ -460,6 +490,11 @@ const mapDbRowToValetFijoHorario = (row) => ({
   horaSalida: String(row.hora_salida || ''),
   esAdicional: Boolean(row.es_adicional),
   aprobado: row.aprobado === null || row.aprobado === undefined ? true : Boolean(row.aprobado),
+  recurrencia: Boolean(row.recurrencia ?? false),
+  observacion: String(row.observacion || ''),
+  evidenciaMimeType: String(row.evidencia_mime_type || ''),
+  evidenciaNombreArchivo: String(row.evidencia_nombre_archivo || ''),
+  evidenciaBase64: row.evidencia_blob ? Buffer.from(row.evidencia_blob).toString('base64') : '',
   fechaCreacion: row.fecha_creacion,
   fechaActualizacion: row.fecha_actualizacion,
 });
@@ -1656,7 +1691,8 @@ app.get('/api/valets/horarios', async (req, res) => {
 
     const result = await pool.query(
       `SELECT id, centro_costo_id, centro_costo_nombre, empleado_cedula, empleado_nombre,
-              fecha_turno, hora_entrada, hora_salida, es_adicional, aprobado,
+              fecha_turno, hora_entrada, hora_salida, es_adicional, aprobado, recurrencia,
+              observacion, evidencia_blob, evidencia_mime_type, evidencia_nombre_archivo,
               fecha_creacion, fecha_actualizacion
        FROM valet_fijo_horario
        ${whereSql}
@@ -1677,6 +1713,7 @@ app.get('/api/valets/horarios', async (req, res) => {
   }
 });
 
+
 app.post('/api/valets/horarios', async (req, res) => {
   const centroCostoId = String(req.body?.centroCostoId || '').trim();
   const centroCostoNombre = String(req.body?.centroCostoNombre || '').trim();
@@ -1687,6 +1724,21 @@ app.post('/api/valets/horarios', async (req, res) => {
   const horaSalida = String(req.body?.horaSalida || '').trim();
   const esAdicional = Boolean(req.body?.esAdicional || req.body?.adicional);
   const aprobado = req.body?.aprobado === undefined ? true : Boolean(req.body?.aprobado);
+  const recurrencia = Boolean(req.body?.recurrencia);
+  const observacion = String(req.body?.observacion || '').trim();
+  const evidenciaBase64 = String(req.body?.evidenciaBase64 || '').trim();
+  const evidenciaMimeType = String(req.body?.evidenciaMimeType || '').trim();
+  const evidenciaNombreArchivo = String(req.body?.evidenciaNombreArchivo || '').trim();
+
+  let evidenciaBlob = null;
+  if (evidenciaBase64) {
+    try {
+      evidenciaBlob = Buffer.from(evidenciaBase64, 'base64');
+    } catch {
+      res.status(400).json({ error: 'La evidencia enviada no tiene base64 valido' });
+      return;
+    }
+  }
 
   if (!centroCostoId || !empleadoCedula) {
     res.status(400).json({ error: 'Los campos centroCostoId y empleadoCedula son requeridos' });
@@ -1759,11 +1811,17 @@ app.post('/api/valets/horarios', async (req, res) => {
          hora_salida,
          es_adicional,
          aprobado,
+         recurrencia,
+         observacion,
+         evidencia_blob,
+         evidencia_mime_type,
+         evidencia_nombre_archivo,
          fecha_actualizacion
        )
-       VALUES ($1, $2, $3, $4, $5::date, $6, $7, $8, $9, NOW())
+       VALUES ($1, $2, $3, $4, $5::date, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW())
        RETURNING id, centro_costo_id, centro_costo_nombre, empleado_cedula, empleado_nombre,
-                 fecha_turno, hora_entrada, hora_salida, es_adicional, aprobado,
+                 fecha_turno, hora_entrada, hora_salida, es_adicional, aprobado, recurrencia,
+                 observacion, evidencia_blob, evidencia_mime_type, evidencia_nombre_archivo,
                  fecha_creacion, fecha_actualizacion`,
       [
         centroCostoId,
@@ -1775,6 +1833,11 @@ app.post('/api/valets/horarios', async (req, res) => {
         horaSalida,
         esAdicional,
         aprobado,
+        recurrencia,
+        observacion,
+        evidenciaBlob,
+        evidenciaMimeType,
+        evidenciaNombreArchivo,
       ]
     );
 
@@ -1807,7 +1870,8 @@ app.delete('/api/valets/horarios', async (req, res) => {
       `DELETE FROM valet_fijo_horario
        WHERE id = $1
        RETURNING id, centro_costo_id, centro_costo_nombre, empleado_cedula, empleado_nombre,
-                 fecha_turno, hora_entrada, hora_salida, es_adicional, aprobado,
+                 fecha_turno, hora_entrada, hora_salida, es_adicional, aprobado, recurrencia,
+                 observacion, evidencia_blob, evidencia_mime_type, evidencia_nombre_archivo,
                  fecha_creacion, fecha_actualizacion`,
       [id]
     );

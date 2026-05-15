@@ -9,6 +9,11 @@ CREATE TABLE IF NOT EXISTS valet_fijo_horario (
   hora_salida TEXT NOT NULL,
   es_adicional BOOLEAN NOT NULL DEFAULT FALSE,
   aprobado BOOLEAN NOT NULL DEFAULT TRUE,
+  recurrencia BOOLEAN NOT NULL DEFAULT FALSE,
+  observacion TEXT NOT NULL DEFAULT '',
+  evidencia_blob BYTEA,
+  evidencia_mime_type TEXT NOT NULL DEFAULT '',
+  evidencia_nombre_archivo TEXT NOT NULL DEFAULT '',
   fecha_creacion TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   fecha_actualizacion TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT uq_valet_fijo_horario UNIQUE (centro_costo_id, empleado_cedula, fecha_turno, hora_entrada, hora_salida)

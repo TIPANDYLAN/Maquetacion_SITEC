@@ -44,6 +44,11 @@ interface ValetHorarioDbRegistro {
   horaSalida: string;
   esAdicional: boolean;
   aprobado?: boolean;
+  recurrencia?: boolean;
+  observacion?: string;
+  evidenciaBase64?: string;
+  evidenciaMimeType?: string;
+  evidenciaNombreArchivo?: string;
 }
 
 interface ValetHorariosListResponse {
@@ -77,6 +82,11 @@ interface HorarioRegistrado {
   horaSalida: string;
   adicional: boolean;
   aprobado?: boolean;
+  recurrencia: boolean;
+  observacion: string;
+  evidenciaBase64: string;
+  evidenciaMimeType: string;
+  evidenciaNombreArchivo: string;
 }
 
 interface CalendarDay {
@@ -149,6 +159,19 @@ const horariosSeSolapan = (inicioA: number, finA: number, inicioB: number, finB:
 const esFechaDomingo = (fechaIso: string): boolean => {
   const d = new Date(`${fechaIso}T12:00:00`);
   return !Number.isNaN(d.getTime()) && d.getDay() === 0;
+};
+
+const fileToBase64 = async (file: File): Promise<string> => {
+  return await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result || '');
+      const base64 = result.includes(',') ? result.split(',')[1] : result;
+      resolve(base64);
+    };
+    reader.onerror = () => reject(new Error('No se pudo leer el archivo de evidencia.'));
+    reader.readAsDataURL(file);
+  });
 };
 
 interface Bloque {
@@ -229,6 +252,8 @@ const ValetsFijosView = () => {
   const [ingresoHoraEntrada, setIngresoHoraEntrada] = useState('');
   const [ingresoHoraSalida, setIngresoHoraSalida] = useState('');
   const [ingresoAdicional, setIngresoAdicional] = useState(false);
+  const [ingresoObservacion, setIngresoObservacion] = useState('');
+  const [ingresoEvidencia, setIngresoEvidencia] = useState<File | null>(null);
   const [showSuccessHorario, setShowSuccessHorario] = useState(false);
   const [loadingHorariosDb, setLoadingHorariosDb] = useState(false);
   const [guardandoHorario, setGuardandoHorario] = useState(false);
@@ -236,6 +261,7 @@ const ValetsFijosView = () => {
   const [filtroEmpleadoCalendario, setFiltroEmpleadoCalendario] = useState('');
   const [horariosRegistrados, setHorariosRegistrados] = useState<HorarioRegistrado[]>([]);
   const [calendarView, setCalendarView] = useState('mes');
+  const [calendarOffset, setCalendarOffset] = useState(0);
 
   useEffect(() => {
     let isMounted = true;
@@ -322,7 +348,12 @@ const ValetsFijosView = () => {
               horaEntrada: String(item.horaEntrada || '').trim(),
               horaSalida: String(item.horaSalida || '').trim(),
               adicional: Boolean(item.esAdicional),
-              aprobado: item.aprobado === undefined ? true : Boolean(item.aprobado),
+                aprobado: item.aprobado === undefined ? true : Boolean(item.aprobado),
+                recurrencia: Boolean(item.recurrencia),
+                observacion: String(item.observacion || ''),
+                evidenciaBase64: String(item.evidenciaBase64 || ''),
+                evidenciaMimeType: String(item.evidenciaMimeType || ''),
+                evidenciaNombreArchivo: String(item.evidenciaNombreArchivo || ''),
             }))
             .filter((item) => item.centro && item.empleado && item.fecha && item.horaEntrada && item.horaSalida)
         );
@@ -380,6 +411,7 @@ const ValetsFijosView = () => {
   }, []);
 
   const empleadosParaIngreso = empleadosValet.filter(e => e.centro === ingresoCentro);
+
   const empleadosCentroGestion = empleadosValet.filter(e => e.centro === gestionarCentro);
   const empleadosActivosFiltrados = empleadosActivos
     .filter((emp) => {
@@ -413,11 +445,8 @@ const ValetsFijosView = () => {
   };
 
   const getMonthGrid = (): { grid: CalendarDay[], monthName: string, year: number } => {
-    let baseDate = new Date();
-    if (horariosRegistrados.length > 0) {
-      const lastEv = horariosRegistrados[horariosRegistrados.length - 1];
-      baseDate = new Date(`${lastEv.fecha}T12:00:00`);
-    }
+    const now = new Date();
+    const baseDate = new Date(now.getFullYear(), now.getMonth() + calendarOffset, 1);
     const year = baseDate.getFullYear();
     const month = baseDate.getMonth();
     
@@ -443,14 +472,10 @@ const ValetsFijosView = () => {
   };
 
   const getWeekDays = (): WeekDay[] => {
-    let baseDate = new Date();
-    if (horariosRegistrados.length > 0) {
-      const lastEv = horariosRegistrados[horariosRegistrados.length - 1];
-      baseDate = new Date(`${lastEv.fecha}T12:00:00`);
-    }
-    const dayOfWeek = baseDate.getDay();
-    const diff = baseDate.getDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1);
-    const monday = new Date(baseDate.setDate(diff));
+    const now = new Date();
+    const dayOfWeek = now.getDay();
+    const diffToMonday = now.getDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1);
+    const monday = new Date(now.getFullYear(), now.getMonth(), diffToMonday + calendarOffset * 7);
     
     const names = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
     const wDays: WeekDay[] = [];
@@ -471,6 +496,39 @@ const ValetsFijosView = () => {
 
   const { grid: currentCalendarGrid, monthName: currentMonthName, year: currentYear } = getMonthGrid();
   const currentWeekDays = getWeekDays();
+
+  const horariosCalendario: HorarioRegistrado[] = (() => {
+    const days = calendarView === 'semana' ? currentWeekDays : currentCalendarGrid;
+    if (days.length === 0) return horariosRegistrados;
+    const first = days[0];
+    const last = days[days.length - 1];
+    const inicio = new Date(first.y, first.m - 1, first.d);
+    const fin = new Date(last.y, last.m - 1, last.d);
+    const resultado: HorarioRegistrado[] = [];
+    for (const h of horariosRegistrados) {
+      if (!h.recurrencia) {
+        resultado.push(h);
+        continue;
+      }
+      const [anioBase, mesBase, diaBase] = h.fecha.split('-').map(Number);
+      const fechaBase = new Date(anioBase, (mesBase || 1) - 1, diaBase || 1);
+      const diaSemana = fechaBase.getDay();
+      const curr = new Date(inicio);
+      const diff = (diaSemana - curr.getDay() + 7) % 7;
+      curr.setDate(curr.getDate() + diff);
+      while (curr <= fin) {
+        if (curr >= fechaBase) {
+          const y = curr.getFullYear();
+          const m = String(curr.getMonth() + 1).padStart(2, '0');
+          const d = String(curr.getDate()).padStart(2, '0');
+          resultado.push({ ...h, fecha: `${y}-${m}-${d}` });
+        }
+        curr.setDate(curr.getDate() + 7);
+      }
+    }
+    return resultado;
+  })();
+
   const empleadosFiltroCalendario = Array.from(new Set(
     horariosRegistrados
       .filter((h) => !ingresoCentro || h.centro === ingresoCentro)
@@ -534,7 +592,15 @@ const ValetsFijosView = () => {
     }
 
     const existeSolape = horariosRegistrados
-      .filter((item) => item.centro === ingresoCentro && item.empleado === ingresoEmpleado && item.fecha === ingresoFecha)
+      .filter((item) => {
+        if (item.centro !== ingresoCentro || item.empleado !== ingresoEmpleado) return false;
+        if (item.recurrencia) {
+          const itemDate = new Date(`${item.fecha}T12:00:00`);
+          const ingresoDate = new Date(`${ingresoFecha}T12:00:00`);
+          return itemDate.getDay() === ingresoDate.getDay();
+        }
+        return item.fecha === ingresoFecha;
+      })
       .some((item) => {
         const inicioExistente = parseHora24AMinutos(item.horaEntrada);
         const finExistente = parseHora24AMinutos(item.horaSalida);
@@ -553,6 +619,18 @@ const ValetsFijosView = () => {
       return;
     }
 
+    let evidenciaBase64 = '';
+    if (ingresoAdicional && ingresoEvidencia) {
+      try {
+        evidenciaBase64 = await fileToBase64(ingresoEvidencia);
+      } catch (error) {
+        alert(error instanceof Error ? error.message : 'No se pudo procesar la imagen de evidencia.');
+        return;
+      }
+    }
+
+    const esRecurrente = valorFijoEmpleado > 0 && !ingresoAdicional && !esFechaDomingo(ingresoFecha);
+
     setGuardandoHorario(true);
     try {
       const response = await dbApi.valets.horarios.save<ValetHorarioSaveResponse>({
@@ -565,6 +643,11 @@ const ValetsFijosView = () => {
         horaEntrada: ingresoHoraEntrada,
         horaSalida: ingresoHoraSalida,
         esAdicional: ingresoAdicional,
+        recurrencia: esRecurrente,
+        observacion: ingresoAdicional ? ingresoObservacion.trim() : '',
+        evidenciaBase64: ingresoAdicional ? evidenciaBase64 : '',
+        evidenciaMimeType: ingresoAdicional && ingresoEvidencia ? String(ingresoEvidencia.type || '').trim() : '',
+        evidenciaNombreArchivo: ingresoAdicional && ingresoEvidencia ? String(ingresoEvidencia.name || '').trim() : '',
         aprobado: true,
       });
 
@@ -580,6 +663,11 @@ const ValetsFijosView = () => {
         horaEntrada: String(registro?.horaEntrada || ingresoHoraEntrada),
         horaSalida: String(registro?.horaSalida || ingresoHoraSalida),
         adicional: Boolean(registro?.esAdicional ?? ingresoAdicional),
+        recurrencia: Boolean(registro?.recurrencia ?? esRecurrente),
+        observacion: String(registro?.observacion || (ingresoAdicional ? ingresoObservacion.trim() : '')),
+        evidenciaBase64: String(registro?.evidenciaBase64 || (ingresoAdicional ? evidenciaBase64 : '')),
+        evidenciaMimeType: String(registro?.evidenciaMimeType || (ingresoAdicional && ingresoEvidencia ? ingresoEvidencia.type : '')),
+        evidenciaNombreArchivo: String(registro?.evidenciaNombreArchivo || (ingresoAdicional && ingresoEvidencia ? ingresoEvidencia.name : '')),
         aprobado: registro?.aprobado === undefined ? true : Boolean(registro.aprobado),
       };
 
@@ -594,6 +682,8 @@ const ValetsFijosView = () => {
       setIngresoHoraEntrada('');
       setIngresoHoraSalida('');
       setIngresoAdicional(false);
+      setIngresoObservacion('');
+      setIngresoEvidencia(null);
     } catch (error) {
       alert(error instanceof Error ? error.message : 'No se pudo guardar el horario en la base de datos.');
     } finally {
@@ -699,8 +789,10 @@ const ValetsFijosView = () => {
       return;
     }
 
-    const confirmado = window.confirm(`Deseas eliminar este horario de ${horario.empleado} (${horario.horaEntrada} - ${horario.horaSalida})?`);
-    if (!confirmado) return;
+    const mensajeConfirm = horario.recurrencia
+      ? `Deseas eliminar el horario recurrente de ${horario.empleado} (${horario.horaEntrada} - ${horario.horaSalida})? Se eliminara este dia y todas las semanas futuras.`
+      : `Deseas eliminar este horario de ${horario.empleado} (${horario.horaEntrada} - ${horario.horaSalida})?`;
+    if (!window.confirm(mensajeConfirm)) return;
 
     try {
       await dbApi.valets.horarios.delete<ValetHorarioDeleteResponse>(String(idNumerico));
@@ -804,7 +896,7 @@ const ValetsFijosView = () => {
         };
 
         let totalCalculado = 0;
-        const dias: Array<{ id: string; fecha: string; dia: string; horario: string; valor: string; aprobado: boolean }> = [];
+        const dias: Array<{ id: string; fecha: string; dia: string; horario: string; valor: string; aprobado: boolean; observacion: string; evidenciaBase64: string; evidenciaMimeType: string; evidenciaNombreArchivo: string }> = [];
         const domingosMap = new Map<string, { id: string; fecha: string; aprobado: boolean; horarios: string[] }>();
         
         empAdicionales.forEach(ev => {
@@ -831,7 +923,11 @@ const ValetsFijosView = () => {
               dia: dayName, 
               horario: `${ev.horaEntrada} - ${ev.horaSalida}`,
               valor: val,
-              aprobado: isAprobado
+              aprobado: isAprobado,
+              observacion: String(ev.observacion || ''),
+              evidenciaBase64: String(ev.evidenciaBase64 || ''),
+              evidenciaMimeType: String(ev.evidenciaMimeType || ''),
+              evidenciaNombreArchivo: String(ev.evidenciaNombreArchivo || ''),
             });
           }
         });
@@ -843,7 +939,7 @@ const ValetsFijosView = () => {
         return (
           <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
             <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm transition-opacity" onClick={() => setShowDetallesModal(false)} />
-            <div className="relative bg-white rounded-3xl w-full max-w-[650px] shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="relative bg-white rounded-3xl w-full max-w-[650px] max-h-[85vh] shadow-2xl overflow-x-hidden overflow-y-auto custom-scrollbar animate-in zoom-in-95 duration-200">
               <div className="px-8 py-8 flex justify-between items-start">
                 <div>
                   <h3 className="font-black text-[22px] text-[#1c2938] tracking-tight mb-2">Detalles de adicionales</h3>
@@ -871,21 +967,50 @@ const ValetsFijosView = () => {
                   {dias.length > 0 ? (
                     <div className="space-y-3">
                       {dias.map((d: any) => (
-                        <div key={d.id} className="flex items-center justify-between border border-slate-100 rounded-xl p-4 bg-white shadow-sm hover:border-slate-200 transition-colors">
-                          <div className="flex items-center gap-4 sm:gap-8 flex-1">
-                            <span className="text-[13px] font-medium text-[#1c2938] shrink-0 w-20 sm:w-24">{d.fecha}</span>
-                            <span className="font-bold text-[13px] sm:text-[14px] text-[#1c2938] shrink-0 w-20">{d.dia}</span>
-                            <span className="text-[13px] sm:text-[14px] font-medium text-slate-600">{d.horario}</span>
+                        <div key={d.id} className="border border-slate-100 rounded-xl p-4 bg-white shadow-sm hover:border-slate-200 transition-colors space-y-3">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-4 sm:gap-8 flex-1">
+                              <span className="text-[13px] font-medium text-[#1c2938] shrink-0 w-20 sm:w-24">{d.fecha}</span>
+                              <span className="font-bold text-[13px] sm:text-[14px] text-[#1c2938] shrink-0 w-20">{d.dia}</span>
+                              <span className="text-[13px] sm:text-[14px] font-medium text-slate-600">{d.horario}</span>
+                            </div>
+                            <div className="flex items-center gap-3 sm:gap-4 shrink-0 pl-2">
+                              <span className={`font-black text-[14px] sm:text-[15px] ${d.aprobado ? 'text-slate-800' : 'text-slate-400 line-through'}`}>{d.valor} $</span>
+                              <button 
+                                onClick={() => toggleAprobado(d.id)}
+                                className={`w-7 h-7 sm:w-8 sm:h-8 rounded-lg border-2 flex items-center justify-center shadow-inner transition-colors cursor-pointer ${d.aprobado ? 'border-emerald-200 bg-emerald-50 hover:bg-emerald-100' : 'border-slate-200 bg-slate-50 hover:bg-slate-100'}`}
+                              >
+                                {d.aprobado && <Check size={16} className="text-emerald-600" strokeWidth={3} />}
+                              </button>
+                            </div>
                           </div>
-                          <div className="flex items-center gap-3 sm:gap-4 shrink-0 pl-2">
-                            <span className={`font-black text-[14px] sm:text-[15px] ${d.aprobado ? 'text-slate-800' : 'text-slate-400 line-through'}`}>{d.valor} $</span>
-                            <button 
-                              onClick={() => toggleAprobado(d.id)}
-                              className={`w-7 h-7 sm:w-8 sm:h-8 rounded-lg border-2 flex items-center justify-center shadow-inner transition-colors cursor-pointer ${d.aprobado ? 'border-emerald-200 bg-emerald-50 hover:bg-emerald-100' : 'border-slate-200 bg-slate-50 hover:bg-slate-100'}`}
-                            >
-                              {d.aprobado && <Check size={16} className="text-emerald-600" strokeWidth={3} />}
-                            </button>
-                          </div>
+                          {(d.observacion || d.evidenciaBase64) && (
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-2 border-t border-slate-100">
+                              <div>
+                                <div className="text-[11px] font-bold text-slate-500 uppercase mb-1">Observacion</div>
+                                <div className="text-[13px] text-slate-700 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 min-h-[40px]">
+                                  {d.observacion || 'Sin observacion'}
+                                </div>
+                              </div>
+                              <div>
+                                <div className="text-[11px] font-bold text-slate-500 uppercase mb-1">Evidencia</div>
+                                {d.evidenciaBase64 ? (
+                                  <div className="space-y-2">
+                                    <img
+                                      src={`data:${d.evidenciaMimeType || 'image/jpeg'};base64,${d.evidenciaBase64}`}
+                                      alt="Evidencia adicional"
+                                      className="w-full max-h-36 object-cover rounded-lg border border-slate-200"
+                                    />
+                                    {d.evidenciaNombreArchivo && (
+                                      <div className="text-[11px] text-slate-500 truncate">{d.evidenciaNombreArchivo}</div>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <div className="text-[13px] text-slate-400 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">Sin imagen adjunta</div>
+                                )}
+                              </div>
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -1048,11 +1173,50 @@ const ValetsFijosView = () => {
                 <div className={`w-5 h-5 rounded border flex items-center justify-center transition-colors ${ingresoAdicional ? 'bg-[#F97316] border-[#F97316]' : 'border-slate-300 bg-white'}`}>
                   {ingresoAdicional && <Check size={14} className="text-white" strokeWidth={3} />}
                 </div>
-                <input type="checkbox" className="hidden" checked={ingresoAdicional} onChange={(e) => setIngresoAdicional(e.target.checked)} />
+                <input
+                  type="checkbox"
+                  className="hidden"
+                  checked={ingresoAdicional}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    setIngresoAdicional(checked);
+                    if (!checked) {
+                      setIngresoObservacion('');
+                      setIngresoEvidencia(null);
+                    }
+                  }}
+                />
                 <span className="text-[12px] font-bold text-slate-600 select-none">Adicional</span>
               </label>
             </div>
           </div>
+
+          {ingresoAdicional && (
+            <div className="bg-amber-50 border border-amber-200 p-4 rounded-xl grid grid-cols-1 md:grid-cols-2 gap-4 mb-6 animate-in fade-in duration-200">
+              <div>
+                <label className="text-[12px] font-medium text-slate-700 mb-2 block">Observacion</label>
+                <input
+                  type="text"
+                  value={ingresoObservacion}
+                  onChange={(e) => setIngresoObservacion(e.target.value)}
+                  placeholder="Describe brevemente el motivo del adicional"
+                  className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-lg text-sm outline-none focus:border-[#2563EB] text-slate-700 shadow-sm"
+                />
+              </div>
+              <div>
+                <label className="text-[12px] font-medium text-slate-700 mb-2 block">Adjuntar evidencia</label>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => setIngresoEvidencia(e.target.files?.[0] ?? null)}
+                  className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm outline-none focus:border-[#2563EB] text-slate-700 shadow-sm file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:bg-slate-100 file:text-slate-700"
+                />
+                {ingresoEvidencia && (
+                  <p className="mt-1 text-[11px] text-slate-500 truncate">Archivo: {ingresoEvidencia.name}</p>
+                )}
+              </div>
+            </div>
+          )}
 
           <div className="mb-10 flex">
             <button 
@@ -1073,16 +1237,41 @@ const ValetsFijosView = () => {
               <div className="space-y-4">
                 <div className="flex items-center gap-1 border border-slate-200 rounded-full p-1 shadow-sm w-fit bg-white">
                   <button 
-                    onClick={() => setCalendarView('semana')} 
+                    onClick={() => { setCalendarView('semana'); setCalendarOffset(0); }} 
                     className={`px-4 py-1.5 text-xs font-medium rounded-full transition-colors ${calendarView === 'semana' ? 'font-bold text-blue-600 border border-blue-200 bg-blue-50' : 'text-slate-500 hover:text-slate-800'}`}
                   >
                     Semana
                   </button>
                   <button 
-                    onClick={() => setCalendarView('mes')} 
+                    onClick={() => { setCalendarView('mes'); setCalendarOffset(0); }} 
                     className={`px-4 py-1.5 text-xs font-medium rounded-full transition-colors ${calendarView === 'mes' ? 'font-bold text-blue-600 border border-blue-200 bg-blue-50' : 'text-slate-500 hover:text-slate-800'}`}
                   >
                     Mes
+                  </button>
+                </div>
+                {/* Navegación de fecha */}
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setCalendarOffset((o) => o - 1)}
+                    className="w-7 h-7 flex items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 hover:bg-slate-50 transition-colors text-sm font-bold"
+                    title="Anterior"
+                  >
+                    ‹
+                  </button>
+                  {calendarOffset !== 0 && (
+                    <button
+                      onClick={() => setCalendarOffset(0)}
+                      className="px-3 py-1 text-[11px] font-bold rounded-full border border-blue-200 bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors"
+                    >
+                      Hoy
+                    </button>
+                  )}
+                  <button
+                    onClick={() => setCalendarOffset((o) => o + 1)}
+                    className="w-7 h-7 flex items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 hover:bg-slate-50 transition-colors text-sm font-bold"
+                    title="Siguiente"
+                  >
+                    ›
                   </button>
                 </div>
               </div>
@@ -1139,7 +1328,7 @@ const ValetsFijosView = () => {
                   ))}
                   
                   {currentCalendarGrid.map((dayObj, idx) => {
-                    const eventosDia = dayObj.curr ? horariosRegistrados.filter(h => {
+                    const eventosDia = dayObj.curr ? horariosCalendario.filter(h => {
                       if (!cumpleFiltrosCalendario(h)) return false;
 
                       const parts = h.fecha.split('-');
@@ -1242,7 +1431,7 @@ const ValetsFijosView = () => {
                       {/* Bloques de eventos posicionados absolutamente */}
                       <div style={{ position: 'absolute', left: 0, right: 0, top: 0, width: '100%', height: `${24 * 96}px` }}>
                         {currentWeekDays.map((day, dayIdx) => {
-                          const eventosDelDia = horariosRegistrados.filter(ev => {
+                          const eventosDelDia = horariosCalendario.filter(ev => {
                             if (!cumpleFiltrosCalendario(ev)) return false;
 
                             const parts = ev.fecha.split('-');

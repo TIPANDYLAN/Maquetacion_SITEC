@@ -168,18 +168,18 @@ const DescuentosView = () => {
             });
             setModalAbierto(false);
             setMostrarFormulario(true);
-        } else if (tipoDescuentoSeleccionado === 'multas_memos') {
+        } else if (tipoDescuentoSeleccionado === 'dias_no_trabajados') {
             void cargarCentrosCosto();
             void cargarEmpleados();
             setFormulario({
-                tipoDescuento: 'multas_memos',
+            tipoDescuento: 'dias_no_trabajados',
                 usuario: '',
                 valorTotal: '',
                 codigoComprobante: '',
                 centroCosto: '',
                 observacion: '',
                 fecha: '',
-                tipoSancion: '',
+                tipoSancion: 'Artículo: 42 - Literal: f\nCapítulo: CAPÍTULO XVI – OBLIGACIONES, DERECHOS Y PROHIBICIONES DEL TRABAJADOR\nSanción por ausencia no autorizada',
                 descripcionFalta: '',
                 sancionAplicada: '',
             });
@@ -225,7 +225,7 @@ const DescuentosView = () => {
                 alert('Por favor ingresa el valor total');
                 return;
             }
-        } else if (formulario.tipoDescuento === 'multas_memos') {
+        } else if (formulario.tipoDescuento === 'dias_no_trabajados') {
             if (!formulario.fecha) {
                 alert('Por favor selecciona la fecha del evento');
                 return;
@@ -278,15 +278,15 @@ const DescuentosView = () => {
                     observacion: formulario.observacion,
                     tipo: 'faltantes_incidentes',
                 });
-            } else if (formulario.tipoDescuento === 'multas_memos') {
-                // Para multas por memos usamos el mismo endpoint pero con tipo específico
+            } else if (formulario.tipoDescuento === 'dias_no_trabajados') {
+                // Para dias no trabajados usamos el mismo endpoint con tipo especifico.
                 data = await dbApi.descuentos.incidentesCajaChica.save<GuardarDescuentoResponse>({
                     nombre: formulario.usuario,
                     valor: formulario.sancionAplicada === 'multa_porcentaje' ? formulario.valorTotal : '0',
                     codigoComprobante: formulario.fecha,
                     centroCosto: formulario.centroCosto,
                     observacion: formulario.observacion,
-                    tipo: 'multas_memos',
+                    tipo: 'dias_no_trabajados',
                     tipoSancion: formulario.tipoSancion,
                     descripcionFalta: formulario.descripcionFalta,
                     sancionAplicada: formulario.sancionAplicada,
@@ -380,7 +380,8 @@ const DescuentosView = () => {
         const coincideTipo =
             !tipo ||
             tipo === 'otro' ||
-            tipo === 'faltantes_incidentes';
+            tipo === 'faltantes_incidentes' ||
+            tipo === 'dias_no_trabajados';
 
         return coincideBusqueda && coincideEstado && coincideTipo;
     });
@@ -475,7 +476,7 @@ const DescuentosView = () => {
                             >
                                 <option value="">Tipo de descuento - Selecciona una opción</option>
                                 <option value="faltantes_incidentes">Faltantes e incidentes de recaudación</option>
-                                <option value="multas">Multas por memos</option>
+                                <option value="dias_no_trabajados">Días no Trabajados</option>
                                 <option value="otro">Otro descuento</option>
                             </select>
                         </div>
@@ -603,7 +604,7 @@ const DescuentosView = () => {
                                 <option value="subsidio_maternidad">Subsidio de maternidad</option>
                                 <option value="faltantes_incidentes">Faltantes e incidentes de recaudación</option>
                                 <option value="descuentos_varios">Descuentos varios</option>
-                                <option value="multas_memos">Multas por memos</option>
+                                <option value="dias_no_trabajados">Días no Trabajados</option>
                             </select>
                         </div>
 
@@ -843,11 +844,11 @@ const DescuentosView = () => {
                 </div>
             )}
 
-            {mostrarFormulario && tipoDescuentoSeleccionado === 'multas_memos' && (
+            {mostrarFormulario && tipoDescuentoSeleccionado === 'dias_no_trabajados' && (
                 <div className="fixed inset-0 z-50 bg-slate-900/45 flex items-center justify-center p-2 sm:p-4">
                     <div className="w-full max-w-2xl bg-white rounded-2xl border border-slate-200 shadow-xl max-h-[92vh] overflow-y-auto p-6">
                         <div className="flex justify-between items-start mb-4">
-                            <h3 className="text-lg font-bold text-slate-800">Multas por Memos</h3>
+                            <h3 className="text-lg font-bold text-slate-800">Días no Trabajados</h3>
                             <button
                                 onClick={() => {
                                     setMostrarFormulario(false);
@@ -862,7 +863,7 @@ const DescuentosView = () => {
                         <div className="flex gap-3 mb-6 p-4 bg-blue-50 rounded-lg border border-blue-200">
                             <AlertCircle size={20} className="text-blue-600 flex-shrink-0 mt-0.5" />
                             <p className="text-sm text-slate-700">
-                                Por favor, completa todos los campos del formulario para registrar la multa por memo
+                                Por favor, completa todos los campos del formulario para registrar días no trabajados
                             </p>
                         </div>
 
@@ -908,17 +909,12 @@ const DescuentosView = () => {
                                 <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">
                                     Tipo de Sanción
                                 </label>
-                                <select
+                                <textarea
                                     value={formulario.tipoSancion || ''}
-                                    onChange={(e) => setFormulario({ ...formulario, tipoSancion: e.target.value })}
-                                    className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:border-blue-500 transition-all"
-                                >
-                                    <option value="">Selecciona un tipo de sanción</option>
-                                    <option value="amonestacion_verbal">Amonestación verbal</option>
-                                    <option value="amonestacion_escrita">Amonestación escrita</option>
-                                    <option value="suspension">Suspensión</option>
-                                    <option value="multa">Multa</option>
-                                </select>
+                                    readOnly
+                                    rows={4}
+                                    className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl text-sm bg-slate-50 focus:outline-none cursor-not-allowed resize-none whitespace-pre-wrap"
+                                />
                             </div>
 
                             {/* Descripción de la Falta */}
