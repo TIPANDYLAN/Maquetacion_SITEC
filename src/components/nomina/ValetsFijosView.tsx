@@ -45,6 +45,7 @@ interface ValetHorarioDbRegistro {
   esAdicional: boolean;
   aprobado?: boolean;
   recurrencia?: boolean;
+  finRecurrencia?: string;
   observacion?: string;
   evidenciaBase64?: string;
   evidenciaMimeType?: string;
@@ -83,6 +84,7 @@ interface HorarioRegistrado {
   adicional: boolean;
   aprobado?: boolean;
   recurrencia: boolean;
+  finRecurrencia: string;
   observacion: string;
   evidenciaBase64: string;
   evidenciaMimeType: string;
@@ -159,6 +161,19 @@ const horariosSeSolapan = (inicioA: number, finA: number, inicioB: number, finB:
 const esFechaDomingo = (fechaIso: string): boolean => {
   const d = new Date(`${fechaIso}T12:00:00`);
   return !Number.isNaN(d.getTime()) && d.getDay() === 0;
+};
+
+const parseFechaLocal = (fechaIso: string): Date | null => {
+  const [anio, mes, dia] = String(fechaIso || '').split('-').map(Number);
+  if (!Number.isInteger(anio) || !Number.isInteger(mes) || !Number.isInteger(dia)) return null;
+  return new Date(anio, mes - 1, dia);
+};
+
+const formatFechaLocal = (date: Date): string => {
+  const anio = date.getFullYear();
+  const mes = String(date.getMonth() + 1).padStart(2, '0');
+  const dia = String(date.getDate()).padStart(2, '0');
+  return `${anio}-${mes}-${dia}`;
 };
 
 const fileToBase64 = async (file: File): Promise<string> => {
@@ -350,6 +365,7 @@ const ValetsFijosView = () => {
               adicional: Boolean(item.esAdicional),
                 aprobado: item.aprobado === undefined ? true : Boolean(item.aprobado),
                 recurrencia: Boolean(item.recurrencia),
+              finRecurrencia: String(item.finRecurrencia || '').trim(),
                 observacion: String(item.observacion || ''),
                 evidenciaBase64: String(item.evidenciaBase64 || ''),
                 evidenciaMimeType: String(item.evidenciaMimeType || ''),
@@ -510,18 +526,19 @@ const ValetsFijosView = () => {
         resultado.push(h);
         continue;
       }
-      const [anioBase, mesBase, diaBase] = h.fecha.split('-').map(Number);
-      const fechaBase = new Date(anioBase, (mesBase || 1) - 1, diaBase || 1);
+      const fechaBase = parseFechaLocal(h.fecha);
+      if (!fechaBase) {
+        resultado.push(h);
+        continue;
+      }
+      const fechaFin = h.finRecurrencia ? parseFechaLocal(h.finRecurrencia) : null;
       const diaSemana = fechaBase.getDay();
       const curr = new Date(inicio);
       const diff = (diaSemana - curr.getDay() + 7) % 7;
       curr.setDate(curr.getDate() + diff);
       while (curr <= fin) {
-        if (curr >= fechaBase) {
-          const y = curr.getFullYear();
-          const m = String(curr.getMonth() + 1).padStart(2, '0');
-          const d = String(curr.getDate()).padStart(2, '0');
-          resultado.push({ ...h, fecha: `${y}-${m}-${d}` });
+        if (curr >= fechaBase && (!fechaFin || curr <= fechaFin)) {
+          resultado.push({ ...h, fecha: formatFechaLocal(curr) });
         }
         curr.setDate(curr.getDate() + 7);
       }
@@ -595,9 +612,11 @@ const ValetsFijosView = () => {
       .filter((item) => {
         if (item.centro !== ingresoCentro || item.empleado !== ingresoEmpleado) return false;
         if (item.recurrencia) {
-          const itemDate = new Date(`${item.fecha}T12:00:00`);
-          const ingresoDate = new Date(`${ingresoFecha}T12:00:00`);
-          return itemDate.getDay() === ingresoDate.getDay();
+          const itemDate = parseFechaLocal(item.fecha);
+          const ingresoDate = parseFechaLocal(ingresoFecha);
+          if (!itemDate || !ingresoDate) return false;
+          const fechaFin = item.finRecurrencia ? parseFechaLocal(item.finRecurrencia) : null;
+          return itemDate.getDay() === ingresoDate.getDay() && ingresoDate >= itemDate && (!fechaFin || ingresoDate <= fechaFin);
         }
         return item.fecha === ingresoFecha;
       })
@@ -664,6 +683,7 @@ const ValetsFijosView = () => {
         horaSalida: String(registro?.horaSalida || ingresoHoraSalida),
         adicional: Boolean(registro?.esAdicional ?? ingresoAdicional),
         recurrencia: Boolean(registro?.recurrencia ?? esRecurrente),
+        finRecurrencia: String(registro?.finRecurrencia || ''),
         observacion: String(registro?.observacion || (ingresoAdicional ? ingresoObservacion.trim() : '')),
         evidenciaBase64: String(registro?.evidenciaBase64 || (ingresoAdicional ? evidenciaBase64 : '')),
         evidenciaMimeType: String(registro?.evidenciaMimeType || (ingresoAdicional && ingresoEvidencia ? ingresoEvidencia.type : '')),
@@ -789,12 +809,40 @@ const ValetsFijosView = () => {
       return;
     }
 
-    const mensajeConfirm = horario.recurrencia
-      ? `Deseas eliminar el horario recurrente de ${horario.empleado} (${horario.horaEntrada} - ${horario.horaSalida})? Se eliminara este dia y todas las semanas futuras.`
-      : `Deseas eliminar este horario de ${horario.empleado} (${horario.horaEntrada} - ${horario.horaSalida})?`;
+    const fechaBase = parseFechaLocal(horario.fecha);
+    if (!fechaBase) {
+      alert('No se pudo interpretar la fecha del horario.');
+      return;
+    }
+
+    const registroBase = horariosRegistrados.find((item) => item.id === horario.id);
+    const fechaCreacionRecurrencia = parseFechaLocal(registroBase?.fecha || horario.fecha);
+    const esOcurrenciaBase = Boolean(horario.recurrencia && fechaCreacionRecurrencia && formatFechaLocal(fechaCreacionRecurrencia) === horario.fecha);
+    const mensajeConfirm = horario.recurrencia && !esOcurrenciaBase
+      ? `Deseas cortar la recurrencia de ${horario.empleado} (${horario.horaEntrada} - ${horario.horaSalida}) hasta la semana anterior a ${horario.fecha}?`
+      : horario.recurrencia
+        ? `Deseas eliminar por completo el horario recurrente de ${horario.empleado} (${horario.horaEntrada} - ${horario.horaSalida})?`
+        : `Deseas eliminar este horario de ${horario.empleado} (${horario.horaEntrada} - ${horario.horaSalida})?`;
     if (!window.confirm(mensajeConfirm)) return;
 
     try {
+      if (horario.recurrencia && !esOcurrenciaBase) {
+        const fechaFin = new Date(fechaBase);
+        fechaFin.setDate(fechaFin.getDate() - 7);
+        const fechaFinIso = formatFechaLocal(fechaFin);
+        const response = await dbApi.valets.horarios.update<ValetHorarioSaveResponse>({
+          id: idNumerico,
+          finRecurrencia: fechaFinIso,
+        });
+        const registro = response?.registro;
+        setHorariosRegistrados((prev) => prev.map((item) => (
+          item.id === horario.id
+            ? { ...item, finRecurrencia: String(registro?.finRecurrencia || fechaFinIso) }
+            : item
+        )));
+        return;
+      }
+
       await dbApi.valets.horarios.delete<ValetHorarioDeleteResponse>(String(idNumerico));
       setHorariosRegistrados((prev) => prev.filter((item) => item.id !== horario.id));
     } catch (error) {

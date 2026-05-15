@@ -165,6 +165,7 @@ const ensureValetFijoHorarioTable = async () => {
       es_adicional BOOLEAN NOT NULL DEFAULT FALSE,
       aprobado BOOLEAN NOT NULL DEFAULT TRUE,
       recurrencia BOOLEAN NOT NULL DEFAULT FALSE,
+      fin_recurrencia DATE,
       observacion TEXT NOT NULL DEFAULT '',
       evidencia_blob BYTEA,
       evidencia_mime_type TEXT NOT NULL DEFAULT '',
@@ -289,6 +290,11 @@ const ensureValetFijoHorarioTable = async () => {
   await pool.query(`
     ALTER TABLE valet_fijo_horario
     ADD COLUMN IF NOT EXISTS recurrencia BOOLEAN NOT NULL DEFAULT FALSE
+  `);
+
+  await pool.query(`
+    ALTER TABLE valet_fijo_horario
+    ADD COLUMN IF NOT EXISTS fin_recurrencia DATE
   `);
 
   await pool.query(`
@@ -491,6 +497,7 @@ const mapDbRowToValetFijoHorario = (row) => ({
   esAdicional: Boolean(row.es_adicional),
   aprobado: row.aprobado === null || row.aprobado === undefined ? true : Boolean(row.aprobado),
   recurrencia: Boolean(row.recurrencia ?? false),
+  finRecurrencia: row.fin_recurrencia ? formatoFechaIso(new Date(row.fin_recurrencia)) : '',
   observacion: String(row.observacion || ''),
   evidenciaMimeType: String(row.evidencia_mime_type || ''),
   evidenciaNombreArchivo: String(row.evidencia_nombre_archivo || ''),
@@ -1691,7 +1698,7 @@ app.get('/api/valets/horarios', async (req, res) => {
 
     const result = await pool.query(
       `SELECT id, centro_costo_id, centro_costo_nombre, empleado_cedula, empleado_nombre,
-              fecha_turno, hora_entrada, hora_salida, es_adicional, aprobado, recurrencia,
+              fecha_turno, hora_entrada, hora_salida, es_adicional, aprobado, recurrencia, fin_recurrencia,
               observacion, evidencia_blob, evidencia_mime_type, evidencia_nombre_archivo,
               fecha_creacion, fecha_actualizacion
        FROM valet_fijo_horario
@@ -1725,10 +1732,20 @@ app.post('/api/valets/horarios', async (req, res) => {
   const esAdicional = Boolean(req.body?.esAdicional || req.body?.adicional);
   const aprobado = req.body?.aprobado === undefined ? true : Boolean(req.body?.aprobado);
   const recurrencia = Boolean(req.body?.recurrencia);
+  const finRecurrenciaRaw = String(req.body?.finRecurrencia || '').trim();
   const observacion = String(req.body?.observacion || '').trim();
   const evidenciaBase64 = String(req.body?.evidenciaBase64 || '').trim();
   const evidenciaMimeType = String(req.body?.evidenciaMimeType || '').trim();
   const evidenciaNombreArchivo = String(req.body?.evidenciaNombreArchivo || '').trim();
+
+  let finRecurrencia = null;
+  if (finRecurrenciaRaw) {
+    finRecurrencia = parseFechaIso(finRecurrenciaRaw);
+    if (!finRecurrencia) {
+      res.status(400).json({ error: 'finRecurrencia debe tener formato YYYY-MM-DD' });
+      return;
+    }
+  }
 
   let evidenciaBlob = null;
   if (evidenciaBase64) {
@@ -1812,15 +1829,16 @@ app.post('/api/valets/horarios', async (req, res) => {
          es_adicional,
          aprobado,
          recurrencia,
+         fin_recurrencia,
          observacion,
          evidencia_blob,
          evidencia_mime_type,
          evidencia_nombre_archivo,
          fecha_actualizacion
        )
-       VALUES ($1, $2, $3, $4, $5::date, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW())
+       VALUES ($1, $2, $3, $4, $5::date, $6, $7, $8, $9, $10, $11::date, $12, $13, $14, $15, NOW())
        RETURNING id, centro_costo_id, centro_costo_nombre, empleado_cedula, empleado_nombre,
-                 fecha_turno, hora_entrada, hora_salida, es_adicional, aprobado, recurrencia,
+                 fecha_turno, hora_entrada, hora_salida, es_adicional, aprobado, recurrencia, fin_recurrencia,
                  observacion, evidencia_blob, evidencia_mime_type, evidencia_nombre_archivo,
                  fecha_creacion, fecha_actualizacion`,
       [
@@ -1834,6 +1852,7 @@ app.post('/api/valets/horarios', async (req, res) => {
         esAdicional,
         aprobado,
         recurrencia,
+        finRecurrencia ? formatoFechaIso(finRecurrencia) : null,
         observacion,
         evidenciaBlob,
         evidenciaMimeType,
@@ -1849,6 +1868,51 @@ app.post('/api/valets/horarios', async (req, res) => {
     console.error('[POST /api/valets/horarios] Error:', error instanceof Error ? error.message : String(error));
     res.status(500).json({
       error: 'No se pudo guardar horario valet fijo',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+app.patch('/api/valets/horarios', async (req, res) => {
+  const id = Number(req.body?.id);
+  const finRecurrenciaRaw = String(req.body?.finRecurrencia || '').trim();
+
+  if (!Number.isInteger(id) || id <= 0) {
+    res.status(400).json({ error: 'El campo id es requerido y debe ser numerico' });
+    return;
+  }
+
+  const finRecurrencia = parseFechaIso(finRecurrenciaRaw);
+  if (!finRecurrencia) {
+    res.status(400).json({ error: 'finRecurrencia debe tener formato YYYY-MM-DD' });
+    return;
+  }
+
+  try {
+    await ensureValetFijoHorarioTable();
+
+    const result = await pool.query(
+      `UPDATE valet_fijo_horario
+       SET fin_recurrencia = $2::date,
+           fecha_actualizacion = NOW()
+       WHERE id = $1
+       RETURNING id, centro_costo_id, centro_costo_nombre, empleado_cedula, empleado_nombre,
+                 fecha_turno, hora_entrada, hora_salida, es_adicional, aprobado, recurrencia, fin_recurrencia,
+                 observacion, evidencia_blob, evidencia_mime_type, evidencia_nombre_archivo,
+                 fecha_creacion, fecha_actualizacion`,
+      [id, formatoFechaIso(finRecurrencia)]
+    );
+
+    if (result.rowCount === 0) {
+      res.status(404).json({ error: 'No se encontro el horario solicitado' });
+      return;
+    }
+
+    res.status(200).json({ ok: true, registro: mapDbRowToValetFijoHorario(result.rows[0]) });
+  } catch (error) {
+    console.error('[PATCH /api/valets/horarios] Error:', error instanceof Error ? error.message : String(error));
+    res.status(500).json({
+      error: 'No se pudo actualizar el fin de recurrencia del horario valet fijo',
       details: error instanceof Error ? error.message : 'Unknown error',
     });
   }
@@ -1870,7 +1934,7 @@ app.delete('/api/valets/horarios', async (req, res) => {
       `DELETE FROM valet_fijo_horario
        WHERE id = $1
        RETURNING id, centro_costo_id, centro_costo_nombre, empleado_cedula, empleado_nombre,
-                 fecha_turno, hora_entrada, hora_salida, es_adicional, aprobado, recurrencia,
+                 fecha_turno, hora_entrada, hora_salida, es_adicional, aprobado, recurrencia, fin_recurrencia,
                  observacion, evidencia_blob, evidencia_mime_type, evidencia_nombre_archivo,
                  fecha_creacion, fecha_actualizacion`,
       [id]

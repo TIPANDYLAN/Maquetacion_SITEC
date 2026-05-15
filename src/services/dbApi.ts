@@ -270,6 +270,10 @@ export const dbApi = {
         return await saveResource<T>(DB_API_CATALOG.valetsHorarios, payload);
       },
 
+      update: async <T = unknown>(payload: unknown): Promise<T> => {
+        return await patchResource<T>(DB_API_CATALOG.valetsHorarios, payload);
+      },
+
       delete: async <T = unknown>(id: string): Promise<T> => {
         return await deleteResource<T>(withQuery(DB_API_CATALOG.valetsHorarios, {
           id,

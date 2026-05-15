@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS valet_fijo_horario (
   es_adicional BOOLEAN NOT NULL DEFAULT FALSE,
   aprobado BOOLEAN NOT NULL DEFAULT TRUE,
   recurrencia BOOLEAN NOT NULL DEFAULT FALSE,
+  fin_recurrencia DATE,
   observacion TEXT NOT NULL DEFAULT '',
   evidencia_blob BYTEA,
   evidencia_mime_type TEXT NOT NULL DEFAULT '',
