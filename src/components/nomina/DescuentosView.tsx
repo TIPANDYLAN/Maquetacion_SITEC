@@ -23,6 +23,7 @@ interface FormularioDescuento {
     centroCosto: string;
     observacion: string;
     fecha?: string;
+    fechaHasta?: string;
     tipoSancion?: string;
     descripcionFalta?: string;
     sancionAplicada?: string;
@@ -88,6 +89,7 @@ const DescuentosView = () => {
         centroCosto: '',
         observacion: '',
         fecha: '',
+        fechaHasta: '',
         tipoSancion: '',
         descripcionFalta: '',
         sancionAplicada: '',
@@ -179,6 +181,7 @@ const DescuentosView = () => {
                 centroCosto: '',
                 observacion: '',
                 fecha: '',
+                fechaHasta: '',
                 tipoSancion: '',
                 descripcionFalta: '',
                 sancionAplicada: '',
@@ -197,6 +200,7 @@ const DescuentosView = () => {
                 centroCosto: '',
                 observacion: '',
                 fecha: '',
+                fechaHasta: '',
                 tipoSancion: '',
                 descripcionFalta: '',
                 sancionAplicada: 'dias_no_trabajados',
@@ -246,7 +250,11 @@ const DescuentosView = () => {
             }
         } else if (formulario.tipoDescuento === 'dias_no_trabajados') {
             if (!formulario.fecha) {
-                alert('Por favor selecciona la fecha del evento');
+                alert('Por favor selecciona la fecha de inicio');
+                return;
+            }
+            if (!formulario.fechaHasta) {
+                alert('Por favor selecciona la fecha de salida');
                 return;
             }
             if (!formulario.tipoSancion) {
@@ -314,7 +322,7 @@ const DescuentosView = () => {
                 data = await dbApi.descuentos.incidentesCajaChica.save<GuardarDescuentoResponse>({
                     nombre: formulario.usuario,
                     valor: valorReporte,
-                    codigoComprobante: formulario.fecha,
+                    codigoComprobante: `${formulario.fecha} - ${formulario.fechaHasta}`,
                     centroCosto: formulario.centroCosto,
                     observacion: formulario.observacion,
                     tipo: 'dias_no_trabajados',
@@ -359,6 +367,7 @@ const DescuentosView = () => {
                 centroCosto: '',
                 observacion: '',
                 fecha: '',
+                fechaHasta: '',
                 tipoSancion: '',
                 descripcionFalta: '',
                 sancionAplicada: '',
@@ -923,17 +932,30 @@ const DescuentosView = () => {
                                 </datalist>
                             </div>
 
-                            {/* Fecha */}
-                            <div>
-                                <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">
-                                    Fecha del Evento
-                                </label>
-                                <input
-                                    type="date"
-                                    value={formulario.fecha || ''}
-                                    onChange={(e) => setFormulario({ ...formulario, fecha: e.target.value })}
-                                    className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:border-blue-500 transition-all"
-                                />
+                            {/* Fechas */}
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">
+                                        Fecha de Inicio
+                                    </label>
+                                    <input
+                                        type="date"
+                                        value={formulario.fecha || ''}
+                                        onChange={(e) => setFormulario({ ...formulario, fecha: e.target.value })}
+                                        className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:border-blue-500 transition-all"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">
+                                        Fecha de Salida
+                                    </label>
+                                    <input
+                                        type="date"
+                                        value={formulario.fechaHasta || ''}
+                                        onChange={(e) => setFormulario({ ...formulario, fechaHasta: e.target.value })}
+                                        className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:border-blue-500 transition-all"
+                                    />
+                                </div>
                             </div>
 
                             {/* Tipo de Sanción */}

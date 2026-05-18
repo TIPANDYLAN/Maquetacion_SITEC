@@ -8,6 +8,7 @@ const HumanaView = lazy(() => import("./components/nomina/HumanaView"));
 const GestionDescuentosTabsView = lazy(() => import("./components/nomina/GestionDescuentosTabsView"));
 const ValetsFijosView = lazy(() => import("./components/nomina/ValetsFijosView"));
 const ConfiguracionDistribucionView = lazy(() => import("./components/nomina/ConfiguracionDistribucionView.tsx"));
+const DistribucionFacturaView = lazy(() => import("./components/nomina/DistribucionFacturaView.tsx"));
 const BancosView = lazy(() => import("./components/pagos/BancosView"));
 const SolicitudAccesoriosTabsView = lazy(() => import("./components/mantenimiento/SolicitudAccesoriosTabsView"));
 const PyGView = lazy(() => import("./components/contabilidad/PyGView"));
@@ -51,6 +52,7 @@ interface MenuState {
   operaciones: boolean;
   contabilidad: boolean;
   nomina: boolean;
+  desarrollo: boolean;
   pagos_facturacion: boolean;
   integraciones: boolean;
   mantenimiento: boolean;
@@ -66,6 +68,7 @@ function App() {
     operaciones: false,
     contabilidad: false,
     nomina: true,
+    desarrollo: false,
     pagos_facturacion: false,
     integraciones: false,
     mantenimiento: false
@@ -89,6 +92,7 @@ function App() {
   const isItemActive = (id: string) => activeTab === id;
   const esTabDescuentos = activeTab === 'descuentos';
   const esTabConfiguracionDistribucion = activeTab === 'configuracion_distribucion';
+  const esTabDistribucionFactura = activeTab === 'distribucion_factura';
 
   const renderActiveContent = () => {
     switch (activeTab) {
@@ -108,6 +112,8 @@ function App() {
         return <HumanaView />;
       case 'configuracion_distribucion':
         return <ConfiguracionDistribucionView />;
+      case 'distribucion_factura':
+        return <DistribucionFacturaView />;
       case 'solicitud_accesorios':
         return <SolicitudAccesoriosTabsView />;
       default: {
@@ -233,6 +239,19 @@ function App() {
             )}
           </div>
 
+          {/* DESARROLLO */}
+          <div>
+            <button onClick={() => toggleMenu('desarrollo')} className="w-full flex items-center justify-between px-4 py-3 rounded-xl transition-all text-slate-500 hover:bg-slate-50 hover:text-slate-800">
+              <div className="flex items-center gap-3"><Cpu size={20} /><span className="text-sm font-medium">Desarrollo</span></div>
+              {expandedMenus.desarrollo ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+            </button>
+            {expandedMenus.desarrollo && (
+              <div className="ml-4 pl-4 border-l border-slate-100 space-y-1 mt-1 mb-2">
+                <button onClick={() => setActiveTab('distribucion_factura')} className={`block w-full text-left px-3 py-2 rounded-lg text-sm transition-all ${isItemActive('distribucion_factura') ? 'bg-blue-50 text-blue-600 font-bold' : 'text-slate-600 hover:bg-slate-50'}`}>Distribución por factura</button>
+              </div>
+            )}
+          </div>
+
           {/* CONTABILIDAD */}
           <div>
             <button onClick={() => toggleMenu('contabilidad')} className="w-full flex items-center justify-between px-4 py-3 rounded-xl transition-all text-slate-500 hover:bg-slate-50 hover:text-slate-800">
@@ -296,6 +315,11 @@ function App() {
                 <div>
                   <h2 className="text-lg font-bold text-slate-700">Detalle de distribución</h2>
                   <p className="text-xs text-slate-500">Reglas y parámetros de distribución de nómina</p>
+                </div>
+              ) : esTabDistribucionFactura ? (
+                <div>
+                  <h2 className="text-lg font-bold text-slate-700">Distribución por factura</h2>
+                  <p className="text-xs text-slate-500">Genera distribución por parqueadero y exporta a Excel</p>
                 </div>
               ) : (
                 <h2 className="text-lg font-bold text-slate-700 capitalize">{activeTab.replace('_', ' ')}</h2>

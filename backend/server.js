@@ -1730,7 +1730,7 @@ app.post('/api/valets/horarios', async (req, res) => {
   const horaEntrada = String(req.body?.horaEntrada || '').trim();
   const horaSalida = String(req.body?.horaSalida || '').trim();
   const esAdicional = Boolean(req.body?.esAdicional || req.body?.adicional);
-  const aprobado = req.body?.aprobado === undefined ? true : Boolean(req.body?.aprobado);
+  const aprobado = req.body?.aprobado === undefined ? !esAdicional : Boolean(req.body?.aprobado);
   const recurrencia = Boolean(req.body?.recurrencia);
   const finRecurrenciaRaw = String(req.body?.finRecurrencia || '').trim();
   const observacion = String(req.body?.observacion || '').trim();

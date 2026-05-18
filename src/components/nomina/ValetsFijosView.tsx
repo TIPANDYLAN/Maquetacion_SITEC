@@ -460,6 +460,29 @@ const ValetsFijosView = () => {
     return total;
   };
 
+  const calcularAdicionalAprobadoEmpleado = (centro: string, empleado: string): number => {
+    const empAdicionales = horariosRegistrados.filter(
+      (h) => h.centro === centro && h.empleado === empleado && (h.adicional || esFechaDomingo(h.fecha))
+    );
+
+    let total = 0;
+    const domingosMap = new Map<string, boolean>();
+
+    empAdicionales.forEach((ev) => {
+      const isAprobado = ev.aprobado !== false;
+      if (!isAprobado) return;
+
+      if (esFechaDomingo(ev.fecha) && !ev.adicional) {
+        domingosMap.set(ev.fecha, true);
+      } else {
+        total += calcularValorNum(ev.horaEntrada, ev.horaSalida);
+      }
+    });
+
+    total += domingosMap.size * 10;
+    return total;
+  };
+
   const getMonthGrid = (): { grid: CalendarDay[], monthName: string, year: number } => {
     const now = new Date();
     const baseDate = new Date(now.getFullYear(), now.getMonth() + calendarOffset, 1);
@@ -667,7 +690,7 @@ const ValetsFijosView = () => {
         evidenciaBase64: ingresoAdicional ? evidenciaBase64 : '',
         evidenciaMimeType: ingresoAdicional && ingresoEvidencia ? String(ingresoEvidencia.type || '').trim() : '',
         evidenciaNombreArchivo: ingresoAdicional && ingresoEvidencia ? String(ingresoEvidencia.name || '').trim() : '',
-        aprobado: true,
+        aprobado: ingresoAdicional ? false : true,
       });
 
       const registro = response?.registro;
@@ -945,7 +968,7 @@ const ValetsFijosView = () => {
 
         let totalCalculado = 0;
         const dias: Array<{ id: string; fecha: string; dia: string; horario: string; valor: string; aprobado: boolean; observacion: string; evidenciaBase64: string; evidenciaMimeType: string; evidenciaNombreArchivo: string }> = [];
-        const domingosMap = new Map<string, { id: string; fecha: string; aprobado: boolean; horarios: string[] }>();
+        const domingos: Array<{ id: string; fecha: string; dia: string; horario: string; aprobado: boolean }> = [];
         
         empAdicionales.forEach(ev => {
           const d = new Date(`${ev.fecha}T12:00:00`);
@@ -954,15 +977,13 @@ const ValetsFijosView = () => {
           const isAprobado = ev.aprobado !== false;
           
           if (isSunday && !ev.adicional) {
-            const horario = `${ev.horaEntrada} - ${ev.horaSalida}`;
-            if(!domingosMap.has(ev.fecha)) {
-              domingosMap.set(ev.fecha, { id: ev.id, fecha: ev.fecha, aprobado: isAprobado, horarios: [horario] });
-            } else {
-              const existente = domingosMap.get(ev.fecha);
-              if (existente && !existente.horarios.includes(horario)) {
-                existente.horarios.push(horario);
-              }
-            }
+            domingos.push({
+              id: ev.id,
+              fecha: ev.fecha,
+              dia: dayName,
+              horario: `${ev.horaEntrada} - ${ev.horaSalida}`,
+              aprobado: isAprobado,
+            });
           } else {
             const val = calcularValorStr(ev.horaEntrada, ev.horaSalida);
             dias.push({ 
@@ -979,10 +1000,8 @@ const ValetsFijosView = () => {
             });
           }
         });
-        const domingosUnicos = Array.from(domingosMap.values());
-
         dias.forEach((d: any) => { if (d.aprobado) totalCalculado += parseFloat(d.valor); });
-        domingosUnicos.forEach((dom: any) => { if (dom.aprobado) totalCalculado += 10.00; });
+        domingos.forEach((dom: any) => { if (dom.aprobado) totalCalculado += 10.00; });
 
         return (
           <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
@@ -1017,19 +1036,23 @@ const ValetsFijosView = () => {
                       {dias.map((d: any) => (
                         <div key={d.id} className="border border-slate-100 rounded-xl p-4 bg-white shadow-sm hover:border-slate-200 transition-colors space-y-3">
                           <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-4 sm:gap-8 flex-1">
+                            <div className="flex items-center gap-3 sm:gap-4 flex-1">
+                              <button 
+                                onClick={() => toggleAprobado(d.id)}
+                                className={`w-7 h-7 sm:w-8 sm:h-8 rounded-lg border-2 flex items-center justify-center shadow-inner transition-colors cursor-pointer ${d.aprobado ? 'border-emerald-200 bg-emerald-50 hover:bg-emerald-100' : 'border-slate-200 bg-slate-50 hover:bg-slate-100'}`}
+                                title={d.aprobado ? 'Marcar como pendiente' : 'Marcar como aprobado'}
+                              >
+                                {d.aprobado && <Check size={16} className="text-emerald-600" strokeWidth={3} />}
+                              </button>
                               <span className="text-[13px] font-medium text-[#1c2938] shrink-0 w-20 sm:w-24">{d.fecha}</span>
                               <span className="font-bold text-[13px] sm:text-[14px] text-[#1c2938] shrink-0 w-20">{d.dia}</span>
                               <span className="text-[13px] sm:text-[14px] font-medium text-slate-600">{d.horario}</span>
                             </div>
                             <div className="flex items-center gap-3 sm:gap-4 shrink-0 pl-2">
                               <span className={`font-black text-[14px] sm:text-[15px] ${d.aprobado ? 'text-slate-800' : 'text-slate-400 line-through'}`}>{d.valor} $</span>
-                              <button 
-                                onClick={() => toggleAprobado(d.id)}
-                                className={`w-7 h-7 sm:w-8 sm:h-8 rounded-lg border-2 flex items-center justify-center shadow-inner transition-colors cursor-pointer ${d.aprobado ? 'border-emerald-200 bg-emerald-50 hover:bg-emerald-100' : 'border-slate-200 bg-slate-50 hover:bg-slate-100'}`}
-                              >
-                                {d.aprobado && <Check size={16} className="text-emerald-600" strokeWidth={3} />}
-                              </button>
+                              <span className={`text-[11px] font-bold uppercase tracking-wide ${d.aprobado ? 'text-emerald-600' : 'text-amber-600'}`}>
+                                {d.aprobado ? 'Aprobado' : 'Pendiente'}
+                              </span>
                             </div>
                           </div>
                           {(d.observacion || d.evidenciaBase64) && (
@@ -1073,26 +1096,27 @@ const ValetsFijosView = () => {
                     <h4 className="font-bold text-[16px] text-[#1c2938]">Domingos</h4>
                   </div>
                   
-                  {domingosUnicos.length > 0 ? (
+                  {domingos.length > 0 ? (
                     <div className="space-y-3">
-                      {domingosUnicos.map((dom: any) => (
+                      {domingos.map((dom: any) => (
                         <div key={dom.id} className="flex items-center justify-between">
-                          <div className="flex items-center gap-4 sm:gap-8 flex-1">
-                            <div className="px-4 py-1.5 border border-slate-200 rounded-xl text-[13px] font-medium text-[#1c2938] shadow-sm bg-white">
-                              <div>{dom.fecha}</div>
-                              <div className="text-[12px] font-medium text-slate-500 mt-1">
-                                {Array.isArray(dom.horarios) && dom.horarios.length > 0 ? dom.horarios.join(' | ') : 'Sin horario registrado'}
-                              </div>
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-3 sm:gap-4 shrink-0 pl-2">
-                            <span className={`font-black text-[14px] sm:text-[15px] ${dom.aprobado ? 'text-slate-800' : 'text-slate-400 line-through'}`}>10.00 $</span>
+                          <div className="flex items-center gap-3 sm:gap-4 flex-1">
                             <button 
                               onClick={() => toggleAprobado(dom.id)}
                               className={`w-7 h-7 sm:w-8 sm:h-8 rounded-lg border-2 flex items-center justify-center shadow-inner transition-colors cursor-pointer ${dom.aprobado ? 'border-emerald-200 bg-emerald-50 hover:bg-emerald-100' : 'border-slate-200 bg-slate-50 hover:bg-slate-100'}`}
+                              title={dom.aprobado ? 'Marcar como pendiente' : 'Marcar como aprobado'}
                             >
                               {dom.aprobado && <Check size={16} className="text-emerald-600" strokeWidth={3} />}
                             </button>
+                            <span className="text-[13px] font-medium text-[#1c2938] shrink-0 w-20 sm:w-24">{dom.fecha}</span>
+                            <span className="font-bold text-[13px] sm:text-[14px] text-[#1c2938] shrink-0 w-20">{dom.dia}</span>
+                            <span className="text-[13px] sm:text-[14px] font-medium text-slate-600">{dom.horario}</span>
+                          </div>
+                          <div className="flex items-center gap-3 sm:gap-4 shrink-0 pl-2">
+                            <span className={`font-black text-[14px] sm:text-[15px] ${dom.aprobado ? 'text-slate-800' : 'text-slate-400 line-through'}`}>10.00 $</span>
+                            <span className={`text-[11px] font-bold uppercase tracking-wide ${dom.aprobado ? 'text-emerald-600' : 'text-amber-600'}`}>
+                              {dom.aprobado ? 'Aprobado' : 'Pendiente'}
+                            </span>
                           </div>
                         </div>
                       ))}
@@ -1618,6 +1642,7 @@ const ValetsFijosView = () => {
                           <tr>
                             <th className="px-6 py-4 text-[11px] font-bold text-slate-600">Empleado</th>
                             <th className="px-6 py-4 text-[11px] font-bold text-slate-600 text-center">Valor fijo a pagar</th>
+                            <th className="px-6 py-4 text-[11px] font-bold text-slate-600 text-center">Valor adicional aprobado</th>
                             <th className="px-6 py-4 text-[11px] font-bold text-slate-600 text-center">Detalles</th>
                             <th className="px-6 py-4 text-[11px] font-bold text-slate-600 text-center">Eliminar</th>
                           </tr>
@@ -1632,6 +1657,9 @@ const ValetsFijosView = () => {
                               </td>
                               <td className="px-6 py-4 text-center text-[13px] font-black text-slate-800">
                                 ${emp.valor}
+                              </td>
+                              <td className="px-6 py-4 text-center text-[13px] font-black text-emerald-600">
+                                ${calcularAdicionalAprobadoEmpleado(emp.centro, emp.nombre).toFixed(2)}
                               </td>
                               <td className="px-6 py-4 text-center">
                                 <button 
@@ -1663,9 +1691,10 @@ const ValetsFijosView = () => {
                   ) : (
                     <>
                       <div className="bg-slate-50/80 border-b border-slate-200 p-4">
-                        <div className="grid grid-cols-4 gap-2 text-center items-center">
+                        <div className="grid grid-cols-5 gap-2 text-center items-center">
                           <span className="text-[11px] font-bold text-slate-600">Empleado</span>
                           <span className="text-[11px] font-bold text-slate-600">Valor fijo a pagar</span>
+                          <span className="text-[11px] font-bold text-slate-600">Valor adicional aprobado</span>
                           <span className="text-[11px] font-bold text-slate-600">Detalles</span>
                           <span className="text-[11px] font-bold text-slate-600">Eliminar</span>
                         </div>
