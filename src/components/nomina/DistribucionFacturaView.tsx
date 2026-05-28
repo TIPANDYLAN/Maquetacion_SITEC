@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import ExcelJS from 'exceljs';
 import { Calculator, Download, FileSpreadsheet } from 'lucide-react';
 import { dbApi } from '../../services/dbApi';
+import { getNominaEmployeesActive } from '../../services/n8nApi';
+import type { EmpleadoNominaApiItem } from '../../types/nomina';
 
 interface PlantillaCentroApiItem {
   centroCostoId?: string;
@@ -22,22 +24,6 @@ interface PlantillasResponse {
   plantillas?: PlantillaApiItem[];
 }
 
-interface EmpleadoPlantillaApiItem {
-  empleadoId?: string;
-  empleado_id?: string;
-}
-
-interface PlantillaConEmpleadosApiItem {
-  plantillaId?: number | string;
-  plantilla_id?: number | string;
-  empleados?: EmpleadoPlantillaApiItem[];
-}
-
-interface PlantillasEmpleadosResponse {
-  ok?: boolean;
-  plantillas?: PlantillaConEmpleadosApiItem[];
-}
-
 interface PlantillaCentro {
   centroCostoId: string;
   centroCostoNombre: string;
@@ -56,7 +42,116 @@ interface FilaDistribucion {
   centroCostoId: string;
   porcentaje: number;
   valorAsignado: number;
+  empleadosParqueadero: number;
 }
+
+interface EmpleadoActivoDistribucion {
+  empleadoId: string;
+  centroCostoId: string;
+  centroCostoNombre: string;
+}
+
+const normalizarTextoComparacion = (valor: string): string => {
+  return String(valor || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, ' ')
+    .trim();
+};
+
+const normalizarCodigoCentro = (valor: string): string => {
+  const raw = String(valor || '').trim().toUpperCase();
+  if (!raw) return '';
+
+  const primerSegmento = raw.split('-')[0].trim();
+  const sinSeparadores = primerSegmento.replace(/[^A-Z0-9]/g, '');
+  if (!sinSeparadores) return '';
+
+  if (/^\d+$/.test(sinSeparadores)) {
+    return sinSeparadores.replace(/^0+(?=\d)/, '');
+  }
+
+  return sinSeparadores;
+};
+
+const parseCentroCostoCompuesto = (valor: string): { codigo: string; nombre: string } => {
+  const raw = String(valor || '').trim();
+  if (!raw) return { codigo: '', nombre: '' };
+
+  const match = raw.match(/^([^\-]+?)\s*-\s*(.+)$/);
+  if (!match) {
+    return { codigo: '', nombre: raw };
+  }
+
+  return {
+    codigo: String(match[1] || '').trim(),
+    nombre: String(match[2] || '').trim(),
+  };
+};
+
+const normalizarEmpleadoActivoDistribucion = (item: EmpleadoNominaApiItem): EmpleadoActivoDistribucion | null => {
+  const payload = (item?.json ?? item ?? {}) as Record<string, unknown>;
+
+  const empleadoId = String(payload?.CEDULA || payload?.DOCI_MFEMP || payload?.COD_MFEMP || '').trim();
+  if (!empleadoId) return null;
+
+  const centroCodigoDirecto = String(
+    payload?.COD_MFCC || payload?.IDCENTROCOSTO || payload?.CNTB_MFEDC || '',
+  ).trim();
+  const centroNombreDirecto = String(
+    payload?.DSC_MFCC || payload?.CENTROCOSTO || payload?.CENTRO_COSTO || '',
+  ).trim();
+
+  const centroCompuesto = parseCentroCostoCompuesto(centroNombreDirecto || centroCodigoDirecto);
+  const centroCostoId = String(centroCodigoDirecto || centroCompuesto.codigo || '').trim();
+  const centroCostoNombre = String(centroNombreDirecto || centroCompuesto.nombre || centroCostoId || '').trim();
+
+  return {
+    empleadoId,
+    centroCostoId,
+    centroCostoNombre,
+  };
+};
+
+const esCentroAdministracionSupervisores = (centroCostoId: string, centroCostoNombre: string): boolean => {
+  const id = normalizarTextoComparacion(centroCostoId);
+  const nombre = normalizarTextoComparacion(centroCostoNombre);
+  const combinado = `${id} ${nombre}`.trim();
+
+  return combinado.includes('ADMINISTRACION') && combinado.includes('SUPERVISOR');
+};
+
+const esCentroAdministracion = (centroCostoId: string, centroCostoNombre: string): boolean => {
+  const id = normalizarTextoComparacion(centroCostoId);
+  const nombre = normalizarTextoComparacion(centroCostoNombre);
+  const combinado = `${id} ${nombre}`.trim();
+
+  return combinado.includes('ADMINISTRACION') && !combinado.includes('SUPERVISOR');
+};
+
+const encontrarCentroPlantillaEmpleado = (
+  centrosPlantilla: PlantillaCentro[],
+  empleado: EmpleadoActivoDistribucion,
+): PlantillaCentro | null => {
+  const centroEmpleadoIdNorm = normalizarCodigoCentro(empleado.centroCostoId);
+  const centroEmpleadoNombreNorm = normalizarTextoComparacion(empleado.centroCostoNombre);
+
+  for (const centro of centrosPlantilla) {
+    const centroPlantillaIdNorm = normalizarCodigoCentro(centro.centroCostoId);
+    const centroPlantillaNombreNorm = normalizarTextoComparacion(centro.centroCostoNombre);
+
+    if (centroEmpleadoIdNorm && centroPlantillaIdNorm && centroEmpleadoIdNorm === centroPlantillaIdNorm) {
+      return centro;
+    }
+
+    if (centroEmpleadoNombreNorm && centroPlantillaNombreNorm && centroEmpleadoNombreNorm === centroPlantillaNombreNorm) {
+      return centro;
+    }
+  }
+
+  return null;
+};
 
 const normalizarPlantilla = (item: PlantillaApiItem): PlantillaDistribucion => {
   const centrosRaw = Array.isArray(item?.centros) ? item.centros : [];
@@ -78,6 +173,7 @@ const normalizarPlantilla = (item: PlantillaApiItem): PlantillaDistribucion => {
 
 const DistribucionFacturaView = () => {
   const [plantillas, setPlantillas] = useState<PlantillaDistribucion[]>([]);
+  const [empleadosActivosDistribucion, setEmpleadosActivosDistribucion] = useState<EmpleadoActivoDistribucion[]>([]);
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -85,6 +181,7 @@ const DistribucionFacturaView = () => {
   const [numeroFactura, setNumeroFactura] = useState('');
   const [valorFactura, setValorFactura] = useState('');
   const [distribucion, setDistribucion] = useState<FilaDistribucion[]>([]);
+  const [personasRedistribuidasPlantilla, setPersonasRedistribuidasPlantilla] = useState(0);
 
   useEffect(() => {
     const cargarDatos = async () => {
@@ -92,30 +189,32 @@ const DistribucionFacturaView = () => {
       setError(null);
 
       try {
-        const [dataPlantillas, dataAsignaciones] = await Promise.all([
+        const [dataPlantillas, dataEmpleadosActivos] = await Promise.all([
           dbApi.distribucionPlantillas.list<PlantillasResponse>(),
-          dbApi.distribucionPlantillasEmpleados.list<PlantillasEmpleadosResponse>(),
+          getNominaEmployeesActive<EmpleadoNominaApiItem[]>(),
         ]);
 
-        const mapEmpleados = new Map<number, number>();
-        for (const item of dataAsignaciones?.plantillas || []) {
-          const plantillaId = Number(item?.plantillaId || item?.plantilla_id || 0);
-          const empleados = Array.isArray(item?.empleados) ? item.empleados : [];
-          if (plantillaId > 0) {
-            mapEmpleados.set(plantillaId, empleados.length);
-          }
-        }
+        const empleadosActivos = (Array.isArray(dataEmpleadosActivos) ? dataEmpleadosActivos : [])
+          .map(normalizarEmpleadoActivoDistribucion)
+          .filter((empleado): empleado is EmpleadoActivoDistribucion => Boolean(empleado));
+
+        const empleadosActivosUnicos = empleadosActivos.filter(
+          (empleado, index, lista) => lista.findIndex((item) => item.empleadoId === empleado.empleadoId) === index,
+        );
+
+        const totalEmpleadosActivos = empleadosActivosUnicos.length;
 
         const plantillasNormalizadas = (Array.isArray(dataPlantillas?.plantillas) ? dataPlantillas.plantillas : [])
           .map(normalizarPlantilla)
           .filter((plantilla) => plantilla.id > 0 && plantilla.nombre)
           .map((plantilla) => ({
             ...plantilla,
-            totalEmpleados: mapEmpleados.get(plantilla.id) || 0,
+            totalEmpleados: totalEmpleadosActivos,
           }))
           .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es', { sensitivity: 'base' }));
 
         setPlantillas(plantillasNormalizadas);
+        setEmpleadosActivosDistribucion(empleadosActivosUnicos);
       } catch (e) {
         console.error('Error cargando plantillas para distribucion por factura:', e);
         setError('No se pudieron cargar las plantillas de distribución.');
@@ -155,19 +254,162 @@ const DistribucionFacturaView = () => {
       return;
     }
 
-    const totalPorcentaje = plantillaSeleccionada.centros.reduce((acc, item) => acc + item.porcentaje, 0);
-    if (Math.abs(totalPorcentaje - 100) > 0.01) {
-      alert('La plantilla seleccionada no suma 100%. Ajusta la plantilla antes de continuar.');
+    const valorTotalCentavos = Math.round(valor * 100);
+    type GrupoDistribucion = {
+      tipo: 'centro' | 'administracion' | 'administracion_supervisores';
+      parqueadero: string;
+      centroCostoId: string;
+      porcentajePlantilla: number;
+      empleados: number;
+      valorBaseCentavos: number;
+      valorRedistribuidoCentavos: number;
+    };
+
+    const gruposCentros = plantillaSeleccionada.centros.map((centro) => ({
+      tipo: 'centro' as const,
+      parqueadero: centro.centroCostoNombre,
+      centroCostoId: centro.centroCostoId,
+      porcentajePlantilla: Number(centro.porcentaje || 0),
+      empleados: 0,
+      valorBaseCentavos: 0,
+      valorRedistribuidoCentavos: 0,
+    }));
+
+    const grupoAdministracion: GrupoDistribucion = {
+      tipo: 'administracion',
+      parqueadero: 'ADMINISTRACION',
+      centroCostoId: 'ADMINISTRACION',
+      porcentajePlantilla: 0,
+      empleados: 0,
+      valorBaseCentavos: 0,
+      valorRedistribuidoCentavos: 0,
+    };
+
+    const grupoAdministracionSupervisores: GrupoDistribucion = {
+      tipo: 'administracion_supervisores',
+      parqueadero: 'ADMINISTRACION SUPERVISORES',
+      centroCostoId: 'ADMINISTRACION-SUPERVISORES',
+      porcentajePlantilla: 0,
+      empleados: 0,
+      valorBaseCentavos: 0,
+      valorRedistribuidoCentavos: 0,
+    };
+
+    for (const empleado of empleadosActivosDistribucion) {
+      if (esCentroAdministracionSupervisores(empleado.centroCostoId, empleado.centroCostoNombre)) {
+        grupoAdministracionSupervisores.empleados += 1;
+        if (empleado.centroCostoId) grupoAdministracionSupervisores.centroCostoId = empleado.centroCostoId;
+        if (empleado.centroCostoNombre) grupoAdministracionSupervisores.parqueadero = empleado.centroCostoNombre;
+        continue;
+      }
+
+      if (esCentroAdministracion(empleado.centroCostoId, empleado.centroCostoNombre)) {
+        grupoAdministracion.empleados += 1;
+        if (empleado.centroCostoId) grupoAdministracion.centroCostoId = empleado.centroCostoId;
+        if (empleado.centroCostoNombre) grupoAdministracion.parqueadero = empleado.centroCostoNombre;
+        continue;
+      }
+
+      const centroPlantilla = encontrarCentroPlantillaEmpleado(plantillaSeleccionada.centros, empleado);
+      if (!centroPlantilla) {
+        // Si no hay match con plantilla, se considera administracion para no perder personas en el total.
+        grupoAdministracion.empleados += 1;
+        continue;
+      }
+
+      const idxCentro = gruposCentros.findIndex((item) => item.centroCostoId === centroPlantilla.centroCostoId);
+      if (idxCentro >= 0) {
+        gruposCentros[idxCentro].empleados += 1;
+      }
+    }
+
+    const gruposBase = [
+      ...gruposCentros,
+      grupoAdministracion,
+      grupoAdministracionSupervisores,
+    ];
+
+    const totalEmpleadosConsiderados = empleadosActivosDistribucion.length;
+
+    if (totalEmpleadosConsiderados === 0) {
+      alert('No se encontraron empleados activos para calcular la distribución por persona.');
       return;
     }
 
-    const filas = plantillaSeleccionada.centros.map((centro) => ({
-      parqueadero: centro.centroCostoNombre,
-      centroCostoId: centro.centroCostoId,
-      porcentaje: centro.porcentaje,
-      valorAsignado: Number(((valor * centro.porcentaje) / 100).toFixed(2)),
+    const baseExactos = gruposBase.map((item) => ({
+      item,
+      valorExactoCentavos: (valorTotalCentavos * item.empleados) / totalEmpleadosConsiderados,
     }));
 
+    const baseAdminSupervisoresExacto =
+      baseExactos.find((entry) => entry.item.tipo === 'administracion_supervisores')?.valorExactoCentavos || 0;
+    const totalPorcentajePlantilla = gruposCentros.reduce((acc, item) => acc + item.porcentajePlantilla, 0);
+
+    if (baseAdminSupervisoresExacto > 0 && totalPorcentajePlantilla <= 0) {
+      alert('La plantilla no tiene porcentajes validos para redistribuir ADMINISTRACION-SUPERVISORES.');
+      return;
+    }
+
+    const filasGrupos: GrupoDistribucion[] = [
+      ...gruposCentros,
+      grupoAdministracion,
+    ];
+
+    const filasExactas = filasGrupos.map((item, index) => {
+      const baseExacto = baseExactos.find((entry) => entry.item === item)?.valorExactoCentavos || 0;
+      const redistribuidoExacto = item.tipo === 'centro' && totalPorcentajePlantilla > 0
+        ? (baseAdminSupervisoresExacto * item.porcentajePlantilla) / totalPorcentajePlantilla
+        : 0;
+
+      return {
+        index,
+        item,
+        valorExactoCentavos: baseExacto + redistribuidoExacto,
+      };
+    });
+
+    const filasRedondeadas = filasExactas.map((entry) => {
+      const valorBaseCentavos = Math.floor(entry.valorExactoCentavos);
+      return {
+        ...entry,
+        valorRedondeadoCentavos: valorBaseCentavos,
+        resto: entry.valorExactoCentavos - valorBaseCentavos,
+      };
+    });
+
+    const sumaBaseRedondeada = filasRedondeadas.reduce((acc, entry) => acc + entry.valorRedondeadoCentavos, 0);
+    let pendientesRedondeo = valorTotalCentavos - sumaBaseRedondeada;
+
+    const ordenRestoDesc = [...filasRedondeadas].sort((a, b) => {
+      if (b.resto !== a.resto) return b.resto - a.resto;
+      return a.index - b.index;
+    });
+
+    for (let i = 0; i < pendientesRedondeo; i += 1) {
+      const item = ordenRestoDesc[i % ordenRestoDesc.length];
+      item.valorRedondeadoCentavos += 1;
+    }
+
+    const filas = filasRedondeadas
+      .filter((entry) => entry.item.tipo === 'administracion' || entry.valorRedondeadoCentavos > 0)
+      .map((entry) => {
+        const totalCentroCentavos = entry.valorRedondeadoCentavos;
+        return {
+          parqueadero: entry.item.parqueadero,
+          centroCostoId: entry.item.centroCostoId,
+          porcentaje: valorTotalCentavos > 0 ? (totalCentroCentavos / valorTotalCentavos) * 100 : 0,
+          valorAsignado: totalCentroCentavos / 100,
+          empleadosParqueadero: entry.item.empleados,
+        };
+      })
+      .sort((a, b) => a.parqueadero.localeCompare(b.parqueadero, 'es', { sensitivity: 'base' }));
+
+    if (filas.length === 0) {
+      alert('No hay centros de costo destino para distribuir la factura.');
+      return;
+    }
+
+    setPersonasRedistribuidasPlantilla(grupoAdministracionSupervisores.empleados);
     setDistribucion(filas);
   };
 
@@ -185,6 +427,8 @@ const DistribucionFacturaView = () => {
       { header: 'Plantilla', key: 'plantilla', width: 28 },
       { header: 'Parqueadero', key: 'parqueadero', width: 34 },
       { header: 'Centro de costo', key: 'centroCostoId', width: 18 },
+      { header: 'Personas parqueadero', key: 'empleadosParqueadero', width: 20 },
+      { header: 'Personas que se redistribuyen en plantilla', key: 'personasRedistribuidas', width: 34 },
       { header: 'Porcentaje', key: 'porcentaje', width: 14 },
       { header: 'Valor asignado', key: 'valorAsignado', width: 16 },
     ];
@@ -195,6 +439,8 @@ const DistribucionFacturaView = () => {
         plantilla: plantillaSeleccionada.nombre,
         parqueadero: fila.parqueadero,
         centroCostoId: fila.centroCostoId,
+        empleadosParqueadero: fila.empleadosParqueadero,
+        personasRedistribuidas: personasRedistribuidasPlantilla,
         porcentaje: fila.porcentaje / 100,
         valorAsignado: fila.valorAsignado,
       });
@@ -261,6 +507,7 @@ const DistribucionFacturaView = () => {
                 onChange={(event) => {
                   setPlantillaSeleccionadaId(event.target.value);
                   setDistribucion([]);
+                  setPersonasRedistribuidasPlantilla(0);
                 }}
                 disabled={cargando}
                 className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 outline-none transition focus:border-blue-400"
@@ -295,6 +542,7 @@ const DistribucionFacturaView = () => {
                 onChange={(event) => {
                   setValorFactura(event.target.value);
                   setDistribucion([]);
+                  setPersonasRedistribuidasPlantilla(0);
                 }}
                 placeholder="0.00"
                 className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 outline-none transition focus:border-blue-400"
@@ -320,6 +568,10 @@ const DistribucionFacturaView = () => {
               <p>
                 Centros configurados: <span className="font-semibold text-slate-800">{plantillaSeleccionada.centros.length}</span>
               </p>
+              <p>
+                Personas que se redistribuyen a todos los parqueaderos (Administracion Supervisores):{' '}
+                <span className="font-semibold text-slate-800">{personasRedistribuidasPlantilla}</span>
+              </p>
             </div>
           ) : null}
 
@@ -341,6 +593,7 @@ const DistribucionFacturaView = () => {
                   <tr>
                     <th className="px-4 py-3">Parqueadero</th>
                     <th className="px-4 py-3">Centro de costo</th>
+                    <th className="px-4 py-3 text-right">Personas</th>
                     <th className="px-4 py-3">Porcentaje</th>
                     <th className="px-4 py-3 text-right">Valor asignado</th>
                   </tr>
@@ -350,6 +603,7 @@ const DistribucionFacturaView = () => {
                     <tr key={`${fila.centroCostoId}-${fila.parqueadero}`}>
                       <td className="px-4 py-3 font-semibold text-slate-700">{fila.parqueadero}</td>
                       <td className="px-4 py-3 text-slate-600">{fila.centroCostoId}</td>
+                      <td className="px-4 py-3 text-right text-slate-600">{fila.empleadosParqueadero}</td>
                       <td className="px-4 py-3 text-slate-600">{fila.porcentaje.toFixed(2)}%</td>
                       <td className="px-4 py-3 text-right font-semibold text-slate-700">
                         ${fila.valorAsignado.toLocaleString('es-EC', {
@@ -362,7 +616,7 @@ const DistribucionFacturaView = () => {
                 </tbody>
                 <tfoot className="border-t border-slate-200 bg-slate-50">
                   <tr>
-                    <td className="px-4 py-3 font-bold text-slate-800" colSpan={3}>Total distribuido</td>
+                    <td className="px-4 py-3 font-bold text-slate-800" colSpan={4}>Total distribuido</td>
                     <td className="px-4 py-3 text-right font-bold text-slate-800">
                       ${totalDistribuido.toLocaleString('es-EC', {
                         minimumFractionDigits: 2,

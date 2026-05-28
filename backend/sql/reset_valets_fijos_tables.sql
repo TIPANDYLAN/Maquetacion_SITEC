@@ -10,15 +10,18 @@ CREATE TABLE valet_fijo_empleado (
   centro_costo_nombre TEXT NOT NULL DEFAULT '',
   empleado_cedula TEXT NOT NULL,
   empleado_nombre TEXT NOT NULL DEFAULT '',
-  valor_fijo NUMERIC(18,2) NOT NULL,
+  valor_fijo NUMERIC(18,2) NOT NULL DEFAULT 0,
   fecha_creacion TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   fecha_actualizacion TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT uq_valet_fijo_empleado UNIQUE (centro_costo_id, empleado_cedula),
   CONSTRAINT chk_valet_fijo_empleado_valor_fijo_positivo CHECK (valor_fijo >= 0)
 );
 
-CREATE INDEX idx_valet_fijo_empleado_centro ON valet_fijo_empleado (centro_costo_id);
-CREATE INDEX idx_valet_fijo_empleado_cedula ON valet_fijo_empleado (empleado_cedula);
+CREATE INDEX idx_valet_fijo_empleado_centro
+  ON valet_fijo_empleado (centro_costo_id);
+
+CREATE INDEX idx_valet_fijo_empleado_cedula
+  ON valet_fijo_empleado (empleado_cedula);
 
 CREATE TABLE valet_fijo_horario (
   id BIGSERIAL PRIMARY KEY,
@@ -31,13 +34,26 @@ CREATE TABLE valet_fijo_horario (
   hora_salida TEXT NOT NULL,
   es_adicional BOOLEAN NOT NULL DEFAULT FALSE,
   aprobado BOOLEAN NOT NULL DEFAULT TRUE,
+  recurrencia BOOLEAN NOT NULL DEFAULT FALSE,
+  fin_recurrencia DATE,
+  observacion TEXT NOT NULL DEFAULT '',
+  evidencia_blob BYTEA,
+  evidencia_mime_type TEXT NOT NULL DEFAULT '',
+  evidencia_nombre_archivo TEXT NOT NULL DEFAULT '',
   fecha_creacion TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   fecha_actualizacion TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT uq_valet_fijo_horario UNIQUE (centro_costo_id, empleado_cedula, fecha_turno, hora_entrada, hora_salida)
+  CONSTRAINT uq_valet_fijo_horario UNIQUE (centro_costo_id, empleado_cedula, fecha_turno, hora_entrada, hora_salida),
+  CONSTRAINT chk_valet_fijo_horario_hora_entrada_salida CHECK (hora_entrada <> '' AND hora_salida <> ''),
+  CONSTRAINT chk_valet_fijo_horario_fecha_turno_formato CHECK (fecha_turno IS NOT NULL)
 );
 
-CREATE INDEX idx_valet_fijo_horario_centro ON valet_fijo_horario (centro_costo_id);
-CREATE INDEX idx_valet_fijo_horario_empleado ON valet_fijo_horario (empleado_cedula);
-CREATE INDEX idx_valet_fijo_horario_fecha_turno ON valet_fijo_horario (fecha_turno);
+CREATE INDEX idx_valet_fijo_horario_centro
+  ON valet_fijo_horario (centro_costo_id);
+
+CREATE INDEX idx_valet_fijo_horario_empleado
+  ON valet_fijo_horario (empleado_cedula);
+
+CREATE INDEX idx_valet_fijo_horario_fecha_turno
+  ON valet_fijo_horario (fecha_turno);
 
 COMMIT;

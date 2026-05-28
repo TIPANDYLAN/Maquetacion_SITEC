@@ -1,20 +1,80 @@
-import { useEffect, useState } from 'react';
-import { Eye, Trash2, ChevronDown, Check, CheckCircle2 } from 'lucide-react';
-import { ListarValetsFijos, getNominaCostCenters, getNominaEmployeesActive, type NominaCostCenter } from '../../services/n8nApi';
+import { useEffect, useMemo, useState } from 'react';
+import {
+  Banknote,
+  Building,
+  Calendar,
+  Check,
+  ChevronDown,
+  ChevronUp,
+  Clock,
+  Copy,
+  CreditCard,
+  Eye,
+  FileText,
+  FileUp,
+  Loader2,
+  MapPin,
+  MoreVertical,
+  Pencil,
+  Plus,
+  Save,
+  Settings2,
+  Trash2,
+  Unlock,
+  User,
+  Users,
+  X,
+} from 'lucide-react';
 import { dbApi } from '../../services/dbApi';
+import { ListarValetsFijos, getNominaEmployeesActive, type NominaCostCenter } from '../../services/n8nApi';
 import type { EmpleadoNominaApiItem } from '../../types/nomina';
 
-type SeccionValets = 'ingreso' | 'gestionar';
+type SubTabValet = 'historial' | 'gestionar';
+type EstadoDia = 'Normal' | 'Adicional' | 'Domingo' | 'Domingo Adicional' | 'Libre';
 
-interface EmpleadoValet {
+interface DiaRegistro {
   id: string;
-  centro: string;
-  nombre: string;
-  valor: string;
-  cedula?: string;
+  parqueadero: string;
+  estadoDia: EstadoDia;
+  horaEntrada: string;
+  horaSalida: string;
+  aprobado: boolean;
 }
 
-interface ValetEmpleadoDbRegistro {
+interface HorarioValetRow {
+  id: string;
+  empleado: string;
+  ci: string;
+  periodo: string;
+  codCC: string;
+  centro: string;
+  estado: 'creado' | 'pendiente' | 'procesado';
+  diasRegistro: Record<string, DiaRegistro[]>;
+}
+
+interface EmpleadoCatalogo {
+  nombre: string;
+  ci: string;
+  centro: string;
+  codCC: string;
+}
+
+interface SemanaPeriodo {
+  semNum: number;
+  wkNum: number;
+  start: Date;
+  end: Date;
+  dias: Array<{ fecha: string; diaNombre: string; diaSemana: number }>;
+}
+
+interface CostosConfig {
+  Normal: { horas: string; valor: string };
+  Adicional: { horas: string; valor: string };
+  Domingo: { horas: string; valor: string };
+  'Domingo Adicional': { horas: string; valor: string };
+}
+
+interface ValetEmpleadoDbItem {
   id: string;
   centroCostoId: string;
   centroCostoNombre: string;
@@ -23,17 +83,7 @@ interface ValetEmpleadoDbRegistro {
   valorFijo: number;
 }
 
-interface ValetEmpleadosListResponse {
-  ok?: boolean;
-  registros?: ValetEmpleadoDbRegistro[];
-}
-
-interface ValetEmpleadoSaveResponse {
-  ok?: boolean;
-  registro?: ValetEmpleadoDbRegistro;
-}
-
-interface ValetHorarioDbRegistro {
+interface ValetHorarioDbItem {
   id: string;
   centroCostoId: string;
   centroCostoNombre: string;
@@ -44,239 +94,711 @@ interface ValetHorarioDbRegistro {
   horaSalida: string;
   esAdicional: boolean;
   aprobado?: boolean;
-  recurrencia?: boolean;
-  finRecurrencia?: string;
   observacion?: string;
-  evidenciaBase64?: string;
-  evidenciaMimeType?: string;
-  evidenciaNombreArchivo?: string;
 }
 
-interface ValetHorariosListResponse {
-  ok?: boolean;
-  registros?: ValetHorarioDbRegistro[];
+interface ValetHorarioMeta {
+  estadoDia?: EstadoDia;
+  parqueadero?: string;
 }
 
-interface ValetHorarioSaveResponse {
-  ok?: boolean;
-  registro?: ValetHorarioDbRegistro;
-}
-
-interface ValetHorarioDeleteResponse {
-  ok?: boolean;
-  registro?: ValetHorarioDbRegistro;
-}
-
-interface EmpleadoActivoOption {
-  cedula: string;
-  nombreCompleto: string;
-  centroId: string;
-  centroNombre: string;
-}
-
-interface HorarioRegistrado {
-  id: string;
-  centro: string;
-  empleado: string;
-  fecha: string;
-  horaEntrada: string;
-  horaSalida: string;
-  adicional: boolean;
-  aprobado?: boolean;
-  recurrencia: boolean;
-  finRecurrencia: string;
-  observacion: string;
-  evidenciaBase64: string;
-  evidenciaMimeType: string;
-  evidenciaNombreArchivo: string;
-}
-
-interface CalendarDay {
-  d: number;
-  curr: boolean;
-  m: number;
-  y: number;
-  active?: boolean;
-}
-
-interface WeekDay {
-  d: number;
-  m: number;
-  y: number;
-  n: string;
-  active: boolean;
-}
-
-const calcularValorNum = (entrada: string, salida: string): number => {
-  if (!entrada || !salida) return 0;
-  const [h1, m1] = entrada.split(':').map(Number);
-  const [h2, m2] = salida.split(':').map(Number);
-  let diff = (h2 * 60 + m2) - (h1 * 60 + m1);
-  if (diff < 0) diff += 24 * 60;
-  return (diff / 60) * 3;
+const composeCentroDisplay = (centroCostoId: string, centroCostoNombre: string): string => {
+  const id = String(centroCostoId || '').trim();
+  const nombre = String(centroCostoNombre || '').trim();
+  if (id && nombre) return `${id} - ${nombre}`;
+  return id || nombre;
 };
-
-const calcularValorStr = (entrada: string, salida: string): string => calcularValorNum(entrada, salida).toFixed(2);
-
-const monthNames = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
-const daysOfWeek = ['lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo'];
-const hours = Array.from({ length: 24 }, (_, i) => i);
 
 const parseCentroCompuesto = (valor: string): { centroCostoId: string; centroCostoNombre: string } => {
   const raw = String(valor || '').trim();
   const match = raw.match(/^([^\-]+?)\s*-\s*(.+)$/);
-
-  if (!match) {
-    return { centroCostoId: '', centroCostoNombre: raw };
-  }
-
+  if (!match) return { centroCostoId: '', centroCostoNombre: raw };
   return {
     centroCostoId: String(match[1] || '').trim(),
     centroCostoNombre: String(match[2] || '').trim(),
   };
 };
 
-const composeCentroDisplay = (centroCostoId: string, centroCostoNombre: string): string => {
-  if (centroCostoId && centroCostoNombre) {
-    return `${centroCostoId} - ${centroCostoNombre}`;
+const calcHoras = (ent: string, sal: string): number => {
+  if (!ent || !sal) return 0;
+  const [h1, m1] = ent.split(':').map(Number);
+  const [h2, m2] = sal.split(':').map(Number);
+  let diff = (h2 * 60 + m2) - (h1 * 60 + m1);
+  if (diff < 0) diff += 24 * 60;
+  return diff / 60;
+};
+
+const getParqName = (c: string): string => {
+  const parts = String(c || '').split('-');
+  return parts.length > 1 ? parts.slice(1).join('-').trim() : c;
+};
+
+const getSemanasPeriodo = (periodo: string): SemanaPeriodo[] => {
+  const [y, m] = periodo.split('-').map(Number);
+  const firstDay = new Date(y, m - 1, 1);
+  const lastDay = new Date(y, m, 0);
+  const semanas: SemanaPeriodo[] = [];
+
+  const cursor = new Date(firstDay);
+  const dow = cursor.getDay();
+  cursor.setDate(cursor.getDate() - (dow === 0 ? 6 : dow - 1));
+
+  let semNum = 1;
+  while (cursor <= lastDay) {
+    const start = new Date(cursor);
+    const end = new Date(cursor);
+    end.setDate(end.getDate() + 6);
+
+    const dias: SemanaPeriodo['dias'] = [];
+    for (let i = 0; i < 7; i += 1) {
+      const d = new Date(cursor);
+      d.setDate(d.getDate() + i);
+      const names = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado'];
+      dias.push({
+        fecha: d.toISOString().slice(0, 10),
+        diaNombre: names[d.getDay()],
+        diaSemana: d.getDay(),
+      });
+    }
+
+    const jan4 = new Date(start.getFullYear(), 0, 4);
+    const wkNum = Math.ceil(((start.getTime() - jan4.getTime()) / 86400000 + jan4.getDay() + 1) / 7);
+
+    semanas.push({ semNum, wkNum, start, end, dias });
+    cursor.setDate(cursor.getDate() + 7);
+    semNum += 1;
   }
-  return centroCostoId || centroCostoNombre;
+
+  return semanas;
 };
 
-const parseHora24AMinutos = (value: string): number | null => {
-  const raw = String(value || '').trim();
-  if (!/^\d{2}:\d{2}$/.test(raw)) return null;
-
-  const [h, m] = raw.split(':').map(Number);
-  if (!Number.isInteger(h) || !Number.isInteger(m)) return null;
-  if (h < 0 || h > 23 || m < 0 || m > 59) return null;
-
-  return (h * 60) + m;
+const fmtFecha = (fechaIso: string): string => {
+  const dt = new Date(`${fechaIso}T12:00:00`);
+  return dt.toLocaleDateString('es-EC', { weekday: 'long', day: 'numeric', month: 'numeric', year: 'numeric' });
 };
 
-const horariosSeSolapan = (inicioA: number, finA: number, inicioB: number, finB: number): boolean => {
-  return inicioA < finB && inicioB < finA;
-};
+const parseHorarioMeta = (raw: string): ValetHorarioMeta => {
+  const text = String(raw || '').trim();
+  if (!text) return {};
 
-const esFechaDomingo = (fechaIso: string): boolean => {
-  const d = new Date(`${fechaIso}T12:00:00`);
-  return !Number.isNaN(d.getTime()) && d.getDay() === 0;
-};
-
-const parseFechaLocal = (fechaIso: string): Date | null => {
-  const [anio, mes, dia] = String(fechaIso || '').split('-').map(Number);
-  if (!Number.isInteger(anio) || !Number.isInteger(mes) || !Number.isInteger(dia)) return null;
-  return new Date(anio, mes - 1, dia);
-};
-
-const formatFechaLocal = (date: Date): string => {
-  const anio = date.getFullYear();
-  const mes = String(date.getMonth() + 1).padStart(2, '0');
-  const dia = String(date.getDate()).padStart(2, '0');
-  return `${anio}-${mes}-${dia}`;
-};
-
-const fileToBase64 = async (file: File): Promise<string> => {
-  return await new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = String(reader.result || '');
-      const base64 = result.includes(',') ? result.split(',')[1] : result;
-      resolve(base64);
+  try {
+    const parsed = JSON.parse(text) as ValetHorarioMeta;
+    return {
+      estadoDia: parsed.estadoDia,
+      parqueadero: parsed.parqueadero,
     };
-    reader.onerror = () => reject(new Error('No se pudo leer el archivo de evidencia.'));
-    reader.readAsDataURL(file);
+  } catch {
+    return {};
+  }
+};
+
+const serializeHorarioMeta = (meta: ValetHorarioMeta): string => {
+  return JSON.stringify({
+    estadoDia: meta.estadoDia || 'Normal',
+    parqueadero: meta.parqueadero || '',
   });
 };
 
-interface Bloque {
-  id: string;
-  evento: HorarioRegistrado;
-  inicioMin: number;
-  finMin: number;
-  duracionMin: number;
-  lane: number;
-  lanesTotal: number;
+interface SeleccionarEmpleadoModalProps {
+  periodo: string;
+  centrosValet: string[];
+  empleados: EmpleadoCatalogo[];
+  onClose: () => void;
+  onSeleccionar: (empleado: EmpleadoCatalogo) => void | Promise<void>;
 }
 
-const calcularBloquesCalendario = (eventosDelDia: HorarioRegistrado[]): Bloque[] => {
-  const eventosValidos = eventosDelDia
-    .map((evento) => {
-      const inicioMin = parseHora24AMinutos(evento.horaEntrada);
-      const finMin = parseHora24AMinutos(evento.horaSalida);
-      if (inicioMin === null || finMin === null || finMin <= inicioMin) return null;
+const SeleccionarEmpleadoModal = ({ periodo, centrosValet, empleados, onClose, onSeleccionar }: SeleccionarEmpleadoModalProps) => {
+  const [nombre, setNombre] = useState('');
+  const [ci, setCi] = useState('');
+  const [centro, setCentro] = useState('');
 
-      return {
-        id: evento.id,
-        evento,
-        inicioMin,
-        finMin,
-        duracionMin: finMin - inicioMin,
-      };
-    })
-    .filter((item): item is Exclude<typeof item, null> => item !== null)
-    .sort((a, b) => a.inicioMin - b.inicioMin);
+  const empleadosFiltrados = useMemo(() => {
+    const query = nombre.trim().toLowerCase();
+    if (!query) return empleados;
+    return empleados.filter((emp) => emp.nombre.toLowerCase().includes(query) || emp.ci.includes(query));
+  }, [empleados, nombre]);
 
-  if (eventosValidos.length === 0) return [];
+  const seleccionarEmpleadoPorLinea = (linea: string) => {
+    const valor = String(linea || '').trim().toLowerCase();
+    const encontrado = empleados.find((emp) => `${emp.nombre} - ${emp.ci}`.toLowerCase() === valor)
+      || empleados.find((emp) => emp.ci.toLowerCase() === valor)
+      || empleados.find((emp) => emp.nombre.toLowerCase() === valor);
 
-  const finPorLane: number[] = [];
-  const bloquesConLane = eventosValidos.map((bloque) => {
-    let lane = finPorLane.findIndex((fin) => bloque.inicioMin >= fin);
-    if (lane === -1) {
-      lane = finPorLane.length;
-      finPorLane.push(bloque.finMin);
-    } else {
-      finPorLane[lane] = bloque.finMin;
+    if (encontrado) {
+      setNombre(encontrado.nombre);
+      setCi(encontrado.ci);
+      setCentro(encontrado.centro);
     }
-    return { ...bloque, lane };
-  });
+  };
 
-  const lanesTotal = Math.max(1, finPorLane.length);
+  const puedeContinuar = Boolean(nombre && ci && centro);
 
-  return bloquesConLane.map((bloque) => ({
-    ...bloque,
-    lanesTotal,
-  }));
+  return (
+    <div className="fixed inset-0 z-[105] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative w-full max-w-[500px] overflow-hidden rounded-2xl bg-white shadow-2xl">
+        <div className="flex items-center justify-between border-b border-slate-100 px-8 py-6">
+          <h3 className="text-[17px] font-bold text-slate-800">Anadir nuevo empleado al periodo {periodo}</h3>
+          <button onClick={onClose} className="rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700">
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="space-y-4 px-8 py-6">
+          <div>
+            <label className="mb-1 block text-[13px] font-bold text-slate-700">Nombre completo</label>
+            <input
+              type="text"
+              list="empleados-valet-catalogo"
+              value={nombre}
+              onChange={(e) => {
+                setNombre(e.target.value);
+                seleccionarEmpleadoPorLinea(e.target.value);
+              }}
+              placeholder="Ej. JUAN PABLO ALVAREZ"
+              className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-[13px] text-slate-700 shadow-sm outline-none transition-all focus:border-[#001F3F]"
+            />
+            <datalist id="empleados-valet-catalogo">
+              {empleadosFiltrados.map((emp) => (
+                <option key={emp.ci} value={`${emp.nombre} - ${emp.ci}`} />
+              ))}
+            </datalist>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-[13px] font-bold text-slate-700">Cedula (CI)</label>
+            <input
+              type="text"
+              value={ci}
+              onChange={(e) => setCi(e.target.value)}
+              placeholder="0999999999"
+              className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-[13px] text-slate-700 shadow-sm outline-none transition-all focus:border-[#001F3F]"
+            />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-[13px] font-bold text-slate-700">Centro de Costo (Valet)</label>
+            <div className="relative">
+              <select
+                value={centro}
+                onChange={(e) => setCentro(e.target.value)}
+                className="w-full cursor-pointer appearance-none rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-[13px] text-slate-700 shadow-sm outline-none transition-all focus:border-[#001F3F]"
+              >
+                <option value="">-- Seleccione un valet --</option>
+                {centrosValet.map((v, i) => (
+                  <option key={`${v}-${i}`} value={v}>{v}</option>
+                ))}
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+            </div>
+          </div>
+        </div>
+
+        <div className="flex justify-end border-t border-slate-100 bg-slate-50 px-8 py-5">
+          <button
+            onClick={() => {
+              if (!puedeContinuar) return;
+              const centroParseado = parseCentroCompuesto(centro);
+              onSeleccionar({
+                nombre: nombre.trim(),
+                ci: ci.trim(),
+                centro: centro.trim(),
+                codCC: centroParseado.centroCostoId || '00000000',
+              });
+            }}
+            disabled={!puedeContinuar}
+            className={`rounded-xl px-8 py-2.5 text-[13px] font-bold shadow-md transition-all ${
+              puedeContinuar
+                ? 'bg-[#001F3F] text-white hover:bg-blue-900 active:scale-95'
+                : 'cursor-not-allowed border border-slate-200 bg-slate-100 text-slate-400'
+            }`}
+          >
+            Continuar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+interface RegistroAsistenciaModalProps {
+  empleadoSel: EmpleadoCatalogo;
+  periodo: string;
+  registroRow: HorarioValetRow;
+  costosConfig: CostosConfig;
+  centrosValet: string[];
+  onClose: () => void;
+  onGuardar: (nuevosDias: Record<string, DiaRegistro[]>) => void | Promise<void>;
+}
+
+const RegistroAsistenciaModal = ({ empleadoSel, periodo, registroRow, costosConfig, centrosValet, onClose, onGuardar }: RegistroAsistenciaModalProps) => {
+  const semanas = useMemo(() => getSemanasPeriodo(periodo), [periodo]);
+  const [activeSem, setActiveSem] = useState(0);
+  const [saved, setSaved] = useState(true);
+  const [uploadStatus, setUploadStatus] = useState<'idle' | 'loading' | 'done'>('idle');
+  const [uploadName, setUploadName] = useState('');
+
+  const initRows = (): Record<string, DiaRegistro[]> => {
+    const rows: Record<string, DiaRegistro[]> = {};
+    semanas.forEach((semana) => {
+      semana.dias.forEach((dia) => {
+        if (registroRow?.diasRegistro?.[dia.fecha]) {
+          rows[dia.fecha] = registroRow.diasRegistro[dia.fecha];
+        } else {
+          rows[dia.fecha] = [{
+            id: `${dia.fecha}-0`,
+            parqueadero: empleadoSel.centro || '',
+            estadoDia: 'Libre',
+            horaEntrada: '00:00',
+            horaSalida: '00:00',
+            aprobado: true,
+          }];
+        }
+      });
+    });
+    return rows;
+  };
+
+  const [rows, setRows] = useState<Record<string, DiaRegistro[]>>(initRows);
+
+  const updateRow = (fecha: string, index: number, field: keyof DiaRegistro, val: string | boolean) => {
+    setRows((prev) => {
+      const newDayRows = [...(prev[fecha] || [])];
+      const curr = newDayRows[index];
+      if (!curr) return prev;
+      newDayRows[index] = { ...curr, [field]: val } as DiaRegistro;
+      return { ...prev, [fecha]: newDayRows };
+    });
+  };
+
+  const duplicateRow = (fecha: string, indexToCopy: number) => {
+    setRows((prev) => {
+      const newDayRows = [...(prev[fecha] || [])];
+      const rowToCopy = newDayRows[indexToCopy];
+      if (!rowToCopy) return prev;
+      newDayRows.push({
+        ...rowToCopy,
+        id: `${fecha}-${Date.now()}`,
+        estadoDia: 'Adicional',
+        horaEntrada: '00:00',
+        horaSalida: '00:00',
+        aprobado: true,
+      });
+      return { ...prev, [fecha]: newDayRows };
+    });
+  };
+
+  const deleteRow = (fecha: string, index: number) => {
+    setRows((prev) => {
+      const newDayRows = [...(prev[fecha] || [])];
+      if (newDayRows.length <= 1) {
+        newDayRows[0] = {
+          ...newDayRows[0],
+          estadoDia: 'Libre',
+          horaEntrada: '00:00',
+          horaSalida: '00:00',
+          aprobado: true,
+        };
+      } else {
+        newDayRows.splice(index, 1);
+      }
+      return { ...prev, [fecha]: newDayRows };
+    });
+  };
+
+  const calcValor = (horas: number, tipo: EstadoDia): number => {
+    if (tipo === 'Libre') return 0;
+    const conf = costosConfig[tipo as keyof CostosConfig];
+    if (!conf) return 0;
+    if (tipo === 'Domingo') return Number.parseFloat(conf.valor) || 0;
+    return horas * (Number.parseFloat(conf.valor) || 0);
+  };
+
+  const sem = semanas[activeSem];
+  const ESTADOS_DIA: EstadoDia[] = ['Normal', 'Adicional', 'Domingo', 'Domingo Adicional', 'Libre'];
+
+  const handleGuardar = () => {
+    const diasToSave: Record<string, DiaRegistro[]> = {};
+    semanas.forEach((s) => {
+      s.dias.forEach((d) => {
+        const dayRows = rows[d.fecha] || [];
+        const validRows = dayRows.filter((r) => r.estadoDia !== 'Libre');
+        if (validRows.length > 0) {
+          diasToSave[d.fecha] = validRows;
+        }
+      });
+    });
+    void onGuardar(diasToSave);
+    setSaved(true);
+  };
+
+  const handleSimUpload = () => {
+    setUploadStatus('loading');
+    setUploadName('documento_soporte.png');
+    setTimeout(() => setUploadStatus('done'), 1800);
+  };
+
+  return (
+    <div className="fixed inset-0 z-[110] flex items-start justify-center overflow-y-auto p-2 sm:p-4">
+      <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative my-2 flex h-[calc(100vh-1rem)] w-full max-w-[1280px] flex-col overflow-hidden rounded-2xl bg-white shadow-2xl sm:my-4 sm:h-[calc(100vh-2rem)]">
+        <div className="shrink-0 flex items-center justify-between border-b border-slate-100 px-8 py-5">
+          <h3 className="text-[15px] font-bold text-slate-800">Registro de asistencia del periodo: <span className="text-slate-600">{periodo}</span></h3>
+          <button onClick={onClose} className="rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700"><X size={18} /></button>
+        </div>
+
+        <div className="shrink-0 flex gap-0 overflow-x-auto border-b border-slate-200">
+          {semanas.map((s, i) => (
+            <button
+              key={`${s.semNum}-${s.wkNum}`}
+              onClick={() => setActiveSem(i)}
+              className={`whitespace-nowrap border-b-2 px-5 py-3 text-[12px] font-bold transition-all ${
+                activeSem === i ? 'border-[#2563EB] text-[#2563EB]' : 'border-transparent text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              SEMANA {s.semNum} ({s.wkNum})
+            </button>
+          ))}
+        </div>
+
+        <div className="shrink-0 space-y-1 border-b border-slate-100 bg-slate-50/40 px-8 py-4">
+          <p className="text-[12px] text-slate-600"><span className="text-[11px] font-black uppercase tracking-wider text-slate-800">Nombre: </span>{empleadoSel.nombre}</p>
+          <p className="text-[12px] text-slate-600">
+            <span className="text-[11px] font-black uppercase tracking-wider text-slate-800">Desde: </span>{fmtFecha(sem.start.toISOString().slice(0, 10))}
+            <span className="ml-4 text-[11px] font-black uppercase tracking-wider text-slate-800">Hasta: </span>{fmtFecha(sem.end.toISOString().slice(0, 10))}
+          </p>
+        </div>
+
+        {saved ? (
+          <div className="min-h-0 flex-1 overflow-y-scroll p-0 [scrollbar-gutter:stable]">
+            <div className="overflow-x-auto border-b border-slate-100">
+              <table className="w-full min-w-[1100px] text-left">
+                <thead className="sticky top-0 z-10 border-b border-slate-100 bg-white">
+                  <tr>
+                    {['DIA', 'PARQUEADERO TRABAJADO', 'E. DIA', 'INGRESO', 'SALIDA', 'ESTADO', 'HORAS', 'VALOR ($)', 'ACCIONES'].map((h) => (
+                      <th key={h} className="whitespace-nowrap px-3 py-3 text-center text-[10px] font-bold uppercase tracking-wider text-slate-500 first:text-left">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {sem.dias.map((d, i) => {
+                    const dayRows = rows[d.fecha] || [{ id: `${d.fecha}-0`, parqueadero: '', estadoDia: 'Libre', horaEntrada: '00:00', horaSalida: '00:00', aprobado: true }];
+                    return dayRows.map((r, rowIndex) => {
+                      const horas = r.estadoDia !== 'Libre' ? calcHoras(r.horaEntrada, r.horaSalida) : 0;
+                      const valor = r.estadoDia !== 'Libre' ? calcValor(horas, r.estadoDia) : 0;
+                      const isFirst = rowIndex === 0;
+
+                      return (
+                        <tr key={`${i}-${rowIndex}`} className={r.estadoDia !== 'Libre' ? 'bg-blue-50/20 transition-colors hover:bg-blue-50/40' : 'transition-colors hover:bg-slate-50/60'}>
+                          <td className="px-3 py-3">
+                            {isFirst ? (
+                              <div className="whitespace-nowrap text-[11px] font-medium leading-tight text-slate-700">
+                                {d.diaNombre},<br />
+                                <span className="text-[10px] text-slate-500">{d.fecha.split('-').reverse().join('/')}</span>
+                              </div>
+                            ) : null}
+                          </td>
+                          <td className="whitespace-nowrap px-3 py-3 text-center text-[11px] font-medium text-slate-700">{r.parqueadero || '—'}</td>
+                          <td className="px-3 py-3 text-center text-[11px] text-slate-700">
+                            {r.estadoDia !== 'Libre' ? (
+                              <span className={`rounded px-2 py-0.5 text-[10px] font-bold ${r.estadoDia === 'Normal' ? 'bg-blue-100 text-blue-700' : r.estadoDia === 'Adicional' ? 'bg-orange-100 text-orange-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                                {r.estadoDia}
+                              </span>
+                            ) : 'Libre'}
+                          </td>
+                          <td className="px-3 py-3 text-center font-mono text-[11px] text-slate-700">{r.horaEntrada}</td>
+                          <td className="px-3 py-3 text-center font-mono text-[11px] text-slate-700">{r.horaSalida}</td>
+                          <td className="px-3 py-3 text-center">
+                            {r.estadoDia !== 'Libre' ? (
+                              <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold ${r.aprobado ? 'border-emerald-200 bg-emerald-50 text-emerald-600' : 'border-red-200 bg-red-50 text-red-600'}`}>
+                                {r.aprobado ? <Check size={10} /> : <X size={10} />} {r.aprobado ? 'Aprobado' : 'Rechazado'}
+                              </span>
+                            ) : '-'}
+                          </td>
+                          <td className="px-3 py-3 text-center text-[11px] font-bold text-[#001F3F]">{r.estadoDia !== 'Libre' ? horas.toFixed(2) : '-'}</td>
+                          <td className="px-3 py-3 text-center text-[11px] font-bold text-emerald-600">{r.estadoDia !== 'Libre' ? `$${valor.toFixed(2)}` : '-'}</td>
+                          <td className="px-3 py-3 text-center">
+                            {r.estadoDia !== 'Libre' ? (
+                              <div className="flex items-center justify-center gap-1">
+                                <button
+                                  title="Eliminar registro"
+                                  onClick={() => deleteRow(d.fecha, rowIndex)}
+                                  className="rounded-lg border border-slate-200 p-1.5 text-slate-400 transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-500"
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              </div>
+                            ) : null}
+                          </td>
+                        </tr>
+                      );
+                    });
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="flex justify-end border-b border-slate-100 px-8 py-3">
+              <button onClick={() => setSaved(false)} className="flex items-center gap-2 rounded-lg border border-slate-200 px-5 py-2 text-[12px] font-bold text-[#2563EB] shadow-sm transition-colors hover:bg-blue-50">
+                <Pencil size={13} />Editar Asistencia
+              </button>
+            </div>
+
+            <div className="space-y-4 px-8 py-6">
+              <div className="flex items-start gap-5">
+                <div
+                  onClick={handleSimUpload}
+                  className={`min-h-[140px] w-64 cursor-pointer rounded-xl border-2 border-dashed transition-all ${
+                    uploadStatus === 'done' ? 'border-emerald-400 bg-emerald-50' : uploadStatus === 'loading' ? 'border-blue-300 bg-blue-50' : 'border-slate-300 hover:border-blue-400 hover:bg-blue-50/30'
+                  } flex flex-col items-center justify-center gap-3`}
+                >
+                  {uploadStatus === 'loading' ? (
+                    <>
+                      <Loader2 size={28} className="animate-spin text-blue-500" />
+                      <span className="text-[11px] font-medium text-blue-500">Subiendo archivo...</span>
+                    </>
+                  ) : uploadStatus === 'done' ? (
+                    <>
+                      <div className="rounded-full bg-emerald-100 p-2.5"><Check size={20} className="text-emerald-600" /></div>
+                      <span className="text-[12px] font-bold text-emerald-600">Archivo cargado</span>
+                      <span className="rounded bg-emerald-100 px-2 py-0.5 text-[10px] text-emerald-500">{uploadName}</span>
+                    </>
+                  ) : (
+                    <>
+                      <div className="rounded-lg bg-slate-50 p-2.5"><FileUp size={26} className="text-blue-500" /></div>
+                      <span className="px-4 text-center text-[11px] font-medium leading-snug text-slate-500">Arrastra y suelta aqui el archivo para cargar</span>
+                    </>
+                  )}
+                </div>
+                <div className="flex flex-1 items-start pt-4"><p className="text-[12px] leading-relaxed text-slate-400">Seleccione un archivo con el documento de soporte (jpg, png, pdf)</p></div>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="min-h-0 flex-1 overflow-y-scroll [scrollbar-gutter:stable]">
+              <table className="w-full min-w-[1100px] text-left">
+                <thead className="sticky top-0 z-10 border-b border-slate-100 bg-white">
+                  <tr>
+                    <th className="w-32 px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-500">DIA</th>
+                    <th className="w-48 px-3 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-500">PARQUEADERO TRABAJADO</th>
+                    <th className="w-36 px-3 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-500">E. DIA</th>
+                    <th className="w-24 px-3 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-500">INGRESO</th>
+                    <th className="w-24 px-3 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-500">SALIDA</th>
+                    <th className="w-24 px-3 py-3 text-center text-[11px] font-bold uppercase tracking-wider text-slate-500">ESTADO</th>
+                    <th className="w-24 px-3 py-3 text-center text-[11px] font-bold uppercase tracking-wider text-slate-500">APROBAR</th>
+                    <th className="w-20 px-3 py-3 text-center text-[11px] font-bold uppercase tracking-wider text-slate-500">HORAS</th>
+                    <th className="w-24 px-3 py-3 text-center text-[11px] font-bold uppercase tracking-wider text-slate-500">VALOR ($)</th>
+                    <th className="w-12 px-3 py-3 text-center text-[11px] font-bold uppercase tracking-wider text-slate-500" />
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {sem.dias.map((d, i) => {
+                    const dayRows = rows[d.fecha] || [{ id: `${d.fecha}-0`, parqueadero: '', estadoDia: 'Libre', horaEntrada: '00:00', horaSalida: '00:00', aprobado: true }];
+                    const esFinde = d.diaSemana === 0 || d.diaSemana === 6;
+
+                    return dayRows.map((r, rowIndex) => {
+                      const horasCalculadas = r.estadoDia !== 'Libre' ? calcHoras(r.horaEntrada, r.horaSalida) : 0;
+                      const valorCalculado = r.estadoDia !== 'Libre' ? calcValor(horasCalculadas, r.estadoDia) : 0;
+                      const isFirst = rowIndex === 0;
+
+                      return (
+                        <tr key={`${i}-${rowIndex}`} className={esFinde ? 'bg-slate-50/60 transition-colors' : 'transition-colors hover:bg-blue-50/20'}>
+                          <td className="px-4 py-3">
+                            {isFirst ? (
+                              <div className={`text-[12px] font-medium leading-tight ${esFinde ? 'text-slate-400' : 'text-slate-700'}`}>
+                                {d.diaNombre},<br />
+                                <span className="text-[11px]">{d.fecha.split('-').reverse().join('/')}</span>
+                              </div>
+                            ) : null}
+                          </td>
+
+                          <td className="px-3 py-3">
+                            <div className="relative">
+                              <select
+                                value={r.parqueadero}
+                                onChange={(e) => updateRow(d.fecha, rowIndex, 'parqueadero', e.target.value)}
+                                className="w-full cursor-pointer appearance-none truncate rounded border border-slate-200 bg-white py-1.5 pl-3 pr-7 text-[11px] text-slate-700 outline-none focus:border-blue-400"
+                              >
+                                <option value="">— Seleccionar —</option>
+                                {centrosValet.map((p, pi) => <option key={`${p}-${pi}`} value={p}>{p}</option>)}
+                              </select>
+                              <ChevronDown className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-slate-400" size={12} />
+                            </div>
+                          </td>
+
+                          <td className="px-3 py-3">
+                            <div className="relative">
+                              <select
+                                value={r.estadoDia}
+                                onChange={(e) => updateRow(d.fecha, rowIndex, 'estadoDia', e.target.value as EstadoDia)}
+                                className="w-full cursor-pointer appearance-none rounded border border-slate-200 bg-white py-1.5 pl-3 pr-7 text-[11px] text-slate-700 outline-none focus:border-blue-400"
+                              >
+                                {ESTADOS_DIA.map((s) => <option key={s} value={s}>{s}</option>)}
+                              </select>
+                              <ChevronDown className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-slate-400" size={12} />
+                            </div>
+                          </td>
+
+                          <td className="px-3 py-3">
+                            <input
+                              type="time"
+                              disabled={r.estadoDia === 'Libre'}
+                              value={r.horaEntrada}
+                              onChange={(e) => updateRow(d.fecha, rowIndex, 'horaEntrada', e.target.value)}
+                              className="w-full rounded border border-slate-200 bg-white px-2 py-1.5 text-[12px] text-slate-700 outline-none focus:border-blue-400 disabled:bg-slate-50"
+                            />
+                          </td>
+
+                          <td className="px-3 py-3">
+                            <input
+                              type="time"
+                              disabled={r.estadoDia === 'Libre'}
+                              value={r.horaSalida}
+                              onChange={(e) => updateRow(d.fecha, rowIndex, 'horaSalida', e.target.value)}
+                              className="w-full rounded border border-slate-200 bg-white px-2 py-1.5 text-[12px] text-slate-700 outline-none focus:border-blue-400 disabled:bg-slate-50"
+                            />
+                          </td>
+
+                          <td className="px-3 py-3 text-center">
+                            {r.estadoDia !== 'Libre' ? (
+                              <span className="rounded border border-amber-200 bg-amber-50 px-2 py-1 text-[10px] font-bold text-amber-600">Pendiente</span>
+                            ) : '-'}
+                          </td>
+
+                          <td className="px-3 py-3 text-center">
+                            {r.estadoDia !== 'Libre' ? (
+                              <label className="group flex cursor-pointer items-center justify-center gap-2">
+                                <div className={`flex h-5 w-5 items-center justify-center rounded border transition-colors ${r.aprobado ? 'border-emerald-500 bg-emerald-500' : 'border-slate-300 bg-white group-hover:border-emerald-400'}`}>
+                                  {r.aprobado ? <Check size={12} className="text-white" strokeWidth={3} /> : null}
+                                </div>
+                                <input type="checkbox" className="hidden" checked={r.aprobado} onChange={(e) => updateRow(d.fecha, rowIndex, 'aprobado', e.target.checked)} />
+                              </label>
+                            ) : null}
+                          </td>
+
+                          <td className="px-3 py-3 text-center text-[11px] font-bold text-slate-600">{r.estadoDia !== 'Libre' ? horasCalculadas.toFixed(2) : '-'}</td>
+                          <td className="px-3 py-3 text-center text-[11px] font-bold text-blue-600">{r.estadoDia !== 'Libre' ? `$${valorCalculado.toFixed(2)}` : '-'}</td>
+
+                          <td className="px-3 py-3 text-center">
+                            <div className="flex justify-center gap-1">
+                              <button title="Duplicar turno en este dia" onClick={() => duplicateRow(d.fecha, rowIndex)} className="rounded-lg border border-transparent p-1.5 text-blue-400 transition-colors hover:border-slate-200 hover:bg-slate-100 hover:text-blue-600"><Copy size={14} /></button>
+                              <button title="Eliminar registro" onClick={() => deleteRow(d.fecha, rowIndex)} className="rounded-lg border border-transparent p-1.5 text-slate-400 transition-colors hover:border-slate-200 hover:bg-red-50 hover:text-red-500"><Trash2 size={14} /></button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    });
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="shrink-0 flex items-center justify-between border-t border-slate-100 bg-white px-8 py-4">
+              <div />
+              <div className="flex items-center gap-3">
+                <button onClick={onClose} className="rounded-lg border border-slate-200 px-5 py-2 text-[13px] font-bold text-slate-600 transition-colors hover:bg-slate-50">Cancelar</button>
+                <button onClick={handleGuardar} className="flex items-center gap-2 rounded-lg bg-[#001F3F] px-6 py-2 text-[13px] font-bold text-white shadow-md transition-all hover:bg-blue-900 active:scale-95"><Save size={14} />Guardar y Calcular</button>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
 };
 
 const ValetsFijosView = () => {
-  const [activeSubTab, setActiveSubTab] = useState<SeccionValets>('ingreso');
-  
-  // Estados para GESTIONAR VALET
+  const [activeSubTab, setActiveSubTab] = useState<SubTabValet>('historial');
   const [gestionarCentro, setGestionarCentro] = useState('');
-  const [showGestionarEmpleadosModal, setShowGestionarEmpleadosModal] = useState(false);
-  const [empleadoBusqueda, setEmpleadoBusqueda] = useState('');
-  const [valorFijo, setValorFijo] = useState('');
-  const [showSuccessGuardado, setShowSuccessGuardado] = useState(false);
-  const [loadingCatalogos, setLoadingCatalogos] = useState(false);
-  const [loadingEmpleadosDb, setLoadingEmpleadosDb] = useState(false);
-  const [guardandoEmpleado, setGuardandoEmpleado] = useState(false);
-  const [eliminandoEmpleadoId, setEliminandoEmpleadoId] = useState('');
-  const [catalogosError, setCatalogosError] = useState('');
-  const [centrosCostoValet, setCentrosCostoValet] = useState<NominaCostCenter[]>([]);
-  const [empleadosActivos, setEmpleadosActivos] = useState<EmpleadoActivoOption[]>([]);
-  const [centroAutorizadoList, setCentroAutorizadoList] = useState<Record<string, boolean>>({});
+  const [showGestionarModal, setShowGestionarModal] = useState(false);
+  const [showSelEmpleadoModal, setShowSelEmpleadoModal] = useState(false);
+  const [showRegistroModal, setShowRegistroModal] = useState(false);
+  const [registroRow, setRegistroRow] = useState<HorarioValetRow | null>(null);
   const [showDetallesModal, setShowDetallesModal] = useState(false);
-  const [detalleEmpleado, setDetalleEmpleado] = useState<EmpleadoValet | null>(null);
-  const [empleadosValet, setEmpleadosValet] = useState<EmpleadoValet[]>([]);
+  const [detalleEmpleado, setDetalleEmpleado] = useState<{ nombre: string; centro: string; valorFijo: string } | null>(null);
 
-  // Estados para INGRESO HORARIO
-  const [ingresoCentro, setIngresoCentro] = useState('');
-  const [ingresoEmpleado, setIngresoEmpleado] = useState('');
-  const [ingresoFecha, setIngresoFecha] = useState('');
-  const [ingresoHoraEntrada, setIngresoHoraEntrada] = useState('');
-  const [ingresoHoraSalida, setIngresoHoraSalida] = useState('');
-  const [ingresoAdicional, setIngresoAdicional] = useState(false);
-  const [ingresoObservacion, setIngresoObservacion] = useState('');
-  const [ingresoEvidencia, setIngresoEvidencia] = useState<File | null>(null);
-  const [showSuccessHorario, setShowSuccessHorario] = useState(false);
-  const [loadingHorariosDb, setLoadingHorariosDb] = useState(false);
-  const [guardandoHorario, setGuardandoHorario] = useState(false);
+  const [filtroPeriodo, setFiltroPeriodo] = useState(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  });
+  const [filtroBusqueda, setFiltroBusqueda] = useState('');
   const [filtroEstado, setFiltroEstado] = useState('');
-  const [filtroEmpleadoCalendario, setFiltroEmpleadoCalendario] = useState('');
-  const [horariosRegistrados, setHorariosRegistrados] = useState<HorarioRegistrado[]>([]);
-  const [calendarView, setCalendarView] = useState('mes');
-  const [calendarOffset, setCalendarOffset] = useState(0);
+
+  const [loadingCatalogos, setLoadingCatalogos] = useState(false);
+  const [catalogosError, setCatalogosError] = useState('');
+  const [persistenciaError, setPersistenciaError] = useState('');
+
+  const [centrosValet, setCentrosValet] = useState<string[]>([]);
+  const [empleadosCatalogo, setEmpleadosCatalogo] = useState<EmpleadoCatalogo[]>([]);
+  const [horarios, setHorarios] = useState<HorarioValetRow[]>([]);
+
+  const upsertHorarioLocal = (row: HorarioValetRow) => {
+    setHorarios((prev) => {
+      const idx = prev.findIndex((item) => item.id === row.id);
+      if (idx === -1) return [row, ...prev];
+      const next = [...prev];
+      next[idx] = row;
+      return next;
+    });
+  };
+
+  const syncEmpleadoToDb = async (row: HorarioValetRow) => {
+    const centro = parseCentroCompuesto(row.centro);
+    await dbApi.valets.empleados.save({
+      centroCostoId: row.codCC,
+      centroCostoNombre: centro.centroCostoNombre || row.centro,
+      empleadoCedula: row.ci,
+      empleadoNombre: row.empleado,
+      valorFijo: 0,
+    });
+  };
+
+  const syncHorarioRowToDb = async (row: HorarioValetRow) => {
+    const existentesRaw = await dbApi.valets.horarios.list<{ registros?: ValetHorarioDbItem[] }>();
+    const existentes = Array.isArray(existentesRaw?.registros) ? existentesRaw.registros : [];
+
+    const delMismoPeriodo = existentes.filter((item) => item.centroCostoId === row.codCC
+      && item.empleadoCedula === row.ci
+      && String(item.fechaTurno || '').startsWith(row.periodo));
+
+    await Promise.all(delMismoPeriodo.map(async (item) => {
+      if (item.id) {
+        await dbApi.valets.horarios.delete(item.id);
+      }
+    }));
+
+    const centro = parseCentroCompuesto(row.centro);
+    const registros = Object.entries(row.diasRegistro)
+      .flatMap(([fecha, turns]) => turns
+        .filter((turn) => turn.estadoDia !== 'Libre')
+        .map((turn) => ({ fecha, turn })));
+
+    await Promise.all(registros.map(async ({ fecha, turn }) => {
+      await dbApi.valets.horarios.save({
+        centroCostoId: row.codCC,
+        centroCostoNombre: centro.centroCostoNombre || row.centro,
+        empleadoCedula: row.ci,
+        empleadoNombre: row.empleado,
+        fechaTurno: fecha,
+        horaEntrada: turn.horaEntrada,
+        horaSalida: turn.horaSalida,
+        esAdicional: turn.estadoDia === 'Adicional' || turn.estadoDia === 'Domingo Adicional',
+        aprobado: turn.aprobado,
+        observacion: serializeHorarioMeta({
+          estadoDia: turn.estadoDia,
+          parqueadero: turn.parqueadero,
+        }),
+      });
+    }));
+  };
+
+  const [costosModal, setCostosModal] = useState<CostosConfig>({
+    Normal: { horas: '40', valor: '3.50' },
+    Adicional: { horas: '', valor: '3.00' },
+    Domingo: { horas: '', valor: '10.00' },
+    'Domingo Adicional': { horas: '', valor: '15.00' },
+  });
 
   useEffect(() => {
     let isMounted = true;
@@ -286,58 +808,57 @@ const ValetsFijosView = () => {
       setCatalogosError('');
 
       try {
-        const [centrosData, centrosValetData, empleadosData] = await Promise.all([
-          getNominaCostCenters(),
+        const [centrosRaw, empleadosRaw] = await Promise.all([
           ListarValetsFijos(),
           getNominaEmployeesActive<EmpleadoNominaApiItem[]>(),
         ]);
 
-        const centrosNormalizados = (Array.isArray(centrosData) ? centrosData : [])
-          .filter((cc) => cc.IDCENTROCOSTO || cc.CENTROCOSTO)
-          .sort((a, b) => `${a.IDCENTROCOSTO} ${a.CENTROCOSTO}`.localeCompare(`${b.IDCENTROCOSTO} ${b.CENTROCOSTO}`, 'es', { sensitivity: 'base' }));
+        const centros = (Array.isArray(centrosRaw) ? centrosRaw : [])
+          .filter((cc: NominaCostCenter) => cc.IDCENTROCOSTO || cc.CENTROCOSTO)
+          .map((cc: NominaCostCenter) => composeCentroDisplay(cc.IDCENTROCOSTO, cc.CENTROCOSTO));
 
-        const centrosValetNormalizados = (Array.isArray(centrosValetData) ? centrosValetData : [])
-          .filter((cc) => cc.IDCENTROCOSTO || cc.CENTROCOSTO)
-          .sort((a, b) => `${a.IDCENTROCOSTO} ${a.CENTROCOSTO}`.localeCompare(`${b.IDCENTROCOSTO} ${b.CENTROCOSTO}`, 'es', { sensitivity: 'base' }));
-
-        const empleadosMap = new Map<string, EmpleadoActivoOption>();
-        (Array.isArray(empleadosData) ? empleadosData : []).forEach((item) => {
-          const payload = item?.json ?? item;
-          const cedula = String(payload?.CEDULA || payload?.DOCI_MFEMP || '').trim();
+        const empleadosMap = new Map<string, EmpleadoCatalogo>();
+        (Array.isArray(empleadosRaw) ? empleadosRaw : []).forEach((item) => {
+          const payload = (item?.json ?? item ?? {}) as Record<string, unknown>;
+          const ci = String(payload?.CEDULA || payload?.DOCI_MFEMP || payload?.COD_MFEMP || '').trim();
           const nombres = String(payload?.NOMBRES || '').trim();
           const apellidos = String(payload?.APELLIDOS || '').trim();
-          const nombreCompleto = `${apellidos} ${nombres}`.trim();
-          const centroId = String((payload as EmpleadoNominaApiItem & { COD_MFCC?: string })?.COD_MFCC || '').trim();
-          const centroNombre = String((payload as EmpleadoNominaApiItem & { DSC_MFCC?: string })?.DSC_MFCC || '').trim();
+          const nombre = `${apellidos} ${nombres}`.trim();
 
-          if (!cedula || !nombreCompleto) return;
-          if (!empleadosMap.has(cedula)) {
-            empleadosMap.set(cedula, {
-              cedula,
-              nombreCompleto,
-              centroId,
-              centroNombre,
-            });
+          const centroIdDirecto = String(payload?.COD_MFCC || payload?.IDCENTROCOSTO || '').trim();
+          const centroNombreDirecto = String(payload?.DSC_MFCC || payload?.CENTROCOSTO || '').trim();
+          const centroCompuesto = parseCentroCompuesto(centroNombreDirecto || centroIdDirecto);
+          const codCC = centroIdDirecto || centroCompuesto.centroCostoId || '';
+          const centroNombre = centroNombreDirecto || centroCompuesto.centroCostoNombre || '';
+          const centro = composeCentroDisplay(codCC, centroNombre);
+
+          if (!ci || !nombre || !centro) return;
+          if (!empleadosMap.has(ci)) {
+            empleadosMap.set(ci, { nombre, ci, centro, codCC: codCC || '00000000' });
           }
         });
 
         const empleadosNormalizados = Array.from(empleadosMap.values())
-          .sort((a, b) => a.nombreCompleto.localeCompare(b.nombreCompleto, 'es', { sensitivity: 'base' }));
+          .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es', { sensitivity: 'base' }));
+
+        const centrosDerivadosEmpleados = Array.from(new Set(empleadosNormalizados.map((e) => e.centro)));
+        const centrosUnicos = Array.from(new Set([...centros, ...centrosDerivadosEmpleados]))
+          .filter((v) => Boolean(v))
+          .sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
 
         if (!isMounted) return;
-        setCentrosCostoValet(centrosValetNormalizados.length > 0 ? centrosValetNormalizados : centrosNormalizados);
-        setEmpleadosActivos(empleadosNormalizados);
+        setCentrosValet(centrosUnicos);
+        setEmpleadosCatalogo(empleadosNormalizados);
       } catch (error) {
         if (!isMounted) return;
-        setCatalogosError(error instanceof Error ? error.message : 'No se pudieron cargar catalogos desde n8n.');
+        setCatalogosError(error instanceof Error ? error.message : 'No se pudieron cargar catalogos de n8n.');
       } finally {
-        if (isMounted) {
-          setLoadingCatalogos(false);
-        }
+        if (isMounted) setLoadingCatalogos(false);
       }
     };
 
-    cargarCatalogos();
+    void cargarCatalogos();
+
     return () => {
       isMounted = false;
     };
@@ -346,1386 +867,740 @@ const ValetsFijosView = () => {
   useEffect(() => {
     let isMounted = true;
 
-    const cargarHorariosValet = async () => {
-      setLoadingHorariosDb(true);
+    const cargarPersistenciaValets = async () => {
+      setPersistenciaError('');
+
       try {
-        const response = await dbApi.valets.horarios.list<ValetHorariosListResponse>();
-        const registros = Array.isArray(response?.registros) ? response.registros : [];
+        const [empleadosData, horariosData] = await Promise.all([
+          dbApi.valets.empleados.list<{ registros?: ValetEmpleadoDbItem[] }>(),
+          dbApi.valets.horarios.list<{ registros?: ValetHorarioDbItem[] }>(),
+        ]);
 
-        if (!isMounted) return;
-        setHorariosRegistrados(
-          registros
-            .map((item) => ({
-              id: String(item.id || `${item.centroCostoId}-${item.empleadoCedula}-${item.fechaTurno}`),
-              centro: composeCentroDisplay(String(item.centroCostoId || ''), String(item.centroCostoNombre || '')),
-              empleado: String(item.empleadoNombre || '').trim(),
-              fecha: String(item.fechaTurno || '').trim(),
-              horaEntrada: String(item.horaEntrada || '').trim(),
-              horaSalida: String(item.horaSalida || '').trim(),
-              adicional: Boolean(item.esAdicional),
-                aprobado: item.aprobado === undefined ? true : Boolean(item.aprobado),
-                recurrencia: Boolean(item.recurrencia),
-              finRecurrencia: String(item.finRecurrencia || '').trim(),
-                observacion: String(item.observacion || ''),
-                evidenciaBase64: String(item.evidenciaBase64 || ''),
-                evidenciaMimeType: String(item.evidenciaMimeType || ''),
-                evidenciaNombreArchivo: String(item.evidenciaNombreArchivo || ''),
-            }))
-            .filter((item) => item.centro && item.empleado && item.fecha && item.horaEntrada && item.horaSalida)
-        );
-      } catch (error) {
-        if (!isMounted) return;
-        alert(error instanceof Error ? error.message : 'No se pudieron cargar horarios de valet fijo desde la base de datos.');
-      } finally {
-        if (isMounted) {
-          setLoadingHorariosDb(false);
-        }
-      }
-    };
+        const empleadosDb = Array.isArray(empleadosData?.registros) ? empleadosData.registros : [];
+        const horariosDb = Array.isArray(horariosData?.registros) ? horariosData.registros : [];
 
-    void cargarHorariosValet();
-    return () => {
-      isMounted = false;
-    };
-  }, []);
+        const rowsMap = new Map<string, HorarioValetRow>();
 
-  useEffect(() => {
-    let isMounted = true;
-
-    const cargarEmpleadosValet = async () => {
-      setLoadingEmpleadosDb(true);
-      try {
-        const response = await dbApi.valets.empleados.list<ValetEmpleadosListResponse>();
-        const registros = Array.isArray(response?.registros) ? response.registros : [];
-
-        if (!isMounted) return;
-        setEmpleadosValet(
-          registros
-            .map((item) => ({
-              id: String(item.id || `${item.centroCostoId}-${item.empleadoCedula}`),
-              centro: composeCentroDisplay(String(item.centroCostoId || ''), String(item.centroCostoNombre || '')),
-              nombre: String(item.empleadoNombre || '').trim(),
-              valor: Number(item.valorFijo || 0).toFixed(2),
-              cedula: String(item.empleadoCedula || '').trim(),
-            }))
-            .filter((item) => item.centro && item.nombre && item.cedula)
-        );
-      } catch (error) {
-        if (!isMounted) return;
-        alert(error instanceof Error ? error.message : 'No se pudo cargar empleados de valet fijo desde la base de datos.');
-      } finally {
-        if (isMounted) {
-          setLoadingEmpleadosDb(false);
-        }
-      }
-    };
-
-    void cargarEmpleadosValet();
-    return () => {
-      isMounted = false;
-    };
-  }, []);
-
-  const empleadosParaIngreso = empleadosValet.filter(e => e.centro === ingresoCentro);
-
-  const empleadosCentroGestion = empleadosValet.filter(e => e.centro === gestionarCentro);
-  const empleadosActivosFiltrados = empleadosActivos
-    .filter((emp) => {
-      const q = empleadoBusqueda.trim().toLowerCase();
-      if (!q) return true;
-      return emp.nombreCompleto.toLowerCase().includes(q) || emp.cedula.toLowerCase().includes(q);
-    });
-
-  const calcularTotalCentro = (centro: string): number => {
-    const empAdicCentro = horariosRegistrados.filter(h => h.centro === centro && (h.adicional || esFechaDomingo(h.fecha)));
-    let total = 0;
-    const emps = [...new Set(empAdicCentro.map(h => h.empleado))];
-    
-    emps.forEach(empName => {
-      const evs = empAdicCentro.filter(h => h.empleado === empName);
-      const domingosMap = new Map();
-      
-      evs.forEach(ev => {
-        const isAprobado = ev.aprobado !== false;
-        if (!isAprobado) return;
-
-        if (esFechaDomingo(ev.fecha) && !ev.adicional) {
-          domingosMap.set(ev.fecha, true);
-        } else {
-          total += calcularValorNum(ev.horaEntrada, ev.horaSalida);
-        }
-      });
-      total += domingosMap.size * 10;
-    });
-    return total;
-  };
-
-  const calcularAdicionalAprobadoEmpleado = (centro: string, empleado: string): number => {
-    const empAdicionales = horariosRegistrados.filter(
-      (h) => h.centro === centro && h.empleado === empleado && (h.adicional || esFechaDomingo(h.fecha))
-    );
-
-    let total = 0;
-    const domingosMap = new Map<string, boolean>();
-
-    empAdicionales.forEach((ev) => {
-      const isAprobado = ev.aprobado !== false;
-      if (!isAprobado) return;
-
-      if (esFechaDomingo(ev.fecha) && !ev.adicional) {
-        domingosMap.set(ev.fecha, true);
-      } else {
-        total += calcularValorNum(ev.horaEntrada, ev.horaSalida);
-      }
-    });
-
-    total += domingosMap.size * 10;
-    return total;
-  };
-
-  const getMonthGrid = (): { grid: CalendarDay[], monthName: string, year: number } => {
-    const now = new Date();
-    const baseDate = new Date(now.getFullYear(), now.getMonth() + calendarOffset, 1);
-    const year = baseDate.getFullYear();
-    const month = baseDate.getMonth();
-    
-    const firstDay = new Date(year, month, 1).getDay();
-    const daysInMonth = new Date(year, month + 1, 0).getDate();
-    const daysInPrevMonth = new Date(year, month, 0).getDate();
-    
-    let startOffset = firstDay === 0 ? 6 : firstDay - 1;
-    
-    const grid: CalendarDay[] = [];
-    for (let i = startOffset - 1; i >= 0; i--) {
-      grid.push({ d: daysInPrevMonth - i, curr: false, m: month === 0 ? 12 : month, y: month === 0 ? year - 1 : year });
-    }
-    for (let i = 1; i <= daysInMonth; i++) {
-      const isToday = new Date().toDateString() === new Date(year, month, i).toDateString();
-      grid.push({ d: i, curr: true, m: month + 1, y: year, active: isToday });
-    }
-    const remaining = (Math.ceil(grid.length / 7) * 7) - grid.length;
-    for (let i = 1; i <= remaining; i++) {
-      grid.push({ d: i, curr: false, m: month === 11 ? 1 : month + 2, y: month === 11 ? year + 1 : year });
-    }
-    return { grid, monthName: monthNames[month], year };
-  };
-
-  const getWeekDays = (): WeekDay[] => {
-    const now = new Date();
-    const dayOfWeek = now.getDay();
-    const diffToMonday = now.getDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1);
-    const monday = new Date(now.getFullYear(), now.getMonth(), diffToMonday + calendarOffset * 7);
-    
-    const names = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
-    const wDays: WeekDay[] = [];
-    for (let i = 0; i < 7; i++) {
-      const cur = new Date(monday);
-      cur.setDate(monday.getDate() + i);
-      const isToday = new Date().toDateString() === cur.toDateString();
-      wDays.push({
-        d: cur.getDate(),
-        m: cur.getMonth() + 1,
-        y: cur.getFullYear(),
-        n: names[i],
-        active: isToday
-      });
-    }
-    return wDays;
-  };
-
-  const { grid: currentCalendarGrid, monthName: currentMonthName, year: currentYear } = getMonthGrid();
-  const currentWeekDays = getWeekDays();
-
-  const horariosCalendario: HorarioRegistrado[] = (() => {
-    const days = calendarView === 'semana' ? currentWeekDays : currentCalendarGrid;
-    if (days.length === 0) return horariosRegistrados;
-    const first = days[0];
-    const last = days[days.length - 1];
-    const inicio = new Date(first.y, first.m - 1, first.d);
-    const fin = new Date(last.y, last.m - 1, last.d);
-    const resultado: HorarioRegistrado[] = [];
-    for (const h of horariosRegistrados) {
-      if (!h.recurrencia) {
-        resultado.push(h);
-        continue;
-      }
-      const fechaBase = parseFechaLocal(h.fecha);
-      if (!fechaBase) {
-        resultado.push(h);
-        continue;
-      }
-      const fechaFin = h.finRecurrencia ? parseFechaLocal(h.finRecurrencia) : null;
-      const diaSemana = fechaBase.getDay();
-      const curr = new Date(inicio);
-      const diff = (diaSemana - curr.getDay() + 7) % 7;
-      curr.setDate(curr.getDate() + diff);
-      while (curr <= fin) {
-        if (curr >= fechaBase && (!fechaFin || curr <= fechaFin)) {
-          resultado.push({ ...h, fecha: formatFechaLocal(curr) });
-        }
-        curr.setDate(curr.getDate() + 7);
-      }
-    }
-    return resultado;
-  })();
-
-  const empleadosFiltroCalendario = Array.from(new Set(
-    horariosRegistrados
-      .filter((h) => !ingresoCentro || h.centro === ingresoCentro)
-      .map((h) => h.empleado)
-  ))
-    .sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
-
-  useEffect(() => {
-    if (filtroEmpleadoCalendario && !empleadosFiltroCalendario.includes(filtroEmpleadoCalendario)) {
-      setFiltroEmpleadoCalendario('');
-    }
-  }, [filtroEmpleadoCalendario, empleadosFiltroCalendario]);
-
-  const cumpleFiltrosCalendario = (ev: HorarioRegistrado): boolean => {
-    if (!ingresoCentro) return false;
-    if (ev.centro !== ingresoCentro) return false;
-
-    const esAdicionalODomingo = ev.adicional || esFechaDomingo(ev.fecha);
-    if (filtroEstado === 'adicionales' && !esAdicionalODomingo) return false;
-    if (filtroEstado === 'general' && esAdicionalODomingo) return false;
-    if (filtroEmpleadoCalendario && ev.empleado !== filtroEmpleadoCalendario) return false;
-    return true;
-  };
-  
-  const startW = currentWeekDays[0];
-  const endW = currentWeekDays[6];
-  const weekHeaderText = `${monthNames[startW.m - 1]} ${startW.d.toString().padStart(2, '0')} – ${endW.d.toString().padStart(2, '0')}`;
-  const headerText = calendarView === 'semana' ? weekHeaderText : `${currentMonthName} ${currentYear}`;
-
-  const handleGuardarHorario = async () => {
-    if (!ingresoCentro || !ingresoEmpleado || !ingresoFecha || !ingresoHoraEntrada || !ingresoHoraSalida) {
-      alert('Por favor, completa todos los campos del horario.');
-      return;
-    }
-
-    const centro = parseCentroCompuesto(ingresoCentro);
-    if (!centro.centroCostoId) {
-      alert('Selecciona un centro de costo valido.');
-      return;
-    }
-
-    const empleadoAsignado = empleadosValet.find((emp) =>
-      emp.centro === ingresoCentro && emp.nombre === ingresoEmpleado && Boolean(emp.cedula)
-    );
-
-    if (!empleadoAsignado?.cedula) {
-      alert('No se pudo identificar la cedula del empleado seleccionado.');
-      return;
-    }
-
-    const entradaMin = parseHora24AMinutos(ingresoHoraEntrada);
-    const salidaMin = parseHora24AMinutos(ingresoHoraSalida);
-    if (entradaMin === null || salidaMin === null) {
-      alert('Las horas deben tener formato valido HH:MM.');
-      return;
-    }
-
-    if (salidaMin <= entradaMin) {
-      alert('La hora de salida debe ser mayor que la hora de entrada.');
-      return;
-    }
-
-    const existeSolape = horariosRegistrados
-      .filter((item) => {
-        if (item.centro !== ingresoCentro || item.empleado !== ingresoEmpleado) return false;
-        if (item.recurrencia) {
-          const itemDate = parseFechaLocal(item.fecha);
-          const ingresoDate = parseFechaLocal(ingresoFecha);
-          if (!itemDate || !ingresoDate) return false;
-          const fechaFin = item.finRecurrencia ? parseFechaLocal(item.finRecurrencia) : null;
-          return itemDate.getDay() === ingresoDate.getDay() && ingresoDate >= itemDate && (!fechaFin || ingresoDate <= fechaFin);
-        }
-        return item.fecha === ingresoFecha;
-      })
-      .some((item) => {
-        const inicioExistente = parseHora24AMinutos(item.horaEntrada);
-        const finExistente = parseHora24AMinutos(item.horaSalida);
-        if (inicioExistente === null || finExistente === null) return false;
-        return horariosSeSolapan(entradaMin, salidaMin, inicioExistente, finExistente);
-      });
-
-    if (existeSolape) {
-      alert('No se puede guardar porque el rango horario se cruza con otro ya registrado ese mismo dia.');
-      return;
-    }
-
-    const valorFijoEmpleado = Number(String(empleadoAsignado.valor || '0').replace(',', '.'));
-    if (!Number.isFinite(valorFijoEmpleado) || valorFijoEmpleado < 0) {
-      alert('El empleado seleccionado no tiene un valor fijo valido.');
-      return;
-    }
-
-    let evidenciaBase64 = '';
-    if (ingresoAdicional && ingresoEvidencia) {
-      try {
-        evidenciaBase64 = await fileToBase64(ingresoEvidencia);
-      } catch (error) {
-        alert(error instanceof Error ? error.message : 'No se pudo procesar la imagen de evidencia.');
-        return;
-      }
-    }
-
-    const esRecurrente = valorFijoEmpleado > 0 && !ingresoAdicional && !esFechaDomingo(ingresoFecha);
-
-    setGuardandoHorario(true);
-    try {
-      const response = await dbApi.valets.horarios.save<ValetHorarioSaveResponse>({
-        centroCostoId: centro.centroCostoId,
-        centroCostoNombre: centro.centroCostoNombre,
-        empleadoCedula: empleadoAsignado.cedula,
-        empleadoNombre: empleadoAsignado.nombre,
-        valorFijo: valorFijoEmpleado,
-        fechaTurno: ingresoFecha,
-        horaEntrada: ingresoHoraEntrada,
-        horaSalida: ingresoHoraSalida,
-        esAdicional: ingresoAdicional,
-        recurrencia: esRecurrente,
-        observacion: ingresoAdicional ? ingresoObservacion.trim() : '',
-        evidenciaBase64: ingresoAdicional ? evidenciaBase64 : '',
-        evidenciaMimeType: ingresoAdicional && ingresoEvidencia ? String(ingresoEvidencia.type || '').trim() : '',
-        evidenciaNombreArchivo: ingresoAdicional && ingresoEvidencia ? String(ingresoEvidencia.name || '').trim() : '',
-        aprobado: ingresoAdicional ? false : true,
-      });
-
-      const registro = response?.registro;
-      const nuevoHorario: HorarioRegistrado = {
-        id: String(registro?.id || `${centro.centroCostoId}-${empleadoAsignado.cedula}-${ingresoFecha}`),
-        centro: composeCentroDisplay(
-          String(registro?.centroCostoId || centro.centroCostoId),
-          String(registro?.centroCostoNombre || centro.centroCostoNombre)
-        ),
-        empleado: String(registro?.empleadoNombre || empleadoAsignado.nombre),
-        fecha: String(registro?.fechaTurno || ingresoFecha),
-        horaEntrada: String(registro?.horaEntrada || ingresoHoraEntrada),
-        horaSalida: String(registro?.horaSalida || ingresoHoraSalida),
-        adicional: Boolean(registro?.esAdicional ?? ingresoAdicional),
-        recurrencia: Boolean(registro?.recurrencia ?? esRecurrente),
-        finRecurrencia: String(registro?.finRecurrencia || ''),
-        observacion: String(registro?.observacion || (ingresoAdicional ? ingresoObservacion.trim() : '')),
-        evidenciaBase64: String(registro?.evidenciaBase64 || (ingresoAdicional ? evidenciaBase64 : '')),
-        evidenciaMimeType: String(registro?.evidenciaMimeType || (ingresoAdicional && ingresoEvidencia ? ingresoEvidencia.type : '')),
-        evidenciaNombreArchivo: String(registro?.evidenciaNombreArchivo || (ingresoAdicional && ingresoEvidencia ? ingresoEvidencia.name : '')),
-        aprobado: registro?.aprobado === undefined ? true : Boolean(registro.aprobado),
-      };
-
-      setHorariosRegistrados((prev) => {
-        const sinDuplicado = prev.filter((item) => item.id !== nuevoHorario.id);
-        return [...sinDuplicado, nuevoHorario];
-      });
-
-      setShowSuccessHorario(true);
-      setTimeout(() => setShowSuccessHorario(false), 3000);
-      setIngresoFecha('');
-      setIngresoHoraEntrada('');
-      setIngresoHoraSalida('');
-      setIngresoAdicional(false);
-      setIngresoObservacion('');
-      setIngresoEvidencia(null);
-    } catch (error) {
-      alert(error instanceof Error ? error.message : 'No se pudo guardar el horario en la base de datos.');
-    } finally {
-      setGuardandoHorario(false);
-    }
-  };
-
-  const handleGuardarEmpleado = async () => {
-    const valorEmpleado = empleadoBusqueda.trim();
-    if (!gestionarCentro || !valorEmpleado || !valorFijo.trim()) {
-      alert('Por favor selecciona un centro, un empleado activo y completa el valor fijo.');
-      return;
-    }
-
-    const criterio = valorEmpleado.toLowerCase();
-    const empleadoSeleccionado = empleadosActivos.find((emp) => `${emp.nombreCompleto} - ${emp.cedula}`.toLowerCase() === criterio)
-      || empleadosActivos.find((emp) => emp.cedula.toLowerCase() === criterio)
-      || empleadosActivos.find((emp) => emp.nombreCompleto.toLowerCase() === criterio);
-
-    if (!empleadoSeleccionado) {
-      alert('No se encontro el empleado seleccionado.');
-      return;
-    }
-
-    const valorFijoNormalizado = Number(valorFijo.replace(',', '.').trim());
-    if (!Number.isFinite(valorFijoNormalizado) || valorFijoNormalizado < 0) {
-      alert('El valor fijo debe ser numerico y mayor o igual a 0.');
-      return;
-    }
-
-    const centro = parseCentroCompuesto(gestionarCentro);
-    if (!centro.centroCostoId) {
-      alert('Selecciona un centro de costo valido.');
-      return;
-    }
-
-    setGuardandoEmpleado(true);
-    try {
-      const response = await dbApi.valets.empleados.save<ValetEmpleadoSaveResponse>({
-        centroCostoId: centro.centroCostoId,
-        centroCostoNombre: centro.centroCostoNombre,
-        empleadoCedula: empleadoSeleccionado.cedula,
-        empleadoNombre: empleadoSeleccionado.nombreCompleto,
-        valorFijo: valorFijoNormalizado,
-      });
-
-      const registro = response?.registro;
-      const nuevoEmpleado: EmpleadoValet = {
-        id: String(registro?.id || `${centro.centroCostoId}-${empleadoSeleccionado.cedula}`),
-        centro: composeCentroDisplay(
-          String(registro?.centroCostoId || centro.centroCostoId),
-          String(registro?.centroCostoNombre || centro.centroCostoNombre)
-        ),
-        nombre: String(registro?.empleadoNombre || empleadoSeleccionado.nombreCompleto),
-        valor: Number(registro?.valorFijo ?? valorFijoNormalizado).toFixed(2),
-        cedula: String(registro?.empleadoCedula || empleadoSeleccionado.cedula),
-      };
-
-      setEmpleadosValet((prev) => {
-        const sinDuplicado = prev.filter((item) => !(item.centro === nuevoEmpleado.centro && item.cedula === nuevoEmpleado.cedula));
-        return [...sinDuplicado, nuevoEmpleado];
-      });
-
-      setShowSuccessGuardado(true);
-      setTimeout(() => setShowSuccessGuardado(false), 3000);
-      setShowGestionarEmpleadosModal(false);
-      setEmpleadoBusqueda('');
-      setValorFijo('');
-    } catch (error) {
-      alert(error instanceof Error ? error.message : 'No se pudo guardar el empleado en la base de datos.');
-    } finally {
-      setGuardandoEmpleado(false);
-    }
-  };
-
-  const handleEliminarEmpleado = async (empleado: EmpleadoValet) => {
-    if (!empleado.cedula) {
-      alert('No se puede eliminar este empleado porque no tiene cedula asociada.');
-      return;
-    }
-
-    const centro = parseCentroCompuesto(empleado.centro);
-    if (!centro.centroCostoId) {
-      alert('No se pudo identificar el centro de costo para eliminar este registro.');
-      return;
-    }
-
-    setEliminandoEmpleadoId(empleado.id);
-    try {
-      await dbApi.valets.empleados.delete(centro.centroCostoId, empleado.cedula);
-      setEmpleadosValet((prev) => prev.filter((item) => item.id !== empleado.id));
-    } catch (error) {
-      alert(error instanceof Error ? error.message : 'No se pudo eliminar el empleado del centro de costo.');
-    } finally {
-      setEliminandoEmpleadoId('');
-    }
-  };
-
-  const handleEliminarHorario = async (horario: HorarioRegistrado) => {
-    const idNumerico = Number(String(horario.id || '').trim());
-    if (!Number.isInteger(idNumerico) || idNumerico <= 0) {
-      alert('No se pudo eliminar el horario porque su identificador no es valido.');
-      return;
-    }
-
-    const fechaBase = parseFechaLocal(horario.fecha);
-    if (!fechaBase) {
-      alert('No se pudo interpretar la fecha del horario.');
-      return;
-    }
-
-    const registroBase = horariosRegistrados.find((item) => item.id === horario.id);
-    const fechaCreacionRecurrencia = parseFechaLocal(registroBase?.fecha || horario.fecha);
-    const esOcurrenciaBase = Boolean(horario.recurrencia && fechaCreacionRecurrencia && formatFechaLocal(fechaCreacionRecurrencia) === horario.fecha);
-    const mensajeConfirm = horario.recurrencia && !esOcurrenciaBase
-      ? `Deseas cortar la recurrencia de ${horario.empleado} (${horario.horaEntrada} - ${horario.horaSalida}) hasta la semana anterior a ${horario.fecha}?`
-      : horario.recurrencia
-        ? `Deseas eliminar por completo el horario recurrente de ${horario.empleado} (${horario.horaEntrada} - ${horario.horaSalida})?`
-        : `Deseas eliminar este horario de ${horario.empleado} (${horario.horaEntrada} - ${horario.horaSalida})?`;
-    if (!window.confirm(mensajeConfirm)) return;
-
-    try {
-      if (horario.recurrencia && !esOcurrenciaBase) {
-        const fechaFin = new Date(fechaBase);
-        fechaFin.setDate(fechaFin.getDate() - 7);
-        const fechaFinIso = formatFechaLocal(fechaFin);
-        const response = await dbApi.valets.horarios.update<ValetHorarioSaveResponse>({
-          id: idNumerico,
-          finRecurrencia: fechaFinIso,
+        empleadosDb.forEach((emp) => {
+          const centroDisplay = composeCentroDisplay(emp.centroCostoId, emp.centroCostoNombre);
+          const key = `${emp.centroCostoId}-${emp.empleadoCedula}-${filtroPeriodo}`;
+          rowsMap.set(key, {
+            id: key,
+            empleado: emp.empleadoNombre,
+            ci: emp.empleadoCedula,
+            periodo: filtroPeriodo,
+            codCC: emp.centroCostoId,
+            centro: centroDisplay,
+            estado: 'creado',
+            diasRegistro: {},
+          });
         });
-        const registro = response?.registro;
-        setHorariosRegistrados((prev) => prev.map((item) => (
-          item.id === horario.id
-            ? { ...item, finRecurrencia: String(registro?.finRecurrencia || fechaFinIso) }
-            : item
-        )));
-        return;
+
+        horariosDb.forEach((h) => {
+          const fecha = String(h.fechaTurno || '');
+          if (!fecha) return;
+          const periodo = fecha.slice(0, 7);
+          const centroDisplay = composeCentroDisplay(h.centroCostoId, h.centroCostoNombre);
+          const key = `${h.centroCostoId}-${h.empleadoCedula}-${periodo}`;
+          const meta = parseHorarioMeta(h.observacion || '');
+          const day = new Date(`${fecha}T12:00:00`).getDay();
+          const estadoFallback: EstadoDia = h.esAdicional ? (day === 0 ? 'Domingo Adicional' : 'Adicional') : (day === 0 ? 'Domingo' : 'Normal');
+          const estadoDia = meta.estadoDia || estadoFallback;
+
+          const base = rowsMap.get(key) || {
+            id: key,
+            empleado: h.empleadoNombre,
+            ci: h.empleadoCedula,
+            periodo,
+            codCC: h.centroCostoId,
+            centro: centroDisplay,
+            estado: 'pendiente' as const,
+            diasRegistro: {},
+          };
+
+          const dayRows = [...(base.diasRegistro[fecha] || [])];
+          dayRows.push({
+            id: h.id || `${fecha}-${dayRows.length}`,
+            parqueadero: meta.parqueadero || centroDisplay,
+            estadoDia,
+            horaEntrada: h.horaEntrada || '00:00',
+            horaSalida: h.horaSalida || '00:00',
+            aprobado: h.aprobado !== false,
+          });
+
+          rowsMap.set(key, {
+            ...base,
+            estado: base.estado === 'creado' ? 'pendiente' : base.estado,
+            diasRegistro: {
+              ...base.diasRegistro,
+              [fecha]: dayRows,
+            },
+          });
+        });
+
+        if (!isMounted) return;
+        setHorarios(Array.from(rowsMap.values()));
+      } catch (error) {
+        if (!isMounted) return;
+        setPersistenciaError(error instanceof Error ? error.message : 'No se pudo cargar persistencia de valets.');
       }
+    };
 
-      await dbApi.valets.horarios.delete<ValetHorarioDeleteResponse>(String(idNumerico));
-      setHorariosRegistrados((prev) => prev.filter((item) => item.id !== horario.id));
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'No se pudo eliminar el horario seleccionado.';
+    void cargarPersistenciaValets();
 
-      if (message.toLowerCase().includes('no se encontro el horario solicitado')) {
-        setHorariosRegistrados((prev) => prev.filter((item) => item.id !== horario.id));
-        alert('Ese horario ya no existe en la base de datos. Se removio de la vista para sincronizar.');
-        return;
+    return () => {
+      isMounted = false;
+    };
+  }, [filtroPeriodo]);
+
+  const periodosOpciones = useMemo(() => {
+    const now = new Date();
+    return Array.from({ length: 6 }, (_, idx) => {
+      const d = new Date(now.getFullYear(), now.getMonth() - idx, 1);
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    });
+  }, []);
+
+  const filteredHorarios = useMemo(() => {
+    return horarios.filter((r) => {
+      if (r.periodo !== filtroPeriodo) return false;
+      if (filtroEstado && r.estado !== filtroEstado) return false;
+      if (filtroBusqueda) {
+        const s = filtroBusqueda.toLowerCase();
+        return r.empleado.toLowerCase().includes(s) || r.ci.includes(s);
       }
+      return true;
+    });
+  }, [horarios, filtroBusqueda, filtroEstado, filtroPeriodo]);
 
-      if (message.toLowerCase() === 'not found') {
-        alert('No se encontro la ruta DELETE de horarios en el backend. Reinicia el backend para cargar los ultimos cambios.');
-        return;
-      }
+  const empCentro = useMemo(() => {
+    if (!gestionarCentro) return [] as Array<{ id: string; nombre: string; ci: string; centro: string; valorFijo: string }>;
 
-      alert(message);
-    }
-  };
+    const nombres = Array.from(new Set(
+      horarios
+        .filter((h) => h.periodo === filtroPeriodo && h.centro === gestionarCentro)
+        .map((h) => h.empleado),
+    ));
 
-  return (
-    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500 relative w-full max-w-full">
-      
-      {/* MODAL: Gestionar empleados */}
-      {showGestionarEmpleadosModal && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm transition-opacity" onClick={() => setShowGestionarEmpleadosModal(false)} />
-          <div className="relative bg-white rounded-3xl w-full max-w-[500px] shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
-            <div className="px-6 py-6 flex justify-between items-start border-b border-slate-100">
-              <div>
-                <h3 className="font-black text-xl text-[#001F3F]">Gestionar empleados</h3>
-                <p className="text-xs text-slate-500 font-medium mt-1">Centro: {gestionarCentro}</p>
-              </div>
-              <button onClick={() => setShowGestionarEmpleadosModal(false)} className="px-4 py-1.5 border border-slate-200 rounded-lg text-xs font-bold text-slate-600 hover:bg-slate-50 transition-colors">
-                Cerrar
-              </button>
-            </div>
-            <div className="p-6 space-y-5">
-              <div className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-300">
-                <div>
-                  <label className="text-[11px] font-bold text-slate-600 mb-1.5 block">Empleado activo</label>
-                  <input
-                    type="text"
-                    list="valets-empleados-activos"
-                    value={empleadoBusqueda}
-                    onChange={(e) => setEmpleadoBusqueda(e.target.value)}
-                    placeholder={loadingCatalogos ? 'Cargando empleados activos...' : 'Selecciona o escribe un empleado'}
-                    className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-lg text-sm font-medium text-slate-700 outline-none focus:border-[#2563EB] transition-all shadow-sm placeholder:text-slate-400"
-                  />
-                  <datalist id="valets-empleados-activos">
-                    {empleadosActivosFiltrados.map((emp) => (
-                      <option key={emp.cedula} value={`${emp.nombreCompleto} - ${emp.cedula}`} />
-                    ))}
-                  </datalist>
-                </div>
-                <div>
-                  <label className="text-[11px] font-bold text-slate-600 mb-1.5 block">Valor fijo a pagar</label>
-                  <input 
-                    type="text" 
-                    value={valorFijo}
-                    onChange={(e) => setValorFijo(e.target.value)}
-                    placeholder="0.00" 
-                    className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-lg text-sm font-medium text-slate-700 outline-none focus:border-[#2563EB] transition-all shadow-sm placeholder:text-slate-400" 
-                  />
-                </div>
-              </div>
-            </div>
-            <div className="px-6 py-5 bg-white flex justify-end gap-3 border-t border-slate-100">
-              <button 
-                onClick={() => setShowGestionarEmpleadosModal(false)} 
-                className="px-6 py-2.5 rounded-xl font-bold text-slate-600 bg-white border border-slate-200 hover:bg-slate-50 transition-colors text-sm"
-              >
-                Cancelar
-              </button>
-              <button 
-                disabled={guardandoEmpleado}
-                className="px-6 py-2.5 rounded-xl bg-[#001F3F] text-white font-bold hover:bg-blue-900 transition-all text-sm shadow-md active:scale-95"
-                onClick={() => {
-                  void handleGuardarEmpleado();
-                }}
-              >
-                {guardandoEmpleado ? 'Guardando...' : 'Guardar empleado'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+    return nombres.map((nombreEmp) => {
+      const hRecord = horarios.find((h) => h.periodo === filtroPeriodo && h.empleado === nombreEmp && h.centro === gestionarCentro);
 
-      {/* MODAL: Detalles de adicionales */}
-      {showDetallesModal && detalleEmpleado && (() => {
-        const empAdicionales = horariosRegistrados.filter(h => 
-          (h.adicional || esFechaDomingo(h.fecha)) && 
-          h.empleado === detalleEmpleado.nombre && 
-          h.centro === detalleEmpleado.centro
-        );
-        
-        const toggleAprobado = (id: string) => {
-          setHorariosRegistrados(prev => prev.map(h => h.id === id ? { ...h, aprobado: !h.aprobado } : h));
-        };
+      const limiteNormal = Number.parseFloat(costosModal.Normal.horas) || 0;
+      const valorPorHoraNormal = Number.parseFloat(costosModal.Normal.valor) || 0;
 
-        let totalCalculado = 0;
-        const dias: Array<{ id: string; fecha: string; dia: string; horario: string; valor: string; aprobado: boolean; observacion: string; evidenciaBase64: string; evidenciaMimeType: string; evidenciaNombreArchivo: string }> = [];
-        const domingos: Array<{ id: string; fecha: string; dia: string; horario: string; aprobado: boolean }> = [];
-        
-        empAdicionales.forEach(ev => {
-          const d = new Date(`${ev.fecha}T12:00:00`);
-          const isSunday = d.getDay() === 0;
-          const dayName = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'][d.getDay()];
-          const isAprobado = ev.aprobado !== false;
-          
-          if (isSunday && !ev.adicional) {
-            domingos.push({
-              id: ev.id,
-              fecha: ev.fecha,
-              dia: dayName,
-              horario: `${ev.horaEntrada} - ${ev.horaSalida}`,
-              aprobado: isAprobado,
-            });
-          } else {
-            const val = calcularValorStr(ev.horaEntrada, ev.horaSalida);
-            dias.push({ 
-              id: ev.id, 
-              fecha: ev.fecha, 
-              dia: dayName, 
-              horario: `${ev.horaEntrada} - ${ev.horaSalida}`,
-              valor: val,
-              aprobado: isAprobado,
-              observacion: String(ev.observacion || ''),
-              evidenciaBase64: String(ev.evidenciaBase64 || ''),
-              evidenciaMimeType: String(ev.evidenciaMimeType || ''),
-              evidenciaNombreArchivo: String(ev.evidenciaNombreArchivo || ''),
-            });
+      let horasNormalesTrabajadas = 0;
+      if (hRecord?.diasRegistro) {
+        Object.values(hRecord.diasRegistro).flat().forEach((d) => {
+          if (d.estadoDia === 'Normal' && d.aprobado !== false) {
+            horasNormalesTrabajadas += calcHoras(d.horaEntrada, d.horaSalida);
           }
         });
-        dias.forEach((d: any) => { if (d.aprobado) totalCalculado += parseFloat(d.valor); });
-        domingos.forEach((dom: any) => { if (dom.aprobado) totalCalculado += 10.00; });
+      }
 
-        return (
-          <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
-            <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm transition-opacity" onClick={() => setShowDetallesModal(false)} />
-            <div className="relative bg-white rounded-3xl w-full max-w-[650px] max-h-[85vh] shadow-2xl overflow-x-hidden overflow-y-auto custom-scrollbar animate-in zoom-in-95 duration-200">
-              <div className="px-8 py-8 flex justify-between items-start">
-                <div>
-                  <h3 className="font-black text-[22px] text-[#1c2938] tracking-tight mb-2">Detalles de adicionales</h3>
-                  <p className="text-[13px] text-slate-500">Empleado: {detalleEmpleado.nombre}</p>
-                  <p className="text-[13px] text-slate-500">Centro: {detalleEmpleado.centro}</p>
-                </div>
-                <div className="flex flex-col items-end gap-3">
-                  <button onClick={() => setShowDetallesModal(false)} className="px-5 py-2 border border-slate-200 rounded-lg text-sm font-bold text-slate-600 hover:bg-slate-50 transition-colors shadow-sm">
-                    Cerrar
-                  </button>
-                  <div className="bg-[#F0F8FF] border border-[#2173B9]/20 px-4 py-2 rounded-lg text-right">
-                    <span className="text-[11px] font-bold text-slate-500 uppercase block leading-none mb-1">Total Aprobado</span>
-                    <span className="text-xl font-black text-[#2173B9]">{totalCalculado.toFixed(2)} $</span>
-                  </div>
-                </div>
-              </div>
-              
-              <div className="px-8 pb-10 space-y-5">
-                {/* Días adicionales Card */}
-                <div className="border border-slate-200 rounded-2xl p-6 bg-slate-50/30 shadow-sm">
-                  <div className="flex justify-between items-center mb-5">
-                    <h4 className="font-bold text-[16px] text-[#1c2938]">Días adicionales</h4>
-                  </div>
-                  
-                  {dias.length > 0 ? (
-                    <div className="space-y-3">
-                      {dias.map((d: any) => (
-                        <div key={d.id} className="border border-slate-100 rounded-xl p-4 bg-white shadow-sm hover:border-slate-200 transition-colors space-y-3">
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-3 sm:gap-4 flex-1">
-                              <button 
-                                onClick={() => toggleAprobado(d.id)}
-                                className={`w-7 h-7 sm:w-8 sm:h-8 rounded-lg border-2 flex items-center justify-center shadow-inner transition-colors cursor-pointer ${d.aprobado ? 'border-emerald-200 bg-emerald-50 hover:bg-emerald-100' : 'border-slate-200 bg-slate-50 hover:bg-slate-100'}`}
-                                title={d.aprobado ? 'Marcar como pendiente' : 'Marcar como aprobado'}
-                              >
-                                {d.aprobado && <Check size={16} className="text-emerald-600" strokeWidth={3} />}
-                              </button>
-                              <span className="text-[13px] font-medium text-[#1c2938] shrink-0 w-20 sm:w-24">{d.fecha}</span>
-                              <span className="font-bold text-[13px] sm:text-[14px] text-[#1c2938] shrink-0 w-20">{d.dia}</span>
-                              <span className="text-[13px] sm:text-[14px] font-medium text-slate-600">{d.horario}</span>
-                            </div>
-                            <div className="flex items-center gap-3 sm:gap-4 shrink-0 pl-2">
-                              <span className={`font-black text-[14px] sm:text-[15px] ${d.aprobado ? 'text-slate-800' : 'text-slate-400 line-through'}`}>{d.valor} $</span>
-                              <span className={`text-[11px] font-bold uppercase tracking-wide ${d.aprobado ? 'text-emerald-600' : 'text-amber-600'}`}>
-                                {d.aprobado ? 'Aprobado' : 'Pendiente'}
-                              </span>
-                            </div>
-                          </div>
-                          {(d.observacion || d.evidenciaBase64) && (
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-2 border-t border-slate-100">
-                              <div>
-                                <div className="text-[11px] font-bold text-slate-500 uppercase mb-1">Observacion</div>
-                                <div className="text-[13px] text-slate-700 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 min-h-[40px]">
-                                  {d.observacion || 'Sin observacion'}
-                                </div>
-                              </div>
-                              <div>
-                                <div className="text-[11px] font-bold text-slate-500 uppercase mb-1">Evidencia</div>
-                                {d.evidenciaBase64 ? (
-                                  <div className="space-y-2">
-                                    <img
-                                      src={`data:${d.evidenciaMimeType || 'image/jpeg'};base64,${d.evidenciaBase64}`}
-                                      alt="Evidencia adicional"
-                                      className="w-full max-h-36 object-cover rounded-lg border border-slate-200"
-                                    />
-                                    {d.evidenciaNombreArchivo && (
-                                      <div className="text-[11px] text-slate-500 truncate">{d.evidenciaNombreArchivo}</div>
-                                    )}
-                                  </div>
-                                ) : (
-                                  <div className="text-[13px] text-slate-400 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">Sin imagen adjunta</div>
-                                )}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="text-[13px] text-slate-400 py-3 font-medium">No hay días adicionales registrados.</div>
-                  )}
-                </div>
+      const horasNormalesPagadas = limiteNormal > 0 ? Math.min(horasNormalesTrabajadas, limiteNormal) : horasNormalesTrabajadas;
+      const valorFijoCalculado = horasNormalesPagadas * valorPorHoraNormal;
 
-                {/* Domingos Card */}
-                <div className="border border-slate-200 rounded-2xl p-6 bg-slate-50/30 shadow-sm">
-                  <div className="flex justify-between items-center mb-5">
-                    <h4 className="font-bold text-[16px] text-[#1c2938]">Domingos</h4>
-                  </div>
-                  
-                  {domingos.length > 0 ? (
-                    <div className="space-y-3">
-                      {domingos.map((dom: any) => (
-                        <div key={dom.id} className="flex items-center justify-between">
-                          <div className="flex items-center gap-3 sm:gap-4 flex-1">
-                            <button 
-                              onClick={() => toggleAprobado(dom.id)}
-                              className={`w-7 h-7 sm:w-8 sm:h-8 rounded-lg border-2 flex items-center justify-center shadow-inner transition-colors cursor-pointer ${dom.aprobado ? 'border-emerald-200 bg-emerald-50 hover:bg-emerald-100' : 'border-slate-200 bg-slate-50 hover:bg-slate-100'}`}
-                              title={dom.aprobado ? 'Marcar como pendiente' : 'Marcar como aprobado'}
-                            >
-                              {dom.aprobado && <Check size={16} className="text-emerald-600" strokeWidth={3} />}
-                            </button>
-                            <span className="text-[13px] font-medium text-[#1c2938] shrink-0 w-20 sm:w-24">{dom.fecha}</span>
-                            <span className="font-bold text-[13px] sm:text-[14px] text-[#1c2938] shrink-0 w-20">{dom.dia}</span>
-                            <span className="text-[13px] sm:text-[14px] font-medium text-slate-600">{dom.horario}</span>
-                          </div>
-                          <div className="flex items-center gap-3 sm:gap-4 shrink-0 pl-2">
-                            <span className={`font-black text-[14px] sm:text-[15px] ${dom.aprobado ? 'text-slate-800' : 'text-slate-400 line-through'}`}>10.00 $</span>
-                            <span className={`text-[11px] font-bold uppercase tracking-wide ${dom.aprobado ? 'text-emerald-600' : 'text-amber-600'}`}>
-                              {dom.aprobado ? 'Aprobado' : 'Pendiente'}
-                            </span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="text-[13px] text-slate-400 py-2 font-medium">No hay domingos adicionales registrados.</div>
-                  )}
-                </div>
-              </div>
-            </div>
+      return {
+        id: hRecord?.id || `${nombreEmp}-${gestionarCentro}`,
+        nombre: nombreEmp,
+        ci: hRecord?.ci || '',
+        centro: gestionarCentro,
+        valorFijo: valorFijoCalculado.toFixed(2),
+      };
+    });
+  }, [costosModal.Normal.horas, costosModal.Normal.valor, filtroPeriodo, gestionarCentro, horarios]);
+
+  const uniqueEmployees = useMemo(() => new Set(horarios.filter((h) => h.periodo === filtroPeriodo).map((h) => h.empleado)).size, [horarios, filtroPeriodo]);
+
+  const totalFijoCalc = useMemo(() => {
+    const empleadosEnPeriodo = Array.from(new Set(horarios.filter((h) => h.periodo === filtroPeriodo).map((h) => h.empleado)));
+
+    return empleadosEnPeriodo.reduce((accTotal, empName) => {
+      let horasNormalesTrabajadas = 0;
+
+      horarios
+        .filter((h) => h.periodo === filtroPeriodo && h.empleado === empName && (h.estado === 'procesado' || h.estado === 'pendiente'))
+        .forEach((h) => {
+          Object.values(h.diasRegistro || {}).flat().forEach((dia) => {
+            if (dia.estadoDia === 'Normal' && dia.aprobado !== false) {
+              horasNormalesTrabajadas += calcHoras(dia.horaEntrada, dia.horaSalida);
+            }
+          });
+        });
+
+      const limiteNormal = Number.parseFloat(costosModal.Normal.horas) || 0;
+      const valorPorHoraNormal = Number.parseFloat(costosModal.Normal.valor) || 0;
+      const horasNormalesPagadas = limiteNormal > 0 ? Math.min(horasNormalesTrabajadas, limiteNormal) : horasNormalesTrabajadas;
+      return accTotal + (horasNormalesPagadas * valorPorHoraNormal);
+    }, 0);
+  }, [costosModal.Normal.horas, costosModal.Normal.valor, filtroPeriodo, horarios]);
+
+  const totalAdicionalesCalc = useMemo(() => {
+    return horarios
+      .filter((h) => h.periodo === filtroPeriodo && (h.estado === 'procesado' || h.estado === 'pendiente'))
+      .reduce((accTotal, h) => {
+        let extra = 0;
+        Object.values(h.diasRegistro || {}).flat().forEach((dia) => {
+          if (dia.estadoDia !== 'Normal' && dia.estadoDia !== 'Libre' && dia.aprobado !== false) {
+            const conf = costosModal[dia.estadoDia as keyof CostosConfig];
+            const tarifa = conf ? (Number.parseFloat(conf.valor) || 0) : 0;
+            if (dia.estadoDia === 'Domingo') {
+              extra += tarifa;
+            } else {
+              extra += calcHoras(dia.horaEntrada, dia.horaSalida) * tarifa;
+            }
+          }
+        });
+        return accTotal + extra;
+      }, 0);
+  }, [costosModal, filtroPeriodo, horarios]);
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
+        <div className="flex items-center gap-3">
+          <div className="rounded-lg border border-blue-100 bg-blue-50 p-2 text-[#001F3F] shadow-sm"><Clock size={22} strokeWidth={2.5} /></div>
+          <div>
+            <h2 className="text-2xl font-normal text-slate-800">Valet Fijos</h2>
+            <p className="text-sm text-slate-500">Gestion y Registro de Valet</p>
           </div>
-        );
-      })()}
-
-      <div className="flex items-center gap-4 mb-2">
-        <div className="flex bg-white rounded-xl border border-slate-200 p-1 shadow-sm w-fit">
+        </div>
+        <div className="flex items-center gap-3">
+          {activeSubTab === 'historial' ? (
+            <button className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-600 shadow-sm transition-colors hover:bg-slate-50">Historial</button>
+          ) : null}
           <button
-            onClick={() => setActiveSubTab('ingreso')}
-            className={`px-6 py-2 rounded-lg text-sm font-bold transition-all ${activeSubTab === 'ingreso' ? 'bg-[#2563EB] text-white shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-          >
-            Ingreso Horario
-          </button>
-          <button
-            onClick={() => setActiveSubTab('gestionar')}
-            className={`px-6 py-2 rounded-lg text-sm font-bold transition-all ${activeSubTab === 'gestionar' ? 'bg-[#2563EB] text-white shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+            onClick={() => setActiveSubTab(activeSubTab === 'gestionar' ? 'historial' : 'gestionar')}
+            className="rounded-lg bg-[#2563EB] px-5 py-2 text-sm font-bold text-white shadow-sm transition-all hover:bg-blue-600"
           >
             Gestionar valet
           </button>
         </div>
       </div>
 
-      {catalogosError && (
-        <div className="p-3 rounded-lg border border-red-200 bg-red-50 text-red-700 text-sm font-medium">
-          Error al cargar catalogos n8n: {catalogosError}
+      {catalogosError ? (
+        <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">Error al cargar catalogos n8n: {catalogosError}</div>
+      ) : null}
+
+      {persistenciaError ? (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-700">Persistencia de valets: {persistenciaError}</div>
+      ) : null}
+
+      <div className="mb-2 grid grid-cols-1 gap-5 md:grid-cols-3">
+        <div className="flex items-center gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-blue-50 text-blue-500"><Users size={24} /></div>
+          <div><p className="mb-0.5 text-[10px] font-bold uppercase tracking-widest text-slate-400">Total Valets (Periodo)</p><p className="text-2xl font-black text-slate-800">{uniqueEmployees}</p></div>
         </div>
-      )}
+        <div className="flex items-center gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-emerald-50 text-emerald-500"><Banknote size={24} /></div>
+          <div><p className="mb-0.5 text-[10px] font-bold uppercase tracking-widest text-slate-400">Total Fijo A Pagar</p><p className="text-2xl font-black text-slate-800">${totalFijoCalc.toFixed(2)}</p></div>
+        </div>
+        <div className="flex items-center gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-orange-50 text-orange-500"><Clock size={24} /></div>
+          <div><p className="mb-0.5 text-[10px] font-bold uppercase tracking-widest text-slate-400">Total Extras / Domingos</p><p className="text-2xl font-black text-slate-800">${totalAdicionalesCalc.toFixed(2)}</p></div>
+        </div>
+      </div>
 
-      {activeSubTab === 'ingreso' && (
-        <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-6 lg:p-8 shadow-sm animate-in fade-in duration-300">
-          
-          {showSuccessHorario && (
-            <div className="mb-6 p-4 bg-[#ECFDF5] border border-[#A7F3D0] rounded-xl text-[#059669] text-sm font-medium animate-in fade-in">
-              Horario guardado correctamente en la base de datos y agregado al calendario.
-            </div>
-          )}
+      {activeSubTab === 'historial' ? (
+        <div className="space-y-5">
+          <div className="flex flex-col items-end justify-between gap-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm md:flex-row">
+            <div className="flex flex-wrap items-end gap-4">
+              <button className="flex h-11 w-11 items-center justify-center rounded-lg border border-red-200 bg-red-50 text-red-500 transition-colors hover:bg-red-100"><Unlock size={20} /></button>
 
-          {loadingHorariosDb && (
-            <div className="mb-6 p-4 bg-slate-50 border border-slate-200 rounded-xl text-slate-600 text-sm font-medium animate-in fade-in">
-              Cargando horarios planificados desde la base de datos...
-            </div>
-          )}
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-            <div>
-              <label className="text-[12px] font-medium text-slate-600 mb-2 block">Centro de costo</label>
-              <div className="relative">
-                <select 
-                  className={`w-full pl-4 pr-10 py-2.5 border rounded-lg text-sm outline-none appearance-none text-slate-700 shadow-sm cursor-pointer transition-colors ${ingresoCentro ? 'border-blue-500 ring-1 ring-blue-500' : 'border-slate-200 focus:border-[#2563EB]'}`}
-                  value={ingresoCentro}
-                  onChange={(e) => {
-                    setIngresoCentro(e.target.value);
-                    setIngresoEmpleado('');
-                  }}
-                >
-                  <option value="" disabled>{loadingCatalogos ? 'Cargando centros de costo...' : 'Selecciona un centro de costo'}</option>
-                  {centrosCostoValet.map((centro) => (
-                    <option key={centro.IDCENTROCOSTO} value={`${centro.IDCENTROCOSTO} - ${centro.CENTROCOSTO}`}>
-                      {centro.IDCENTROCOSTO} - {centro.CENTROCOSTO}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
-              </div>
-            </div>
-            <div>
-              <label className="text-[12px] font-medium text-slate-600 mb-2 block">Empleado</label>
-              <div className="relative">
-                <select 
-                  className={`w-full pl-4 pr-10 py-2.5 border rounded-lg text-sm outline-none appearance-none text-slate-700 shadow-sm cursor-pointer transition-colors ${!ingresoCentro ? 'bg-slate-50 border-slate-200 text-slate-400 cursor-not-allowed' : 'border-slate-200 focus:border-[#2563EB] bg-white'}`}
-                  disabled={!ingresoCentro}
-                  value={ingresoEmpleado}
-                  onChange={(e) => setIngresoEmpleado(e.target.value)}
-                >
-                  <option value="" disabled>
-                    {!ingresoCentro ? 'Selecciona primero un centro de costo' : (empleadosParaIngreso.length === 0 ? 'No hay empleados en este centro' : 'Selecciona un empleado')}
-                  </option>
-                  {empleadosParaIngreso.map((emp, idx) => (
-                    <option key={idx} value={emp.nombre}>{emp.nombre}</option>
-                  ))}
-                </select>
-                <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-slate-50 border border-slate-100 p-5 rounded-xl grid grid-cols-1 md:grid-cols-4 gap-6 mb-6 items-end">
-            <div>
-              <label className="text-[12px] font-medium text-slate-600 mb-2 block">Fecha</label>
-              <input 
-                type="date" 
-                value={ingresoFecha}
-                onChange={(e) => setIngresoFecha(e.target.value)}
-                className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-lg text-sm outline-none focus:border-[#2563EB] text-slate-700 shadow-sm cursor-pointer"
-              />
-            </div>
-            <div>
-              <label className="text-[12px] font-medium text-slate-600 mb-2 block">Hora de entrada</label>
-              <input 
-                type="time" 
-                value={ingresoHoraEntrada}
-                onChange={(e) => setIngresoHoraEntrada(e.target.value)}
-                className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-lg text-sm outline-none focus:border-[#2563EB] text-slate-700 shadow-sm cursor-pointer"
-              />
-            </div>
-            <div>
-              <label className="text-[12px] font-medium text-slate-600 mb-2 block">Hora de salida</label>
-              <input 
-                type="time" 
-                value={ingresoHoraSalida}
-                onChange={(e) => setIngresoHoraSalida(e.target.value)}
-                className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-lg text-sm outline-none focus:border-[#2563EB] text-slate-700 shadow-sm cursor-pointer"
-              />
-            </div>
-            <div className="flex items-center pb-3">
-              <label className="flex items-center gap-2 cursor-pointer group">
-                <div className={`w-5 h-5 rounded border flex items-center justify-center transition-colors ${ingresoAdicional ? 'bg-[#F97316] border-[#F97316]' : 'border-slate-300 bg-white'}`}>
-                  {ingresoAdicional && <Check size={14} className="text-white" strokeWidth={3} />}
-                </div>
-                <input
-                  type="checkbox"
-                  className="hidden"
-                  checked={ingresoAdicional}
-                  onChange={(e) => {
-                    const checked = e.target.checked;
-                    setIngresoAdicional(checked);
-                    if (!checked) {
-                      setIngresoObservacion('');
-                      setIngresoEvidencia(null);
-                    }
-                  }}
-                />
-                <span className="text-[12px] font-bold text-slate-600 select-none">Adicional</span>
-              </label>
-            </div>
-          </div>
-
-          {ingresoAdicional && (
-            <div className="bg-amber-50 border border-amber-200 p-4 rounded-xl grid grid-cols-1 md:grid-cols-2 gap-4 mb-6 animate-in fade-in duration-200">
               <div>
-                <label className="text-[12px] font-medium text-slate-700 mb-2 block">Observacion</label>
+                <label className="mb-1 block text-[10px] font-bold uppercase text-slate-400">PERIODO</label>
+                <div className="relative">
+                  <select
+                    value={filtroPeriodo}
+                    onChange={(e) => setFiltroPeriodo(e.target.value)}
+                    className="min-w-[120px] cursor-pointer appearance-none rounded-lg border border-slate-200 bg-white py-2.5 pl-4 pr-10 text-sm text-slate-700 shadow-sm outline-none"
+                  >
+                    {periodosOpciones.map((p) => <option key={p} value={p}>{p}</option>)}
+                  </select>
+                  <ChevronDown className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-orange-400" size={16} />
+                </div>
+              </div>
+
+              <div className="min-w-[200px] flex-1">
+                <label className="mb-1 block text-[10px] font-bold uppercase text-slate-400">BUSCAR</label>
                 <input
                   type="text"
-                  value={ingresoObservacion}
-                  onChange={(e) => setIngresoObservacion(e.target.value)}
-                  placeholder="Describe brevemente el motivo del adicional"
-                  className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-lg text-sm outline-none focus:border-[#2563EB] text-slate-700 shadow-sm"
+                  placeholder="nombre, ci"
+                  value={filtroBusqueda}
+                  onChange={(e) => setFiltroBusqueda(e.target.value)}
+                  className="w-full rounded-lg border border-slate-200 bg-white py-2.5 pl-4 text-sm text-slate-700 shadow-sm outline-none transition-colors focus:border-[#0EA5E9]"
                 />
-              </div>
-              <div>
-                <label className="text-[12px] font-medium text-slate-700 mb-2 block">Adjuntar evidencia</label>
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={(e) => setIngresoEvidencia(e.target.files?.[0] ?? null)}
-                  className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm outline-none focus:border-[#2563EB] text-slate-700 shadow-sm file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:bg-slate-100 file:text-slate-700"
-                />
-                {ingresoEvidencia && (
-                  <p className="mt-1 text-[11px] text-slate-500 truncate">Archivo: {ingresoEvidencia.name}</p>
-                )}
               </div>
             </div>
-          )}
 
-          <div className="mb-10 flex">
-            <button 
-              disabled={guardandoHorario}
-              onClick={() => {
-                void handleGuardarHorario();
-              }}
-              className="px-8 py-2.5 bg-[#001F3F] text-white rounded-lg text-sm font-bold hover:bg-blue-900 transition-all shadow-sm active:scale-95"
-            >
-              {guardandoHorario ? 'Guardando...' : 'Guardar'}
-            </button>
+            <div className="flex items-end gap-4">
+              <div>
+                <label className="mb-1 block text-[10px] font-bold uppercase text-[#0EA5E9]">ESTADO</label>
+                <div className="relative">
+                  <select
+                    value={filtroEstado}
+                    onChange={(e) => setFiltroEstado(e.target.value)}
+                    className="min-w-[200px] cursor-pointer appearance-none rounded-lg border border-slate-200 bg-white py-2.5 pl-4 pr-10 text-sm text-slate-500 shadow-sm outline-none"
+                  >
+                    <option value="">Selecciona una opcion</option>
+                    <option value="procesado">Procesado</option>
+                    <option value="pendiente">Pendiente</option>
+                    <option value="creado">Creado</option>
+                  </select>
+                  <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-300">
+                    <ChevronUp size={12} className="-mb-1" />
+                    <ChevronDown size={12} />
+                  </div>
+                </div>
+              </div>
+
+              <button
+                onClick={() => setShowSelEmpleadoModal(true)}
+                className="flex h-[42px] items-center gap-2 rounded-lg border border-slate-200 bg-white px-5 py-2.5 text-sm font-bold text-slate-600 shadow-sm transition-colors hover:bg-slate-50"
+              >
+                <Plus size={16} className="stroke-[3px] text-orange-500" /> Anadir registro
+              </button>
+            </div>
           </div>
 
-          {/* CONTENEDOR DEL CALENDARIO */}
-          <div className="pt-6 border-t border-slate-200 animate-in fade-in duration-500">
-            <div className="flex flex-col xl:flex-row justify-between items-start mb-6 gap-6">
-              {/* Controles Izquierdos */}
-              <div className="space-y-4">
-                <div className="flex items-center gap-1 border border-slate-200 rounded-full p-1 shadow-sm w-fit bg-white">
-                  <button 
-                    onClick={() => { setCalendarView('semana'); setCalendarOffset(0); }} 
-                    className={`px-4 py-1.5 text-xs font-medium rounded-full transition-colors ${calendarView === 'semana' ? 'font-bold text-blue-600 border border-blue-200 bg-blue-50' : 'text-slate-500 hover:text-slate-800'}`}
-                  >
-                    Semana
-                  </button>
-                  <button 
-                    onClick={() => { setCalendarView('mes'); setCalendarOffset(0); }} 
-                    className={`px-4 py-1.5 text-xs font-medium rounded-full transition-colors ${calendarView === 'mes' ? 'font-bold text-blue-600 border border-blue-200 bg-blue-50' : 'text-slate-500 hover:text-slate-800'}`}
-                  >
-                    Mes
-                  </button>
-                </div>
-                {/* Navegación de fecha */}
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setCalendarOffset((o) => o - 1)}
-                    className="w-7 h-7 flex items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 hover:bg-slate-50 transition-colors text-sm font-bold"
-                    title="Anterior"
-                  >
-                    ‹
-                  </button>
-                  {calendarOffset !== 0 && (
-                    <button
-                      onClick={() => setCalendarOffset(0)}
-                      className="px-3 py-1 text-[11px] font-bold rounded-full border border-blue-200 bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors"
-                    >
-                      Hoy
-                    </button>
-                  )}
-                  <button
-                    onClick={() => setCalendarOffset((o) => o + 1)}
-                    className="w-7 h-7 flex items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 hover:bg-slate-50 transition-colors text-sm font-bold"
-                    title="Siguiente"
-                  >
-                    ›
-                  </button>
-                </div>
-              </div>
-
-              {/* Controles Derechos */}
-              <div className="flex flex-col items-end gap-3 w-full xl:w-auto">
-                <div className="flex flex-wrap md:flex-nowrap items-center gap-3 w-full xl:w-auto justify-end">
-                  <div>
-                    <label className="text-[10px] text-slate-400 mb-1 block">Estado</label>
-                    <div className="relative">
-                      <select 
-                        value={filtroEstado}
-                        onChange={(e) => setFiltroEstado(e.target.value)}
-                        className="pl-3 pr-8 py-1.5 text-[11px] border border-slate-200 rounded-full outline-none text-slate-500 cursor-pointer appearance-none bg-white min-w-[140px] shadow-sm"
-                      >
-                        <option value="">Todos</option>
-                        <option value="general">General</option>
-                        <option value="adicionales">Adicionales</option>
-                      </select>
-                      <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-300 pointer-events-none" size={14} />
-                    </div>
-                  </div>
-                  <div>
-                    <label className="text-[10px] text-slate-400 mb-1 block">Empleado</label>
-                    <div className="relative">
-                      <select
-                        value={filtroEmpleadoCalendario}
-                        onChange={(e) => setFiltroEmpleadoCalendario(e.target.value)}
-                        className="pl-3 pr-8 py-1.5 text-[11px] border border-slate-200 rounded-full outline-none text-slate-500 cursor-pointer appearance-none bg-white min-w-[220px] shadow-sm"
-                      >
-                        <option value="">Todos</option>
-                        {empleadosFiltroCalendario.map((empleado) => (
-                          <option key={empleado} value={empleado}>{empleado}</option>
-                        ))}
-                      </select>
-                      <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-300 pointer-events-none" size={14} />
-                    </div>
-                  </div>
-                </div>
-                <h3 className="text-[17px] font-medium text-[#2173B9] capitalize">
-                  {headerText}
-                </h3>
-              </div>
-            </div>
-
-            {/* VISTA MES */}
-            {calendarView === 'mes' && (
-              <div className="w-full overflow-x-auto rounded-xl">
-                <div className="border-l border-t border-slate-200 bg-white grid grid-cols-7 min-w-[800px] animate-in fade-in duration-300">
-                  {daysOfWeek.map((day, idx) => (
-                    <div key={idx} className="p-3 border-r border-b border-slate-200 text-[#2173B9] text-sm capitalize">
-                      {day}
-                    </div>
-                  ))}
-                  
-                  {currentCalendarGrid.map((dayObj, idx) => {
-                    const eventosDia = dayObj.curr ? horariosCalendario.filter(h => {
-                      if (!cumpleFiltrosCalendario(h)) return false;
-
-                      const parts = h.fecha.split('-');
-                      if(parts.length === 3) {
-                        return parseInt(parts[2], 10) === dayObj.d && parseInt(parts[1], 10) === dayObj.m && parseInt(parts[0], 10) === dayObj.y;
-                      }
-                      return false;
-                    }) : [];
-
-                    return (
-                      <div key={idx} className={`relative min-h-[140px] border-r border-b border-slate-200 p-1 flex flex-col ${dayObj.curr ? 'bg-white' : 'bg-slate-50/50'}`}>
-                        {eventosDia.length > 0 && (
-                          <div className="flex flex-col gap-1 mt-6 z-10">
-                            {eventosDia.map((ev, eIdx) => {
-                              const nombreCentro = ev.centro.split('-')[1]?.trim() || ev.centro;
-                              const nombreCorto = ev.empleado.split(' ')[0] || ev.empleado;
-                              const isAdic = ev.adicional;
-
-                              return (
-                                <div key={`${ev.id}-${eIdx}`} className={`relative flex items-center gap-1.5 text-[9px] font-medium bg-white border rounded p-1 pr-4 shadow-sm whitespace-nowrap overflow-hidden text-ellipsis w-full ${isAdic ? 'border-amber-200 text-amber-700' : 'border-slate-200 text-slate-600'}`}>
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      void handleEliminarHorario(ev);
-                                    }}
-                                    className="absolute top-0.5 right-0.5 w-3.5 h-3.5 rounded-full bg-white/90 border border-slate-300 text-slate-500 hover:text-red-600 hover:border-red-300 leading-none flex items-center justify-center"
-                                    title="Eliminar horario"
-                                  >
-                                    x
-                                  </button>
-                                  <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${isAdic ? 'bg-amber-500' : 'bg-[#2173B9]'}`}></div>
-                                  <span className={`font-bold shrink-0 ${isAdic ? 'text-amber-600' : 'text-[#2173B9]'}`}>{ev.horaEntrada}</span>
-                                  <span className="truncate" title={`${nombreCentro} - ${ev.empleado}`}>{nombreCentro} - {nombreCorto}</span>
-                                </div>
-                              )
-                            })}
+          <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                <thead className="border-b border-slate-100 bg-slate-50/50">
+                  <tr>
+                    {[
+                      ['ID', ''],
+                      ['NOMBRE', 'User'],
+                      ['CI', 'CreditCard'],
+                      ['PERIODO', 'Calendar'],
+                      ['COD C.C.', 'MoreVertical'],
+                      ['PARQUEADERO', 'Building'],
+                      ['ESTADO', 'Settings2'],
+                      ['', ''],
+                    ].map(([h, icn], i) => (
+                      <th key={`${h}-${i}`} className="px-6 py-4 text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                        {icn ? (
+                          <div className="flex items-center gap-2">
+                            {icn === 'User' ? <User size={14} /> : null}
+                            {icn === 'CreditCard' ? <CreditCard size={14} /> : null}
+                            {icn === 'Calendar' ? <Calendar size={14} /> : null}
+                            {icn === 'MoreVertical' ? <MoreVertical size={14} /> : null}
+                            {icn === 'Building' ? <Building size={14} /> : null}
+                            {icn === 'Settings2' ? <Settings2 size={14} /> : null}
+                            {h}
                           </div>
-                        )}
-
-                        <div className="absolute bottom-2 right-2 flex items-center justify-center pointer-events-none">
-                          {dayObj.active ? (
-                            <div className="w-6 h-6 flex items-center justify-center rounded-full border border-blue-400 text-[#2173B9] font-bold bg-white text-xs">
-                              {dayObj.d}
-                            </div>
-                          ) : (
-                            <span className={`text-xs ${dayObj.curr ? 'text-slate-600' : 'text-slate-400 font-light'}`}>
-                              {dayObj.d}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-              </div>
-            )}
-
-            {/* VISTA SEMANA */}
-            {calendarView === 'semana' && (
-              <div className="w-full overflow-x-auto rounded-xl">
-                <div className="border border-slate-200 bg-white min-w-[800px] animate-in fade-in duration-300">
-                  {/* Encabezados de días */}
-                  <div className="flex border-b border-slate-200 bg-white">
-                    <div className="w-16 shrink-0 border-r border-slate-200"></div>
-                    {currentWeekDays.map(day => (
-                      <div key={day.d} className={`flex-1 min-w-[120px] py-4 text-center border-r border-slate-200 last:border-r-0 ${day.active ? 'bg-[#F0F8FF]' : ''}`}>
-                        <div className={`mx-auto flex items-center justify-center rounded-full text-lg ${day.active ? 'w-8 h-8 bg-[#2173B9] text-white font-bold' : 'text-slate-700'}`}>
-                          {day.d}
-                        </div>
-                        <div className="text-[11px] text-slate-500 mt-1 capitalize">{day.n}</div>
-                      </div>
+                        ) : h}
+                      </th>
                     ))}
-                  </div>
-
-                  {/* Grid con flex: columna de horas + grid de días/bloques */}
-                  <div className="flex h-[600px] overflow-y-auto custom-scrollbar">
-                    {/* Columna izquierda: horas */}
-                    <div className="w-16 shrink-0 border-r border-slate-200">
-                      {hours.map(h => (
-                        <div key={`hour-${h}`} className="h-24 border-b border-slate-100 p-3 text-right text-[11px] font-bold text-[#2173B9] flex items-start justify-end">
-                          {h}:00
-                        </div>
-                      ))}
-                    </div>
-
-                    {/* Columna derecha: cuadrícula de días + bloques */}
-                    <div className="flex-1 relative" style={{ position: 'relative' }}>
-                      {/* Filas de horas como referencia */}
-                      <div style={{ position: 'absolute', left: 0, right: 0, top: 0, width: '100%', height: `${24 * 96}px` }}>
-                        {hours.map(h => (
-                          <div key={`hour-row-${h}`} className="flex border-b border-slate-100 h-24">
-                            {currentWeekDays.map(day => (
-                              <div key={`cell-${day.d}-${h}`} className={`flex-1 min-w-[120px] border-r border-slate-100 last:border-r-0 transition-colors ${day.active ? 'bg-[#F4F9FF]' : 'hover:bg-slate-50'}`}></div>
-                            ))}
-                          </div>
-                        ))}
-                      </div>
-
-                      {/* Bloques de eventos posicionados absolutamente */}
-                      <div style={{ position: 'absolute', left: 0, right: 0, top: 0, width: '100%', height: `${24 * 96}px` }}>
-                        {currentWeekDays.map((day, dayIdx) => {
-                          const eventosDelDia = horariosCalendario.filter(ev => {
-                            if (!cumpleFiltrosCalendario(ev)) return false;
-
-                            const parts = ev.fecha.split('-');
-                            if(parts.length === 3 && parseInt(parts[2], 10) === day.d && parseInt(parts[1], 10) === day.m && parseInt(parts[0], 10) === day.y) {
-                              return true;
-                            }
-                            return false;
-                          });
-
-                          const bloques = calcularBloquesCalendario(eventosDelDia);
-                          const pixelsPorMinuto = 96 / 60;
-
-                          return bloques.map((bloque) => {
-                            const nombreCentro = bloque.evento.centro.split('-')[1]?.trim() || bloque.evento.centro;
-                            const nombreCorto = bloque.evento.empleado.split(' ')[0] || bloque.evento.empleado;
-                            const isAdic = bloque.evento.adicional;
-                            const alturaBloque = Math.max(32, bloque.duracionMin * pixelsPorMinuto);
-                            const topPx = bloque.inicioMin * pixelsPorMinuto;
-                            const anchoColumnaDia = 100 / currentWeekDays.length;
-                            const anchoLane = anchoColumnaDia / bloque.lanesTotal;
-                            const leftPercent = (dayIdx * anchoColumnaDia) + (bloque.lane * anchoLane);
-
-                            return (
-                              <div
-                                key={bloque.id}
-                                className={`absolute rounded-lg shadow-md overflow-hidden transition-all hover:shadow-lg hover:z-50 border flex flex-col justify-start p-1.5 text-[9px] font-medium ${isAdic ? 'border-amber-400/60 bg-amber-50/90 text-amber-700' : 'border-[#2173B9]/40 bg-[#E0F0FF]/90 text-slate-700'}`}
-                                style={{
-                                  top: `${topPx}px`,
-                                  left: `${leftPercent}%`,
-                                  width: `${anchoLane}%`,
-                                  height: `${alturaBloque}px`,
-                                  zIndex: 10,
-                                }}
-                                title={`${bloque.evento.horaEntrada}-${bloque.evento.horaSalida}: ${nombreCentro} - ${bloque.evento.empleado}`}
-                              >
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    void handleEliminarHorario(bloque.evento);
-                                  }}
-                                  className="absolute top-0.5 right-0.5 w-3.5 h-3.5 rounded-full bg-white/90 border border-slate-300 text-slate-500 hover:text-red-600 hover:border-red-300 leading-none flex items-center justify-center"
-                                  title="Eliminar horario"
-                                >
-                                  x
-                                </button>
-                                <div className="flex items-center gap-1 mb-0.5">
-                                  <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${isAdic ? 'bg-amber-500' : 'bg-[#2173B9]'}`}></div>
-                                  <span className={`font-bold shrink-0 ${isAdic ? 'text-amber-600' : 'text-[#2173B9]'}`}>{bloque.evento.horaEntrada}</span>
-                                </div>
-                                <span className="truncate leading-tight">{nombreCentro}</span>
-                                <span className="truncate leading-tight">{nombreCorto}</span>
-                                {alturaBloque > 50 && (
-                                  <span className="text-[8px] opacity-75 mt-0.5">{bloque.evento.horaSalida}</span>
-                                )}
-                              </div>
-                            );
-                          });
-                        })}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredHorarios.map((row) => (
+                    <tr key={row.id} className="transition-colors hover:bg-slate-50">
+                      <td className="px-6 py-4 text-[13px] text-slate-600">{row.id}</td>
+                      <td className="px-6 py-4 text-[13px] font-medium text-slate-700">{row.empleado}</td>
+                      <td className="px-6 py-4 text-[13px] text-slate-600">{row.ci}</td>
+                      <td className="px-6 py-4 text-[13px] text-slate-600">{row.periodo}</td>
+                      <td className="px-6 py-4 text-[13px] text-slate-600">{row.codCC}</td>
+                      <td className="px-6 py-4 text-[13px] text-slate-600">{getParqName(row.centro)}</td>
+                      <td className="px-6 py-4">
+                        <span className={`rounded-full px-3 py-1 text-[10px] font-bold uppercase tracking-wider ${row.estado === 'creado' ? 'bg-orange-100 text-orange-700' : row.estado === 'pendiente' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                          {row.estado}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 text-right">
+                        <button
+                          onClick={() => {
+                            setRegistroRow(row);
+                            setShowRegistroModal(true);
+                          }}
+                          className="rounded-lg border border-blue-100 bg-blue-50 p-2 text-blue-500 transition-colors hover:bg-blue-100"
+                        >
+                          <FileText size={14} />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {filteredHorarios.length === 0 ? <tr><td colSpan={8} className="py-12 text-center text-sm text-slate-400">No hay registros.</td></tr> : null}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
-      )}
-
-      {activeSubTab === 'gestionar' && (
-        <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-6 lg:p-8 shadow-sm animate-in fade-in duration-300">
-          
-          {showSuccessGuardado && (
-            <div className="mb-6 p-4 bg-[#ECFDF5] border border-[#A7F3D0] rounded-xl text-[#059669] text-sm font-medium animate-in fade-in">
-              Empleado guardado correctamente en la base de datos.
-            </div>
-          )}
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-            <div>
-              <label className="text-[12px] font-medium text-slate-600 mb-2 block">Centro de costo</label>
-              <div className="relative">
-                <select 
-                  className={`w-full pl-4 pr-10 py-2.5 border rounded-lg text-sm outline-none appearance-none text-slate-700 shadow-sm cursor-pointer transition-colors ${gestionarCentro ? 'border-blue-500 ring-1 ring-blue-500' : 'border-slate-200 focus:border-[#2563EB]'}`}
-                  value={gestionarCentro}
-                  onChange={(e) => setGestionarCentro(e.target.value)}
-                >
-                  <option value="" disabled>{loadingCatalogos ? 'Cargando centros de costo...' : 'Escribe para buscar centro de costo'}</option>
-                  {centrosCostoValet.map((centro) => (
-                    <option key={centro.IDCENTROCOSTO} value={`${centro.IDCENTROCOSTO} - ${centro.CENTROCOSTO}`}>
-                      {centro.IDCENTROCOSTO} - {centro.CENTROCOSTO}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
-              </div>
+      ) : (
+        <div className="rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
+          <div className="mb-6">
+            <label className="mb-2 block text-[12px] font-bold uppercase tracking-wider text-slate-600">Seleccionar Centro de Costo</label>
+            <div className="relative max-w-md">
+              <select
+                className={`w-full cursor-pointer appearance-none rounded-xl border py-3 pl-4 pr-10 text-sm font-medium outline-none transition-all ${gestionarCentro ? 'border-blue-500 bg-blue-50/50 text-blue-800 shadow-sm' : 'border-slate-200 bg-white text-slate-700'}`}
+                value={gestionarCentro}
+                onChange={(e) => setGestionarCentro(e.target.value)}
+              >
+                <option value="" disabled>-- Elija un centro de costo --</option>
+                {centrosValet.map((v, i) => <option key={`${v}-${i}`} value={v}>{v}</option>)}
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
             </div>
           </div>
 
           {gestionarCentro ? (
-            <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
-              {/* Panel Izquierdo */}
-              <div className="xl:col-span-4 border border-slate-200 rounded-xl p-6 bg-slate-50/50 flex flex-col justify-between min-h-[160px]">
+            <div className="grid grid-cols-1 gap-6 xl:grid-cols-12">
+              <div className="xl:col-span-4 flex min-h-[160px] flex-col justify-between rounded-2xl border border-slate-200 bg-slate-50 p-6">
                 <div>
-                  <h5 className="text-[11px] font-bold text-slate-400 mb-4 tracking-wide">Centro seleccionado</h5>
-                  <h3 className="text-lg font-black text-slate-800 mb-4 break-words">{gestionarCentro}</h3>
-                  <p className="text-[13px] text-slate-600 mb-2 font-medium">Empleados pertenecientes: <span className="font-black text-slate-800">{empleadosCentroGestion.length}</span></p>
-                  
-                  {centroAutorizadoList[gestionarCentro] && (
-                    <p className="text-[13px] text-slate-600 mb-6 font-medium border-t border-slate-200 pt-3 animate-in fade-in duration-300">
-                      Adicional: <span className="font-black text-emerald-600">{calcularTotalCentro(gestionarCentro).toFixed(2)} $</span>
-                    </p>
-                  )}
+                  <h5 className="mb-2 text-[11px] font-bold uppercase tracking-widest text-slate-400"><MapPin size={12} className="-mt-0.5 mr-1 inline" />Centro activo</h5>
+                  <h3 className="mb-3 text-lg font-black leading-tight text-[#001F3F]">{gestionarCentro}</h3>
+                  <div className="flex w-fit items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-600"><Users size={16} className="text-blue-500" /><span className="font-bold">{empCentro.length}</span> Empleados</div>
                 </div>
-                <div className={!centroAutorizadoList[gestionarCentro] ? 'mt-6' : ''}>
-                  <button 
-                    onClick={() => setShowGestionarEmpleadosModal(true)}
-                    className="px-6 py-2.5 bg-[#001F3F] text-white font-bold rounded-lg text-sm hover:bg-blue-900 transition-colors shadow-sm active:scale-95"
-                  >
-                    Gestionar empleados
-                  </button>
-                </div>
+                <button onClick={() => setShowGestionarModal(true)} className="mt-6 flex w-full items-center justify-center gap-2 rounded-xl bg-[#001F3F] py-3 text-sm font-bold text-white shadow-sm transition-all hover:bg-blue-900"><Settings2 size={16} /> Gestion del Valet</button>
               </div>
-              
-              {/* Panel Derecho */}
+
               <div className="xl:col-span-8 flex flex-col gap-4">
-                <div className="border border-slate-200 rounded-xl overflow-hidden flex flex-col min-h-[160px] bg-white">
-                  {loadingEmpleadosDb ? (
-                    <div className="p-8 flex items-center justify-center flex-1 bg-white">
-                      <p className="text-[13px] font-medium text-slate-400">Cargando empleados asignados...</p>
-                    </div>
-                  ) : empleadosCentroGestion.length > 0 ? (
-                    <div className="overflow-x-auto w-full">
-                      <table className="w-full text-left">
-                        <thead className="bg-slate-50/80 border-b border-slate-100">
-                          <tr>
-                            <th className="px-6 py-4 text-[11px] font-bold text-slate-600">Empleado</th>
-                            <th className="px-6 py-4 text-[11px] font-bold text-slate-600 text-center">Valor fijo a pagar</th>
-                            <th className="px-6 py-4 text-[11px] font-bold text-slate-600 text-center">Valor adicional aprobado</th>
-                            <th className="px-6 py-4 text-[11px] font-bold text-slate-600 text-center">Detalles</th>
-                            <th className="px-6 py-4 text-[11px] font-bold text-slate-600 text-center">Eliminar</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100">
-                          {empleadosCentroGestion.map((emp, idx) => (
-                            <tr key={idx} className="hover:bg-slate-50 transition-colors">
-                              <td className="px-6 py-4">
-                                <div className="text-[12px] font-bold text-slate-700 uppercase max-w-[240px] leading-tight break-words">
-                                  {emp.nombre}
-                                </div>
-                              </td>
-                              <td className="px-6 py-4 text-center text-[13px] font-black text-slate-800">
-                                ${emp.valor}
-                              </td>
-                              <td className="px-6 py-4 text-center text-[13px] font-black text-emerald-600">
-                                ${calcularAdicionalAprobadoEmpleado(emp.centro, emp.nombre).toFixed(2)}
+                <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+                  {empCentro.length > 0 ? (
+                    <table className="w-full text-left">
+                      <thead className="border-b border-slate-100 bg-slate-50">
+                        <tr>{['Empleado', 'Sueldo Fijo', 'Total Extras', 'Adicionales', 'Remover'].map((h) => <th key={h} className="px-6 py-4 text-center text-[10px] font-bold uppercase tracking-wider text-slate-400 first:text-left">{h}</th>)}</tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {empCentro.map((e) => {
+                          const extrasEmp = horarios
+                            .filter((h) => h.periodo === filtroPeriodo && h.empleado === e.nombre && (h.estado === 'procesado' || h.estado === 'pendiente'))
+                            .reduce((acc, h) => {
+                              let empExtra = 0;
+                              Object.values(h.diasRegistro || {}).flat().forEach((dia) => {
+                                if (dia.estadoDia !== 'Normal' && dia.estadoDia !== 'Libre' && dia.aprobado !== false) {
+                                  const conf = costosModal[dia.estadoDia as keyof CostosConfig];
+                                  const tarifa = conf ? (Number.parseFloat(conf.valor) || 0) : 0;
+                                  if (dia.estadoDia === 'Domingo') {
+                                    empExtra += tarifa;
+                                  } else {
+                                    empExtra += calcHoras(dia.horaEntrada, dia.horaSalida) * tarifa;
+                                  }
+                                }
+                              });
+                              return acc + empExtra;
+                            }, 0);
+
+                          return (
+                            <tr key={e.id} className="transition-colors hover:bg-slate-50">
+                              <td className="px-6 py-4 text-[12px] font-bold text-slate-700">{e.nombre}</td>
+                              <td className="px-6 py-4 text-center text-[13px] font-black text-slate-800">${e.valorFijo}</td>
+                              <td className="px-6 py-4 text-center text-[13px] font-black text-orange-600">${extrasEmp.toFixed(2)}</td>
+                              <td className="px-6 py-4 text-center">
+                                <button onClick={() => { setDetalleEmpleado(e); setShowDetallesModal(true); }} className="mx-auto block rounded-lg border border-blue-200 bg-white p-2 text-blue-600 transition-colors hover:bg-blue-50"><Eye size={16} /></button>
                               </td>
                               <td className="px-6 py-4 text-center">
-                                <button 
-                                  onClick={() => {
-                                    setDetalleEmpleado(emp);
-                                    setShowDetallesModal(true);
+                                <button
+                                  onClick={async () => {
+                                    try {
+                                      if (e.ci) {
+                                        await dbApi.valets.empleados.delete(parseCentroCompuesto(e.centro).centroCostoId || '', e.ci);
+                                      }
+
+                                      const horariosDb = await dbApi.valets.horarios.list<{ registros?: ValetHorarioDbItem[] }>();
+                                      const registros = Array.isArray(horariosDb?.registros) ? horariosDb.registros : [];
+                                      const porEmpleado = registros.filter((item) => item.centroCostoId === parseCentroCompuesto(e.centro).centroCostoId && item.empleadoCedula === e.ci);
+                                      await Promise.all(porEmpleado.map(async (item) => {
+                                        if (item.id) await dbApi.valets.horarios.delete(item.id);
+                                      }));
+
+                                      setHorarios((prev) => prev.filter((h) => h.ci !== e.ci || h.codCC !== parseCentroCompuesto(e.centro).centroCostoId));
+                                    } catch (error) {
+                                      setPersistenciaError(error instanceof Error ? error.message : 'No se pudo eliminar el valet.');
+                                    }
                                   }}
-                                  className="p-2 border border-slate-200 rounded-lg text-slate-400 hover:text-[#001F3F] hover:bg-slate-100 hover:border-slate-300 transition-colors shadow-sm bg-white mx-auto block"
+                                  className="mx-auto block rounded-lg border border-red-200 bg-white p-2 text-red-500 transition-colors hover:bg-red-50"
                                 >
-                                  <Eye size={18} />
-                                </button>
-                              </td>
-                              <td className="px-6 py-4 text-center">
-                                <button 
-                                  disabled={eliminandoEmpleadoId === emp.id}
-                                  onClick={() => {
-                                    void handleEliminarEmpleado(emp);
-                                  }}
-                                  className="p-2 border border-slate-200 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 hover:border-red-200 transition-colors shadow-sm bg-white mx-auto block"
-                                >
-                                  <Trash2 size={18} />
+                                  <Trash2 size={16} />
                                 </button>
                               </td>
                             </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
+                          );
+                        })}
+                      </tbody>
+                    </table>
                   ) : (
-                    <>
-                      <div className="bg-slate-50/80 border-b border-slate-200 p-4">
-                        <div className="grid grid-cols-5 gap-2 text-center items-center">
-                          <span className="text-[11px] font-bold text-slate-600">Empleado</span>
-                          <span className="text-[11px] font-bold text-slate-600">Valor fijo a pagar</span>
-                          <span className="text-[11px] font-bold text-slate-600">Valor adicional aprobado</span>
-                          <span className="text-[11px] font-bold text-slate-600">Detalles</span>
-                          <span className="text-[11px] font-bold text-slate-600">Eliminar</span>
-                        </div>
-                      </div>
-                      <div className="p-8 flex items-center justify-center flex-1 bg-white">
-                        <p className="text-[13px] font-medium text-slate-400">Empleados no asignados</p>
-                      </div>
-                    </>
+                    <div className="flex flex-col items-center justify-center p-12 text-slate-400"><Users size={32} className="mb-3 opacity-50" /><p className="text-sm font-medium">No hay empleados asignados a este centro</p></div>
                   )}
                 </div>
-
-                {empleadosCentroGestion.length > 0 && (
-                  <div className="flex justify-end animate-in fade-in duration-300">
-                    <button 
-                      onClick={() => setCentroAutorizadoList(prev => ({...prev, [gestionarCentro]: true}))}
-                      className="px-6 py-2.5 bg-emerald-600 text-white font-bold rounded-lg text-sm hover:bg-emerald-700 transition-colors shadow-sm active:scale-95 flex items-center gap-2"
-                    >
-                      <CheckCircle2 size={16} strokeWidth={2.5} />
-                      Autorizar Adicionales
-                    </button>
-                  </div>
-                )}
               </div>
             </div>
           ) : (
-            <div className="border border-slate-200 rounded-lg p-5 text-[13px] font-medium text-slate-500 bg-slate-50/50">
-              Selecciona un centro de costo para ver los detalles de valet.
+            <div className="flex flex-col items-center rounded-2xl border border-slate-200 bg-slate-50 p-12 text-center text-slate-400">
+              <Users size={32} className="mb-3 opacity-50" />
+              <p className="text-sm font-medium">Selecciona un centro de costo para ver los detalles.</p>
             </div>
           )}
         </div>
       )}
+
+      {showGestionarModal ? (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={() => setShowGestionarModal(false)} />
+          <div className="relative w-full max-w-[550px] overflow-hidden rounded-3xl bg-white shadow-2xl">
+            <div className="flex items-start justify-between border-b border-slate-100 bg-slate-50/50 px-6 py-6">
+              <div>
+                <h3 className="text-xl font-black text-[#001F3F]">Gestion del Valet</h3>
+                <p className="mt-1 text-[11px] font-bold uppercase tracking-wider text-slate-500">{gestionarCentro}</p>
+              </div>
+              <button onClick={() => setShowGestionarModal(false)} className="rounded-lg border border-slate-200 bg-white px-4 py-1.5 text-xs font-bold text-slate-600 shadow-sm transition-colors hover:bg-slate-100">Cerrar</button>
+            </div>
+
+            <div className="p-6">
+              <p className="mb-5 text-[13px] leading-relaxed text-slate-600">Configuracion de costos de trabajo para este centro. Estos valores aplicaran automaticamente a los calculos de asistencia de los empleados. <span className="font-bold text-orange-600">Nota:</span> Las "Horas" en Normal actuan como limite mensual.</p>
+              <table className="w-full border-collapse text-left">
+                <thead>
+                  <tr className="border-b-2 border-slate-200">
+                    <th className="py-2.5 text-[11px] font-bold uppercase tracking-wider text-slate-400">Tipo</th>
+                    <th className="py-2.5 text-center text-[11px] font-bold uppercase tracking-wider text-slate-400">Horas Limite</th>
+                    <th className="py-2.5 text-center text-[11px] font-bold uppercase tracking-wider text-slate-400">Valor ($)</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {(['Normal', 'Adicional', 'Domingo', 'Domingo Adicional'] as Array<keyof CostosConfig>).map((tipo) => (
+                    <tr key={tipo}>
+                      <td className="py-3 text-[13px] font-bold text-slate-700">{tipo}</td>
+                      <td className="px-2 py-3">
+                        <input
+                          type="number"
+                          disabled={tipo !== 'Normal'}
+                          value={costosModal[tipo].horas}
+                          onChange={(e) => setCostosModal((prev) => ({ ...prev, [tipo]: { ...prev[tipo], horas: e.target.value } }))}
+                          className="w-full rounded-lg border border-slate-200 px-3 py-2 text-center text-sm font-medium outline-none transition-colors focus:border-blue-400 disabled:bg-slate-100 disabled:text-slate-400"
+                          placeholder={tipo !== 'Normal' ? 'N/A' : ''}
+                        />
+                      </td>
+                      <td className="px-2 py-3">
+                        <div className="relative">
+                          <span className="absolute left-3 top-1/2 -translate-y-1/2 font-bold text-slate-400">$</span>
+                          <input
+                            type="number"
+                            value={costosModal[tipo].valor}
+                            onChange={(e) => setCostosModal((prev) => ({ ...prev, [tipo]: { ...prev[tipo], valor: e.target.value } }))}
+                            className="w-full rounded-lg border border-slate-200 py-2 pl-7 pr-3 text-center text-sm font-bold text-slate-800 outline-none transition-colors focus:border-blue-400"
+                          />
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="flex justify-end gap-3 border-t border-slate-100 bg-slate-50 px-6 py-5">
+              <button onClick={() => setShowGestionarModal(false)} className="rounded-xl border border-slate-200 bg-white px-5 py-2.5 text-sm font-bold text-slate-600 shadow-sm transition-colors hover:bg-slate-50">Cancelar</button>
+              <button onClick={() => setShowGestionarModal(false)} className="flex items-center gap-2 rounded-xl bg-[#001F3F] px-6 py-2.5 text-sm font-bold text-white shadow-md transition-all hover:bg-blue-900 active:scale-95"><Save size={16} /> Guardar Configuracion</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {showDetallesModal && detalleEmpleado ? (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center overflow-y-auto p-4">
+          <div className="absolute inset-0 bg-[#001F3F]/60 backdrop-blur-sm" onClick={() => setShowDetallesModal(false)} />
+          <div className="relative w-full max-w-[700px] overflow-hidden rounded-3xl bg-white shadow-2xl">
+            {(() => {
+              const hRecord = horarios.find((h) => h.periodo === filtroPeriodo && h.empleado === detalleEmpleado.nombre && h.centro === detalleEmpleado.centro);
+              const diasExtras = hRecord?.diasRegistro
+                ? Object.entries(hRecord.diasRegistro)
+                  .flatMap(([fecha, dias]) => dias.map((d) => ({ fecha, ...d })))
+                  .filter((d) => d.estadoDia !== 'Normal' && d.estadoDia !== 'Libre')
+                : [];
+
+              const totalAprobado = diasExtras
+                .filter((d) => d.aprobado !== false)
+                .reduce((acc, d) => {
+                  const h = calcHoras(d.horaEntrada, d.horaSalida);
+                  const conf = costosModal[d.estadoDia as keyof CostosConfig];
+                  const tarifa = conf ? (Number.parseFloat(conf.valor) || 0) : 0;
+                  if (d.estadoDia === 'Domingo') return acc + tarifa;
+                  return acc + (h * tarifa);
+                }, 0);
+
+              const domingosTrabajados = diasExtras.filter((d) => d.estadoDia === 'Domingo');
+              const horasExtras = diasExtras.filter((d) => d.estadoDia === 'Adicional' || d.estadoDia === 'Domingo Adicional');
+
+              const toggleAprobacion = async (fecha: string, turnId: string) => {
+                if (!hRecord) return;
+                const rowActualizada = {
+                  ...hRecord,
+                  diasRegistro: {
+                    ...hRecord.diasRegistro,
+                    [fecha]: (hRecord.diasRegistro[fecha] || []).map((t) => (t.id === turnId ? { ...t, aprobado: !t.aprobado } : t)),
+                  },
+                };
+
+                setHorarios((cur) => cur.map((row) => {
+                  if (row.id !== hRecord.id) return row;
+                  return rowActualizada;
+                }));
+
+                try {
+                  await syncHorarioRowToDb({ ...rowActualizada, estado: 'pendiente' });
+                } catch (error) {
+                  setPersistenciaError(error instanceof Error ? error.message : 'No se pudo persistir la aprobacion del turno.');
+                }
+              };
+
+              return (
+                <>
+                  <div className="flex items-start justify-between border-b border-slate-100 bg-slate-50/50 px-8 py-6">
+                    <div>
+                      <h3 className="mb-1 text-xl font-black text-slate-800">Detalles de Extras</h3>
+                      <p className="text-xs font-bold uppercase text-slate-500">{detalleEmpleado.nombre}</p>
+                    </div>
+                    <div className="flex flex-col items-end gap-2">
+                      <button onClick={() => setShowDetallesModal(false)} className="rounded-full border border-slate-200 bg-white p-2 text-slate-500 transition-colors hover:bg-slate-100"><X size={16} /></button>
+                      <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-1.5 text-right shadow-sm">
+                        <span className="block text-[10px] font-bold uppercase text-blue-600">Total Aprobado</span>
+                        <span className="text-lg font-black text-blue-800">${totalAprobado.toFixed(2)}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="max-h-[60vh] space-y-6 overflow-y-auto px-8 py-6 [scrollbar-gutter:stable]">
+                    <div>
+                      <h4 className="mb-3 flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-slate-700"><Clock size={16} className="text-orange-500" /> Horas Extras (Adicional / Dom. Adicional)</h4>
+                      {horasExtras.length > 0 ? (
+                        <div className="space-y-2">
+                          {horasExtras.map((d, index) => {
+                            const dayName = ['Dom', 'Lun', 'Mar', 'Mie', 'Jue', 'Vie', 'Sab'][new Date(`${d.fecha}T12:00:00`).getDay()];
+                            const hCalc = calcHoras(d.horaEntrada, d.horaSalida);
+                            const valCalc = hCalc * (Number.parseFloat(costosModal[d.estadoDia as keyof CostosConfig]?.valor || '0') || 0);
+
+                            return (
+                              <div key={`${d.fecha}-${index}`} className="flex items-center justify-between rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm transition-colors hover:border-blue-300">
+                                <div className="flex items-center gap-4">
+                                  <span className="rounded bg-slate-100 px-2.5 py-1 font-mono text-[11px] font-bold text-slate-600">{d.fecha}</span>
+                                  <span className="w-8 text-[13px] font-bold text-slate-800">{dayName}</span>
+                                  <span className="rounded border border-slate-100 bg-slate-50 px-2 py-1 text-[12px] font-medium text-slate-500">{d.horaEntrada} - {d.horaSalida} <span className="ml-1 text-slate-400">({hCalc.toFixed(2)}h)</span></span>
+                                  <span className="ml-2 text-[10px] font-bold uppercase text-slate-400">{d.estadoDia}</span>
+                                </div>
+                                <div className="flex items-center gap-4">
+                                  <span className={`text-[15px] font-black ${d.aprobado !== false ? 'text-[#001F3F]' : 'text-slate-300 line-through'}`}>${valCalc.toFixed(2)}</span>
+                                  <button onClick={() => toggleAprobacion(d.fecha, d.id)} className={`flex h-8 w-8 items-center justify-center rounded-lg border-2 transition-all ${d.aprobado !== false ? 'border-emerald-500 bg-emerald-50 shadow-sm' : 'border-slate-200 bg-slate-50'}`}>
+                                    {d.aprobado !== false ? <Check size={16} className="text-emerald-600" strokeWidth={3} /> : null}
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div className="rounded-xl border border-slate-100 bg-slate-50 p-4 text-center text-sm text-slate-400">No hay horas extras registradas.</div>
+                      )}
+                    </div>
+
+                    <div>
+                      <h4 className="mb-3 flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-slate-700"><Calendar size={16} className="text-orange-500" /> Domingos Trabajados (Tarifa Plana)</h4>
+                      {domingosTrabajados.length > 0 ? (
+                        <div className="space-y-2">
+                          {domingosTrabajados.map((d, index) => {
+                            const dayName = ['Dom', 'Lun', 'Mar', 'Mie', 'Jue', 'Vie', 'Sab'][new Date(`${d.fecha}T12:00:00`).getDay()];
+                            const valCalc = Number.parseFloat(costosModal[d.estadoDia as keyof CostosConfig]?.valor || '0') || 0;
+
+                            return (
+                              <div key={`${d.fecha}-${index}`} className="flex items-center justify-between rounded-xl border border-orange-100 bg-orange-50/30 p-3.5 shadow-sm">
+                                <div className="flex items-center gap-4">
+                                  <span className="rounded-lg border border-orange-200 bg-white px-3 py-1 font-mono text-[12px] font-bold text-orange-800">{d.fecha}</span>
+                                  <span className="w-8 text-[13px] font-bold text-slate-800">{dayName}</span>
+                                  <span className="rounded border border-orange-200 bg-white px-2 py-1 text-[12px] font-medium text-orange-800/70">{d.estadoDia}</span>
+                                </div>
+                                <div className="flex items-center gap-4">
+                                  <span className={`text-[15px] font-black ${d.aprobado !== false ? 'text-orange-600' : 'text-slate-300 line-through'}`}>${valCalc.toFixed(2)}</span>
+                                  <button onClick={() => toggleAprobacion(d.fecha, d.id)} className={`flex h-8 w-8 items-center justify-center rounded-lg border-2 transition-all ${d.aprobado !== false ? 'border-emerald-500 bg-emerald-50 shadow-sm' : 'border-slate-200 bg-white'}`}>
+                                    {d.aprobado !== false ? <Check size={16} className="text-emerald-600" strokeWidth={3} /> : null}
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div className="rounded-xl border border-slate-100 bg-slate-50 p-4 text-center text-sm text-slate-400">No hay domingos trabajados en este periodo.</div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end border-t border-slate-100 bg-slate-50 p-6">
+                    <button onClick={() => setShowDetallesModal(false)} className="rounded-xl bg-[#001F3F] px-8 py-2.5 text-sm font-bold text-white shadow-md transition-all hover:bg-blue-900">Hecho</button>
+                  </div>
+                </>
+              );
+            })()}
+          </div>
+        </div>
+      ) : null}
+
+      {showSelEmpleadoModal ? (
+        <SeleccionarEmpleadoModal
+          periodo={filtroPeriodo}
+          centrosValet={centrosValet}
+          empleados={empleadosCatalogo}
+          onClose={() => setShowSelEmpleadoModal(false)}
+          onSeleccionar={async (emp) => {
+            const nuevoRegistro: HorarioValetRow = {
+              id: `${emp.codCC || '00000000'}-${emp.ci || '0000000000'}-${filtroPeriodo}`,
+              empleado: emp.nombre,
+              ci: emp.ci || '0000000000',
+              periodo: filtroPeriodo,
+              codCC: emp.codCC || '00000000',
+              centro: emp.centro || '',
+              estado: 'creado',
+              diasRegistro: {},
+            };
+
+            upsertHorarioLocal(nuevoRegistro);
+            setShowSelEmpleadoModal(false);
+
+            try {
+              await syncEmpleadoToDb(nuevoRegistro);
+            } catch (error) {
+              setPersistenciaError(error instanceof Error ? error.message : 'No se pudo guardar el empleado en persistencia.');
+            }
+          }}
+        />
+      ) : null}
+
+      {showRegistroModal && registroRow ? (
+        <RegistroAsistenciaModal
+          empleadoSel={{
+            nombre: registroRow.empleado,
+            ci: registroRow.ci,
+            codCC: registroRow.codCC,
+            centro: registroRow.centro,
+          }}
+          periodo={registroRow.periodo || filtroPeriodo}
+          registroRow={registroRow}
+          costosConfig={costosModal}
+          centrosValet={centrosValet}
+          onClose={() => {
+            setShowRegistroModal(false);
+            setRegistroRow(null);
+          }}
+          onGuardar={async (nuevosDias) => {
+            const actualizado: HorarioValetRow = {
+              ...registroRow,
+              estado: 'pendiente',
+              diasRegistro: nuevosDias,
+            };
+
+            upsertHorarioLocal(actualizado);
+
+            try {
+              await syncEmpleadoToDb(actualizado);
+              await syncHorarioRowToDb(actualizado);
+            } catch (error) {
+              setPersistenciaError(error instanceof Error ? error.message : 'No se pudo persistir el horario guardado.');
+            }
+          }}
+        />
+      ) : null}
+
+      {loadingCatalogos ? (
+        <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">Cargando catalogos desde n8n...</div>
+      ) : null}
     </div>
   );
 };

@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Building2, ChevronLeft, Plus, Save, Settings, Trash2, Users } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Building2, ChevronLeft, Plus, Save, Settings, Trash2, Upload, Users } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import { getNominaEmployeesActive, getNominaCostCenters, type NominaCostCenter } from '../../services/n8nApi';
 import type { EmpleadoNominaApiItem } from '../../types/nomina';
 import { dbApi } from '../../services/dbApi';
@@ -138,6 +139,23 @@ const normalizarPlantillaConEmpleados = (item: PlantillaConEmpleadosApiItem): Pl
   };
 };
 
+const normalizarCodigoCentro = (valor: string): string => {
+  const raw = String(valor || '').trim().toUpperCase();
+  if (!raw) return '';
+
+  // Si viene compuesto, prioriza el primer bloque como código.
+  const primerSegmento = raw.split('-')[0].trim();
+  const sinSeparadores = primerSegmento.replace(/[^A-Z0-9]/g, '');
+  if (!sinSeparadores) return '';
+
+  // Para códigos puramente numéricos, ignora ceros a la izquierda.
+  if (/^\d+$/.test(sinSeparadores)) {
+    return sinSeparadores.replace(/^0+(?=\d)/, '');
+  }
+
+  return sinSeparadores;
+};
+
 const ConfiguracionDistribucionView = () => {
   const [vistaActiva, setVistaActiva] = useState<VistaDistribucion>('inicio');
 
@@ -168,6 +186,7 @@ const ConfiguracionDistribucionView = () => {
   const [centrosPlantillaBorrador, setCentrosPlantillaBorrador] = useState<PlantillaCentro[]>([]);
   const [centroCostoSeleccionado, setCentroCostoSeleccionado] = useState('');
   const [porcentajeCentroSeleccionado, setPorcentajeCentroSeleccionado] = useState('');
+  const inputArchivoPlantillaRef = useRef<HTMLInputElement | null>(null);
 
   const [plantillaAsignacionSeleccionada, setPlantillaAsignacionSeleccionada] = useState('');
   const [empleadoAsignacionInput, setEmpleadoAsignacionInput] = useState('');
@@ -376,6 +395,218 @@ const ConfiguracionDistribucionView = () => {
 
     setCentroCostoSeleccionado('');
     setPorcentajeCentroSeleccionado('');
+  };
+
+  const cargarPlantillaDesdeArchivo = async (file: File) => {
+    if (!file) return;
+
+    console.groupCollapsed('[Distribucion][ImportarExcel] Inicio de importacion');
+    console.log('[Distribucion][ImportarExcel] Archivo recibido:', {
+      name: file.name,
+      size: file.size,
+      type: file.type,
+      lastModified: new Date(file.lastModified).toISOString(),
+    });
+
+    try {
+      const buffer = await file.arrayBuffer();
+      console.log('[Distribucion][ImportarExcel] Buffer cargado (bytes):', buffer.byteLength);
+
+      const workbook = XLSX.read(buffer, { type: 'array' });
+      const firstSheetName = workbook.SheetNames[0];
+
+      console.log('[Distribucion][ImportarExcel] Hojas detectadas:', workbook.SheetNames);
+      console.log('[Distribucion][ImportarExcel] Primera hoja usada:', firstSheetName || '(sin hojas)');
+
+      if (!firstSheetName) {
+        alert('El archivo no contiene hojas para importar.');
+        return;
+      }
+
+      const sheet = workbook.Sheets[firstSheetName];
+      const rows = XLSX.utils.sheet_to_json<(string | number)[]>(sheet, { header: 1, raw: false });
+
+      console.log('[Distribucion][ImportarExcel] Total de filas leidas:', Array.isArray(rows) ? rows.length : 0);
+      if (Array.isArray(rows) && rows.length > 0) {
+        console.log('[Distribucion][ImportarExcel] Muestra de filas (max 5):', rows.slice(0, 5));
+      }
+
+      if (!Array.isArray(rows) || rows.length === 0) {
+        alert('No se encontraron filas en el archivo.');
+        return;
+      }
+
+      const porcentajePorCentro = new Map<string, number>();
+      const filasDescartadas: Array<{ fila: number; motivo: string; codigo: string; porcentaje: string }> = [];
+
+      rows.forEach((row, rowIndex) => {
+        if (!Array.isArray(row) || row.length === 0) {
+          filasDescartadas.push({
+            fila: rowIndex + 1,
+            motivo: 'Fila vacia o invalida',
+            codigo: '',
+            porcentaje: '',
+          });
+          return;
+        }
+
+        let codigoRaw = String(row[0] || '').trim();
+        let porcentajeRaw = String(row[1] ?? '').trim();
+
+        // Soporta CSV con formato: codigo;porcentaje en una sola celda.
+        // Tambien soporta cuando el parser separa por coma y deja filas como:
+        // ["02329563;0", "25"] para representar 0,25.
+        if (codigoRaw.includes(';')) {
+          const partes = codigoRaw.split(';');
+          const codigoParte = String(partes[0] || '').trim();
+          const porcentajeParte = String(partes[1] || '').trim();
+
+          if (codigoParte) {
+            codigoRaw = codigoParte;
+          }
+
+          if (porcentajeRaw) {
+            const porcentajeParteEsNumero = /^\d+(?:[.,]\d+)?$/.test(porcentajeParte);
+            const porcentajeRawEsEntero = /^\d+$/.test(porcentajeRaw);
+
+            if (porcentajeParteEsNumero && porcentajeRawEsEntero) {
+              // Reconstruye decimales perdidos por parseo CSV: "1" + "00" -> "1,00".
+              porcentajeRaw = `${porcentajeParte},${porcentajeRaw}`;
+            } else if (!porcentajeParte && porcentajeRaw) {
+              porcentajeRaw = String(porcentajeRaw).trim();
+            } else {
+              porcentajeRaw = porcentajeParte || porcentajeRaw;
+            }
+          } else {
+            porcentajeRaw = porcentajeParte;
+          }
+        }
+
+        const codigo = codigoRaw;
+        if (!codigo) {
+          filasDescartadas.push({
+            fila: rowIndex + 1,
+            motivo: 'Codigo de centro vacio',
+            codigo: codigoRaw,
+            porcentaje: porcentajeRaw,
+          });
+          return;
+        }
+
+        const porcentaje = Number(
+          porcentajeRaw
+            .replace(/\s/g, '')
+            .replace('%', '')
+            .replace(',', '.')
+        );
+
+        if (!Number.isFinite(porcentaje) || porcentaje <= 0) {
+          filasDescartadas.push({
+            fila: rowIndex + 1,
+            motivo: 'Porcentaje invalido (debe ser numerico y > 0)',
+            codigo,
+            porcentaje: porcentajeRaw,
+          });
+          return;
+        }
+
+        porcentajePorCentro.set(codigo, (porcentajePorCentro.get(codigo) || 0) + porcentaje);
+      });
+
+      console.log('[Distribucion][ImportarExcel] Centros agregados desde archivo:', porcentajePorCentro.size);
+      console.log('[Distribucion][ImportarExcel] Filas descartadas:', filasDescartadas.length);
+      if (filasDescartadas.length > 0) {
+        console.table(filasDescartadas.slice(0, 20));
+        if (filasDescartadas.length > 20) {
+          console.warn('[Distribucion][ImportarExcel] Se muestran solo 20 filas descartadas de', filasDescartadas.length);
+        }
+      }
+
+      if (porcentajePorCentro.size === 0) {
+        console.warn('[Distribucion][ImportarExcel] No hubo pares validos centro/porcentaje tras parseo.');
+        alert('No se encontraron pares válidos de centro y porcentaje en el archivo.');
+        return;
+      }
+
+      // Valida contra catálogo en vivo de n8n para evitar desalineación con estado local.
+      let centrosCatalogo: NominaCostCenter[] = centrosCosto;
+      console.log('[Distribucion][ImportarExcel] Centros en estado local antes de refrescar:', centrosCatalogo.length);
+      try {
+        const centrosN8n = await getNominaCostCenters();
+        if (Array.isArray(centrosN8n) && centrosN8n.length > 0) {
+          centrosCatalogo = centrosN8n;
+          setCentrosCosto(centrosN8n);
+          console.log('[Distribucion][ImportarExcel] Centros refrescados desde n8n:', centrosN8n.length);
+        } else {
+          console.warn('[Distribucion][ImportarExcel] getNominaCostCenters no devolvio centros; se mantiene catalogo local.');
+        }
+      } catch (error) {
+        console.warn('No se pudo refrescar centros desde n8n al importar plantilla, se usa catálogo cargado.', error);
+      }
+
+      const centrosById = new Map(
+        centrosCatalogo.map((centro) => [String(centro.IDCENTROCOSTO || '').trim().toUpperCase(), centro]),
+      );
+      const centrosByIdNormalizado = new Map(
+        centrosCatalogo.map((centro) => [normalizarCodigoCentro(String(centro.IDCENTROCOSTO || '')), centro]),
+      );
+
+      const importados: PlantillaCentro[] = [];
+      const noEncontrados: string[] = [];
+
+      for (const [codigoOriginal, porcentaje] of porcentajePorCentro.entries()) {
+        const exacto = centrosById.get(String(codigoOriginal || '').trim().toUpperCase());
+        const normalizado = centrosByIdNormalizado.get(normalizarCodigoCentro(codigoOriginal));
+        const centro = exacto || normalizado;
+
+        if (!centro) {
+          noEncontrados.push(codigoOriginal);
+          continue;
+        }
+
+        importados.push({
+          centroCostoId: String(centro.IDCENTROCOSTO || '').trim(),
+          centroCostoNombre: String(centro.CENTROCOSTO || '').trim(),
+          porcentaje: Number(porcentaje.toFixed(2)),
+        });
+      }
+
+      console.log('[Distribucion][ImportarExcel] Resultado de mapeo:', {
+        totalCodigosArchivo: porcentajePorCentro.size,
+        importados: importados.length,
+        noEncontrados: noEncontrados.length,
+      });
+      if (noEncontrados.length > 0) {
+        console.warn('[Distribucion][ImportarExcel] Codigos no encontrados (max 30):', noEncontrados.slice(0, 30));
+      }
+
+      if (importados.length === 0) {
+        alert('No se pudo relacionar ningún centro del archivo con el catálogo de centros de costo.');
+        return;
+      }
+
+      importados.sort((a, b) => a.centroCostoNombre.localeCompare(b.centroCostoNombre, 'es', { sensitivity: 'base' }));
+      setCentrosPlantillaBorrador(importados);
+      setCentroCostoSeleccionado('');
+      setPorcentajeCentroSeleccionado('');
+
+      if (noEncontrados.length > 0) {
+        alert(`Se importaron ${importados.length} centro(s). No encontrados: ${noEncontrados.join(', ')}`);
+      } else {
+        alert(`Se importaron ${importados.length} centro(s) correctamente.`);
+      }
+
+      const totalImportado = importados.reduce((acc, item) => acc + item.porcentaje, 0);
+      console.log('[Distribucion][ImportarExcel] Importacion finalizada:', {
+        centrosImportados: importados.length,
+        porcentajeTotal: Number(totalImportado.toFixed(2)),
+      });
+    } catch (error) {
+      console.error('Error importando plantilla desde archivo:', error);
+      alert('No se pudo procesar el archivo. Verifica que tenga formato válido de centro y porcentaje.');
+    } finally {
+      console.groupEnd();
+    }
   };
 
   const eliminarCentroBorrador = (centroCostoId: string) => {
@@ -990,6 +1221,30 @@ const ConfiguracionDistribucionView = () => {
                 >
                   <Plus size={16} />
                   Agregar centro
+                </button>
+              </div>
+
+              <div className="flex items-center justify-end">
+                <input
+                  ref={inputArchivoPlantillaRef}
+                  type="file"
+                  accept=".xlsx,.xls,.csv,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    if (file) {
+                      void cargarPlantillaDesdeArchivo(file);
+                    }
+                    event.currentTarget.value = '';
+                  }}
+                  className="hidden"
+                />
+                <button
+                  type="button"
+                  onClick={() => inputArchivoPlantillaRef.current?.click()}
+                  className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                >
+                  <Upload size={16} />
+                  Generar mediante excel
                 </button>
               </div>
 
