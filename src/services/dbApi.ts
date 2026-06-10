@@ -5,6 +5,8 @@ export const DB_API_CATALOG = {
   humanaEmployeeLatest: '/api/humana/employee-latest',
   valetsEmpleados: '/api/valets/empleados',
   valetsHorarios: '/api/valets/horarios',
+  valetsCentros: '/api/valets/centros',
+  valetsConfiguracion: '/api/valets/configuracion',
   descuentosIncidentesCajaChica: '/api/descuentos/incidentes-caja-chica',
   descuentosExentosPagoSeguro: '/api/descuentos/exentos-pago-seguro',
   distribucionPlantillas: '/api/nomina/distribucion-plantillas',
@@ -244,6 +246,44 @@ export const dbApi = {
   },
 
   valets: {
+    centros: {
+      list: async <T = unknown>(activo?: boolean): Promise<T> => {
+        if (typeof activo !== 'boolean') {
+          return await listResource<T>(DB_API_CATALOG.valetsCentros);
+        }
+
+        return await listResource<T>(withQuery(DB_API_CATALOG.valetsCentros, {
+          activo: String(activo),
+        }));
+      },
+
+      save: async <T = unknown>(payload: unknown): Promise<T> => {
+        return await saveResource<T>(DB_API_CATALOG.valetsCentros, payload);
+      },
+
+      delete: async <T = unknown>(centroCostoId: string): Promise<T> => {
+        return await deleteResource<T>(withQuery(DB_API_CATALOG.valetsCentros, {
+          centroCostoId,
+        }));
+      },
+    },
+
+    configuracion: {
+      list: async <T = unknown>(centroCostoId?: string): Promise<T> => {
+        if (!centroCostoId) {
+          return await listResource<T>(DB_API_CATALOG.valetsConfiguracion);
+        }
+
+        return await listResource<T>(withQuery(DB_API_CATALOG.valetsConfiguracion, {
+          centroCostoId,
+        }));
+      },
+
+      save: async <T = unknown>(payload: unknown): Promise<T> => {
+        return await saveResource<T>(DB_API_CATALOG.valetsConfiguracion, payload);
+      },
+    },
+
     empleados: {
       list: async <T = unknown>(): Promise<T> => {
         return await listResource<T>(DB_API_CATALOG.valetsEmpleados);

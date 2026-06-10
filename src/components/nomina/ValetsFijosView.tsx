@@ -9,11 +9,10 @@ import {
   Clock,
   Copy,
   CreditCard,
-  Eye,
   FileText,
   FileUp,
+  Image,
   Loader2,
-  MapPin,
   MoreVertical,
   Pencil,
   Plus,
@@ -38,7 +37,8 @@ interface DiaRegistro {
   estadoDia: EstadoDia;
   horaEntrada: string;
   horaSalida: string;
-  aprobado: boolean;
+  aprobado: boolean | null;
+  respaldoNombre?: string;
 }
 
 interface HorarioValetRow {
@@ -97,9 +97,25 @@ interface ValetHorarioDbItem {
   observacion?: string;
 }
 
+interface ValetCentroDbItem {
+  centroCostoId: string;
+  centroCostoNombre: string;
+  activo: boolean;
+}
+
+interface ValetConfiguracionDbItem {
+  centroCostoId: string;
+  horasNormalLimite: number;
+  valorNormal: number;
+  valorAdicional: number;
+  valorDomingo: number;
+  valorDomingoAdicional: number;
+}
+
 interface ValetHorarioMeta {
   estadoDia?: EstadoDia;
   parqueadero?: string;
+  respaldoNombre?: string;
 }
 
 const composeCentroDisplay = (centroCostoId: string, centroCostoNombre: string): string => {
@@ -186,6 +202,7 @@ const parseHorarioMeta = (raw: string): ValetHorarioMeta => {
     return {
       estadoDia: parsed.estadoDia,
       parqueadero: parsed.parqueadero,
+      respaldoNombre: parsed.respaldoNombre,
     };
   } catch {
     return {};
@@ -196,7 +213,46 @@ const serializeHorarioMeta = (meta: ValetHorarioMeta): string => {
   return JSON.stringify({
     estadoDia: meta.estadoDia || 'Normal',
     parqueadero: meta.parqueadero || '',
+    respaldoNombre: meta.respaldoNombre || '',
   });
+};
+
+const DEFAULT_COSTOS_CONFIG: CostosConfig = {
+  Normal: { horas: '40', valor: '3.50' },
+  Adicional: { horas: '', valor: '3.00' },
+  Domingo: { horas: '', valor: '10.00' },
+  'Domingo Adicional': { horas: '', valor: '15.00' },
+};
+
+const createDefaultCostosConfig = (): CostosConfig => ({
+  Normal: { ...DEFAULT_COSTOS_CONFIG.Normal },
+  Adicional: { ...DEFAULT_COSTOS_CONFIG.Adicional },
+  Domingo: { ...DEFAULT_COSTOS_CONFIG.Domingo },
+  'Domingo Adicional': { ...DEFAULT_COSTOS_CONFIG['Domingo Adicional'] },
+});
+
+const normalizeCostosConfig = (config?: Partial<CostosConfig>): CostosConfig => {
+  const base = createDefaultCostosConfig();
+  if (!config) return base;
+
+  return {
+    Normal: {
+      horas: String(config.Normal?.horas ?? base.Normal.horas),
+      valor: String(config.Normal?.valor ?? base.Normal.valor),
+    },
+    Adicional: {
+      horas: String(config.Adicional?.horas ?? base.Adicional.horas),
+      valor: String(config.Adicional?.valor ?? base.Adicional.valor),
+    },
+    Domingo: {
+      horas: String(config.Domingo?.horas ?? base.Domingo.horas),
+      valor: String(config.Domingo?.valor ?? base.Domingo.valor),
+    },
+    'Domingo Adicional': {
+      horas: String(config['Domingo Adicional']?.horas ?? base['Domingo Adicional'].horas),
+      valor: String(config['Domingo Adicional']?.valor ?? base['Domingo Adicional'].valor),
+    },
+  };
 };
 
 interface SeleccionarEmpleadoModalProps {
@@ -231,7 +287,28 @@ const SeleccionarEmpleadoModal = ({ periodo, centrosValet, empleados, onClose, o
     }
   };
 
-  const puedeContinuar = Boolean(nombre && ci && centro);
+  const empleadoResuelto = useMemo(() => {
+    if (!nombre.trim()) return null;
+
+    const nombreNorm = nombre.trim().toLowerCase();
+    const centroNorm = centro.trim().toLowerCase();
+
+    const porCi = ci.trim()
+      ? empleados.find((emp) => emp.ci.trim().toLowerCase() === ci.trim().toLowerCase())
+      : null;
+
+    if (porCi) return porCi;
+
+    if (centroNorm) {
+      const porNombreCentro = empleados.find((emp) => emp.nombre.trim().toLowerCase() === nombreNorm
+        && emp.centro.trim().toLowerCase() === centroNorm);
+      if (porNombreCentro) return porNombreCentro;
+    }
+
+    return empleados.find((emp) => emp.nombre.trim().toLowerCase() === nombreNorm) || null;
+  }, [centro, ci, empleados, nombre]);
+
+  const puedeContinuar = Boolean(nombre && centro && empleadoResuelto?.ci);
 
   return (
     <div className="fixed inset-0 z-[105] flex items-center justify-center p-4">
@@ -266,17 +343,6 @@ const SeleccionarEmpleadoModal = ({ periodo, centrosValet, empleados, onClose, o
           </div>
 
           <div>
-            <label className="mb-1 block text-[13px] font-bold text-slate-700">Cedula (CI)</label>
-            <input
-              type="text"
-              value={ci}
-              onChange={(e) => setCi(e.target.value)}
-              placeholder="0999999999"
-              className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-[13px] text-slate-700 shadow-sm outline-none transition-all focus:border-[#001F3F]"
-            />
-          </div>
-
-          <div>
             <label className="mb-1 block text-[13px] font-bold text-slate-700">Centro de Costo (Valet)</label>
             <div className="relative">
               <select
@@ -298,12 +364,13 @@ const SeleccionarEmpleadoModal = ({ periodo, centrosValet, empleados, onClose, o
           <button
             onClick={() => {
               if (!puedeContinuar) return;
+              if (!empleadoResuelto) return;
               const centroParseado = parseCentroCompuesto(centro);
               onSeleccionar({
-                nombre: nombre.trim(),
-                ci: ci.trim(),
+                nombre: empleadoResuelto.nombre,
+                ci: empleadoResuelto.ci,
                 centro: centro.trim(),
-                codCC: centroParseado.centroCostoId || '00000000',
+                codCC: centroParseado.centroCostoId || empleadoResuelto.codCC || '00000000',
               });
             }}
             disabled={!puedeContinuar}
@@ -335,6 +402,8 @@ const RegistroAsistenciaModal = ({ empleadoSel, periodo, registroRow, costosConf
   const semanas = useMemo(() => getSemanasPeriodo(periodo), [periodo]);
   const [activeSem, setActiveSem] = useState(0);
   const [saved, setSaved] = useState(true);
+  const [filtroTipoDia, setFiltroTipoDia] = useState<'todos' | EstadoDia>('todos');
+  const [filtroEstadoAdicional, setFiltroEstadoAdicional] = useState<'todos' | 'pendiente' | 'aprobado' | 'rechazado'>('todos');
   const [uploadStatus, setUploadStatus] = useState<'idle' | 'loading' | 'done'>('idle');
   const [uploadName, setUploadName] = useState('');
 
@@ -361,12 +430,27 @@ const RegistroAsistenciaModal = ({ empleadoSel, periodo, registroRow, costosConf
 
   const [rows, setRows] = useState<Record<string, DiaRegistro[]>>(initRows);
 
-  const updateRow = (fecha: string, index: number, field: keyof DiaRegistro, val: string | boolean) => {
+  const getEstadoAprobacion = (registro: DiaRegistro): 'pendiente' | 'aprobado' | 'rechazado' => {
+    if (registro.aprobado === true) return 'aprobado';
+    if (registro.aprobado === false) return 'rechazado';
+    return 'pendiente';
+  };
+
+  const updateRow = (fecha: string, index: number, field: keyof DiaRegistro, val: string | boolean | null) => {
     setRows((prev) => {
       const newDayRows = [...(prev[fecha] || [])];
       const curr = newDayRows[index];
       if (!curr) return prev;
-      newDayRows[index] = { ...curr, [field]: val } as DiaRegistro;
+      const updated = { ...curr, [field]: val } as DiaRegistro;
+
+      if (field === 'estadoDia') {
+        const nuevoEstado = val as EstadoDia;
+        if (nuevoEstado === 'Adicional' || nuevoEstado === 'Domingo Adicional') {
+          updated.aprobado = null;
+        }
+      }
+
+      newDayRows[index] = updated;
       return { ...prev, [fecha]: newDayRows };
     });
   };
@@ -382,7 +466,7 @@ const RegistroAsistenciaModal = ({ empleadoSel, periodo, registroRow, costosConf
         estadoDia: 'Adicional',
         horaEntrada: '00:00',
         horaSalida: '00:00',
-        aprobado: true,
+        aprobado: null,
       });
       return { ...prev, [fecha]: newDayRows };
     });
@@ -416,6 +500,18 @@ const RegistroAsistenciaModal = ({ empleadoSel, periodo, registroRow, costosConf
 
   const sem = semanas[activeSem];
   const ESTADOS_DIA: EstadoDia[] = ['Normal', 'Adicional', 'Domingo', 'Domingo Adicional', 'Libre'];
+
+  const shouldShowRowByFilters = (registro: DiaRegistro): boolean => {
+    if (filtroTipoDia !== 'todos' && registro.estadoDia !== filtroTipoDia) return false;
+
+    if (filtroEstadoAdicional !== 'todos') {
+      const esAdicional = registro.estadoDia === 'Adicional' || registro.estadoDia === 'Domingo Adicional';
+      if (!esAdicional) return false;
+      return getEstadoAprobacion(registro) === filtroEstadoAdicional;
+    }
+
+    return true;
+  };
 
   const handleGuardar = () => {
     const diasToSave: Record<string, DiaRegistro[]> = {};
@@ -469,6 +565,40 @@ const RegistroAsistenciaModal = ({ empleadoSel, periodo, registroRow, costosConf
           </p>
         </div>
 
+        <div className="shrink-0 grid grid-cols-1 gap-3 border-b border-slate-100 bg-white px-8 py-3 md:grid-cols-2">
+          <div>
+            <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-slate-500">Tipo de dia</label>
+            <div className="relative">
+              <select
+                value={filtroTipoDia}
+                onChange={(e) => setFiltroTipoDia(e.target.value as 'todos' | EstadoDia)}
+                className="w-full cursor-pointer appearance-none rounded-lg border border-slate-200 bg-white py-2 pl-3 pr-8 text-[12px] text-slate-700 outline-none focus:border-blue-400"
+              >
+                <option value="todos">Todos</option>
+                {ESTADOS_DIA.map((estado) => <option key={estado} value={estado}>{estado}</option>)}
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
+            </div>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-slate-500">Estado de adicionales</label>
+            <div className="relative">
+              <select
+                value={filtroEstadoAdicional}
+                onChange={(e) => setFiltroEstadoAdicional(e.target.value as 'todos' | 'pendiente' | 'aprobado' | 'rechazado')}
+                className="w-full cursor-pointer appearance-none rounded-lg border border-slate-200 bg-white py-2 pl-3 pr-8 text-[12px] text-slate-700 outline-none focus:border-blue-400"
+              >
+                <option value="todos">Todos</option>
+                <option value="pendiente">Pendientes</option>
+                <option value="aprobado">Aprobados</option>
+                <option value="rechazado">Rechazados</option>
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
+            </div>
+          </div>
+        </div>
+
         {saved ? (
           <div className="min-h-0 flex-1 overflow-y-scroll p-0 [scrollbar-gutter:stable]">
             <div className="overflow-x-auto border-b border-slate-100">
@@ -483,10 +613,12 @@ const RegistroAsistenciaModal = ({ empleadoSel, periodo, registroRow, costosConf
                 <tbody className="divide-y divide-slate-50">
                   {sem.dias.map((d, i) => {
                     const dayRows = rows[d.fecha] || [{ id: `${d.fecha}-0`, parqueadero: '', estadoDia: 'Libre', horaEntrada: '00:00', horaSalida: '00:00', aprobado: true }];
-                    return dayRows.map((r, rowIndex) => {
+                    const visibleRows = dayRows.filter(shouldShowRowByFilters);
+                    return visibleRows.map((r, rowIndex) => {
                       const horas = r.estadoDia !== 'Libre' ? calcHoras(r.horaEntrada, r.horaSalida) : 0;
                       const valor = r.estadoDia !== 'Libre' ? calcValor(horas, r.estadoDia) : 0;
                       const isFirst = rowIndex === 0;
+                      const estadoAprobacion = getEstadoAprobacion(r);
 
                       return (
                         <tr key={`${i}-${rowIndex}`} className={r.estadoDia !== 'Libre' ? 'bg-blue-50/20 transition-colors hover:bg-blue-50/40' : 'transition-colors hover:bg-slate-50/60'}>
@@ -510,8 +642,15 @@ const RegistroAsistenciaModal = ({ empleadoSel, periodo, registroRow, costosConf
                           <td className="px-3 py-3 text-center font-mono text-[11px] text-slate-700">{r.horaSalida}</td>
                           <td className="px-3 py-3 text-center">
                             {r.estadoDia !== 'Libre' ? (
-                              <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold ${r.aprobado ? 'border-emerald-200 bg-emerald-50 text-emerald-600' : 'border-red-200 bg-red-50 text-red-600'}`}>
-                                {r.aprobado ? <Check size={10} /> : <X size={10} />} {r.aprobado ? 'Aprobado' : 'Rechazado'}
+                              <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold ${
+                                estadoAprobacion === 'aprobado'
+                                  ? 'border-emerald-200 bg-emerald-50 text-emerald-600'
+                                  : estadoAprobacion === 'rechazado'
+                                    ? 'border-red-200 bg-red-50 text-red-600'
+                                    : 'border-amber-200 bg-amber-50 text-amber-600'
+                              }`}>
+                                {estadoAprobacion === 'aprobado' ? <Check size={10} /> : estadoAprobacion === 'rechazado' ? <X size={10} /> : null}
+                                {estadoAprobacion === 'aprobado' ? 'Aprobado' : estadoAprobacion === 'rechazado' ? 'Rechazado' : 'Pendiente'}
                               </span>
                             ) : '-'}
                           </td>
@@ -589,6 +728,7 @@ const RegistroAsistenciaModal = ({ empleadoSel, periodo, registroRow, costosConf
                     <th className="w-24 px-3 py-3 text-center text-[11px] font-bold uppercase tracking-wider text-slate-500">APROBAR</th>
                     <th className="w-20 px-3 py-3 text-center text-[11px] font-bold uppercase tracking-wider text-slate-500">HORAS</th>
                     <th className="w-24 px-3 py-3 text-center text-[11px] font-bold uppercase tracking-wider text-slate-500">VALOR ($)</th>
+                    <th className="w-16 px-3 py-3 text-center text-[11px] font-bold uppercase tracking-wider text-slate-500">RESPALDO</th>
                     <th className="w-12 px-3 py-3 text-center text-[11px] font-bold uppercase tracking-wider text-slate-500" />
                   </tr>
                 </thead>
@@ -596,11 +736,13 @@ const RegistroAsistenciaModal = ({ empleadoSel, periodo, registroRow, costosConf
                   {sem.dias.map((d, i) => {
                     const dayRows = rows[d.fecha] || [{ id: `${d.fecha}-0`, parqueadero: '', estadoDia: 'Libre', horaEntrada: '00:00', horaSalida: '00:00', aprobado: true }];
                     const esFinde = d.diaSemana === 0 || d.diaSemana === 6;
+                    const visibleRows = dayRows.filter(shouldShowRowByFilters);
 
-                    return dayRows.map((r, rowIndex) => {
+                    return visibleRows.map((r, rowIndex) => {
                       const horasCalculadas = r.estadoDia !== 'Libre' ? calcHoras(r.horaEntrada, r.horaSalida) : 0;
                       const valorCalculado = r.estadoDia !== 'Libre' ? calcValor(horasCalculadas, r.estadoDia) : 0;
                       const isFirst = rowIndex === 0;
+                      const estadoAprobacion = getEstadoAprobacion(r);
 
                       return (
                         <tr key={`${i}-${rowIndex}`} className={esFinde ? 'bg-slate-50/60 transition-colors' : 'transition-colors hover:bg-blue-50/20'}>
@@ -662,23 +804,55 @@ const RegistroAsistenciaModal = ({ empleadoSel, periodo, registroRow, costosConf
 
                           <td className="px-3 py-3 text-center">
                             {r.estadoDia !== 'Libre' ? (
-                              <span className="rounded border border-amber-200 bg-amber-50 px-2 py-1 text-[10px] font-bold text-amber-600">Pendiente</span>
+                              <span className={`rounded border px-2 py-1 text-[10px] font-bold ${
+                                estadoAprobacion === 'aprobado'
+                                  ? 'border-emerald-200 bg-emerald-50 text-emerald-600'
+                                  : estadoAprobacion === 'rechazado'
+                                    ? 'border-red-200 bg-red-50 text-red-600'
+                                    : 'border-amber-200 bg-amber-50 text-amber-600'
+                              }`}>
+                                {estadoAprobacion === 'aprobado' ? 'Aprobado' : estadoAprobacion === 'rechazado' ? 'Rechazado' : 'Pendiente'}
+                              </span>
                             ) : '-'}
                           </td>
 
                           <td className="px-3 py-3 text-center">
                             {r.estadoDia !== 'Libre' ? (
                               <label className="group flex cursor-pointer items-center justify-center gap-2">
-                                <div className={`flex h-5 w-5 items-center justify-center rounded border transition-colors ${r.aprobado ? 'border-emerald-500 bg-emerald-500' : 'border-slate-300 bg-white group-hover:border-emerald-400'}`}>
-                                  {r.aprobado ? <Check size={12} className="text-white" strokeWidth={3} /> : null}
+                                <div className={`flex h-5 w-5 items-center justify-center rounded border transition-colors ${r.aprobado === true ? 'border-emerald-500 bg-emerald-500' : 'border-slate-300 bg-white group-hover:border-emerald-400'}`}>
+                                  {r.aprobado === true ? <Check size={12} className="text-white" strokeWidth={3} /> : null}
                                 </div>
-                                <input type="checkbox" className="hidden" checked={r.aprobado} onChange={(e) => updateRow(d.fecha, rowIndex, 'aprobado', e.target.checked)} />
+                                <input type="checkbox" className="hidden" checked={r.aprobado === true} onChange={(e) => updateRow(d.fecha, rowIndex, 'aprobado', e.target.checked)} />
                               </label>
                             ) : null}
                           </td>
 
                           <td className="px-3 py-3 text-center text-[11px] font-bold text-slate-600">{r.estadoDia !== 'Libre' ? horasCalculadas.toFixed(2) : '-'}</td>
                           <td className="px-3 py-3 text-center text-[11px] font-bold text-blue-600">{r.estadoDia !== 'Libre' ? `$${valorCalculado.toFixed(2)}` : '-'}</td>
+
+                          <td className="px-3 py-3 text-center">
+                            {r.estadoDia === 'Adicional' || r.estadoDia === 'Domingo Adicional' ? (
+                              <label
+                                title={r.respaldoNombre || 'Subir respaldo'}
+                                className={`mx-auto inline-flex cursor-pointer items-center justify-center rounded-lg border p-1.5 transition-colors ${
+                                  r.respaldoNombre
+                                    ? 'border-emerald-200 bg-emerald-50 text-emerald-600 hover:bg-emerald-100'
+                                    : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50'
+                                }`}
+                              >
+                                <Image size={14} />
+                                <input
+                                  type="file"
+                                  accept=".jpg,.jpeg,.png,.pdf"
+                                  className="hidden"
+                                  onChange={(e) => {
+                                    const file = e.target.files?.[0];
+                                    updateRow(d.fecha, rowIndex, 'respaldoNombre', file?.name || '');
+                                  }}
+                                />
+                              </label>
+                            ) : '-'}
+                          </td>
 
                           <td className="px-3 py-3 text-center">
                             <div className="flex justify-center gap-1">
@@ -711,12 +885,14 @@ const RegistroAsistenciaModal = ({ empleadoSel, periodo, registroRow, costosConf
 const ValetsFijosView = () => {
   const [activeSubTab, setActiveSubTab] = useState<SubTabValet>('historial');
   const [gestionarCentro, setGestionarCentro] = useState('');
+  const [centrosGestionados, setCentrosGestionados] = useState<string[]>([]);
+  const [gestionModalMode, setGestionModalMode] = useState<'agregar' | 'editar'>('agregar');
   const [showGestionarModal, setShowGestionarModal] = useState(false);
   const [showSelEmpleadoModal, setShowSelEmpleadoModal] = useState(false);
   const [showRegistroModal, setShowRegistroModal] = useState(false);
   const [registroRow, setRegistroRow] = useState<HorarioValetRow | null>(null);
   const [showDetallesModal, setShowDetallesModal] = useState(false);
-  const [detalleEmpleado, setDetalleEmpleado] = useState<{ nombre: string; centro: string; valorFijo: string } | null>(null);
+  const [detalleEmpleado] = useState<{ nombre: string; centro: string; valorFijo: string } | null>(null);
 
   const [filtroPeriodo, setFiltroPeriodo] = useState(() => {
     const now = new Date();
@@ -732,6 +908,7 @@ const ValetsFijosView = () => {
   const [centrosValet, setCentrosValet] = useState<string[]>([]);
   const [empleadosCatalogo, setEmpleadosCatalogo] = useState<EmpleadoCatalogo[]>([]);
   const [horarios, setHorarios] = useState<HorarioValetRow[]>([]);
+  const [costosPorCentro, setCostosPorCentro] = useState<Record<string, CostosConfig>>({});
 
   const upsertHorarioLocal = (row: HorarioValetRow) => {
     setHorarios((prev) => {
@@ -784,21 +961,60 @@ const ValetsFijosView = () => {
         horaEntrada: turn.horaEntrada,
         horaSalida: turn.horaSalida,
         esAdicional: turn.estadoDia === 'Adicional' || turn.estadoDia === 'Domingo Adicional',
-        aprobado: turn.aprobado,
+        aprobado: typeof turn.aprobado === 'boolean' ? turn.aprobado : undefined,
         observacion: serializeHorarioMeta({
           estadoDia: turn.estadoDia,
           parqueadero: turn.parqueadero,
+          respaldoNombre: turn.respaldoNombre,
         }),
       });
     }));
   };
 
-  const [costosModal, setCostosModal] = useState<CostosConfig>({
-    Normal: { horas: '40', valor: '3.50' },
-    Adicional: { horas: '', valor: '3.00' },
-    Domingo: { horas: '', valor: '10.00' },
-    'Domingo Adicional': { horas: '', valor: '15.00' },
-  });
+  const [costosModal, setCostosModal] = useState<CostosConfig>(() => createDefaultCostosConfig());
+
+  const getCostosForCentro = (centro: string): CostosConfig => {
+    const key = String(centro || '').trim();
+    return normalizeCostosConfig(costosPorCentro[key]);
+  };
+
+  const guardarGestionValet = async () => {
+    const centro = String(gestionarCentro || '').trim();
+    if (!centro) return;
+
+    const centroParseado = parseCentroCompuesto(centro);
+    const centroCostoId = centroParseado.centroCostoId || centro;
+    const centroCostoNombre = centroParseado.centroCostoNombre || centro;
+    const config = normalizeCostosConfig(costosModal);
+
+    try {
+      await dbApi.valets.centros.save({
+        centroCostoId,
+        centroCostoNombre,
+        activo: true,
+      });
+
+      await dbApi.valets.configuracion.save({
+        centroCostoId,
+        horasNormalLimite: Number.parseFloat(config.Normal.horas) || 0,
+        valorNormal: Number.parseFloat(config.Normal.valor) || 0,
+        valorAdicional: Number.parseFloat(config.Adicional.valor) || 0,
+        valorDomingo: Number.parseFloat(config.Domingo.valor) || 0,
+        valorDomingoAdicional: Number.parseFloat(config['Domingo Adicional'].valor) || 0,
+        metadata: {},
+      });
+
+      setCentrosGestionados((prev) => {
+        if (prev.includes(centro)) return prev;
+        return [...prev, centro].sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
+      });
+      setCostosPorCentro((prev) => ({ ...prev, [centro]: config }));
+      setPersistenciaError('');
+      setShowGestionarModal(false);
+    } catch (error) {
+      setPersistenciaError(error instanceof Error ? error.message : 'No se pudo guardar la configuracion del valet.');
+    }
+  };
 
   useEffect(() => {
     let isMounted = true;
@@ -871,13 +1087,51 @@ const ValetsFijosView = () => {
       setPersistenciaError('');
 
       try {
-        const [empleadosData, horariosData] = await Promise.all([
+        const [empleadosData, horariosData, centrosData, configuracionData] = await Promise.all([
           dbApi.valets.empleados.list<{ registros?: ValetEmpleadoDbItem[] }>(),
           dbApi.valets.horarios.list<{ registros?: ValetHorarioDbItem[] }>(),
+          dbApi.valets.centros.list<{ registros?: ValetCentroDbItem[] }>(true),
+          dbApi.valets.configuracion.list<{ registros?: ValetConfiguracionDbItem[] }>(),
         ]);
 
         const empleadosDb = Array.isArray(empleadosData?.registros) ? empleadosData.registros : [];
         const horariosDb = Array.isArray(horariosData?.registros) ? horariosData.registros : [];
+        const centrosDb = Array.isArray(centrosData?.registros) ? centrosData.registros : [];
+        const configuracionesDb = Array.isArray(configuracionData?.registros) ? configuracionData.registros : [];
+
+        const centrosPersistidos = centrosDb
+          .filter((row) => row.activo !== false)
+          .map((row) => composeCentroDisplay(row.centroCostoId, row.centroCostoNombre))
+          .filter((row) => Boolean(row));
+
+        const costosIniciales: Record<string, CostosConfig> = {};
+        configuracionesDb.forEach((cfg) => {
+          const centroMatch = centrosPersistidos.find((item) => {
+            const parsed = parseCentroCompuesto(item);
+            return parsed.centroCostoId === cfg.centroCostoId;
+          });
+
+          if (!centroMatch) return;
+
+          costosIniciales[centroMatch] = normalizeCostosConfig({
+            Normal: {
+              horas: String(cfg.horasNormalLimite ?? DEFAULT_COSTOS_CONFIG.Normal.horas),
+              valor: String(cfg.valorNormal ?? DEFAULT_COSTOS_CONFIG.Normal.valor),
+            },
+            Adicional: {
+              horas: '',
+              valor: String(cfg.valorAdicional ?? DEFAULT_COSTOS_CONFIG.Adicional.valor),
+            },
+            Domingo: {
+              horas: '',
+              valor: String(cfg.valorDomingo ?? DEFAULT_COSTOS_CONFIG.Domingo.valor),
+            },
+            'Domingo Adicional': {
+              horas: '',
+              valor: String(cfg.valorDomingoAdicional ?? DEFAULT_COSTOS_CONFIG['Domingo Adicional'].valor),
+            },
+          });
+        });
 
         const rowsMap = new Map<string, HorarioValetRow>();
 
@@ -925,7 +1179,8 @@ const ValetsFijosView = () => {
             estadoDia,
             horaEntrada: h.horaEntrada || '00:00',
             horaSalida: h.horaSalida || '00:00',
-            aprobado: h.aprobado !== false,
+            aprobado: typeof h.aprobado === 'boolean' ? h.aprobado : null,
+            respaldoNombre: meta.respaldoNombre || '',
           });
 
           rowsMap.set(key, {
@@ -939,6 +1194,9 @@ const ValetsFijosView = () => {
         });
 
         if (!isMounted) return;
+        setCentrosGestionados(Array.from(new Set(centrosPersistidos))
+          .sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' })));
+        setCostosPorCentro(costosIniciales);
         setHorarios(Array.from(rowsMap.values()));
       } catch (error) {
         if (!isMounted) return;
@@ -967,93 +1225,136 @@ const ValetsFijosView = () => {
       if (filtroEstado && r.estado !== filtroEstado) return false;
       if (filtroBusqueda) {
         const s = filtroBusqueda.toLowerCase();
-        return r.empleado.toLowerCase().includes(s) || r.ci.includes(s);
+        return r.empleado.toLowerCase().includes(s) || r.ci.includes(s) || getParqName(r.centro).toLowerCase().includes(s);
       }
       return true;
     });
   }, [horarios, filtroBusqueda, filtroEstado, filtroPeriodo]);
 
-  const empCentro = useMemo(() => {
-    if (!gestionarCentro) return [] as Array<{ id: string; nombre: string; ci: string; centro: string; valorFijo: string }>;
+  const centrosDisponiblesGestion = useMemo(() => {
+    const usados = new Set(centrosGestionados);
+    return centrosValet.filter((c) => !usados.has(c));
+  }, [centrosGestionados, centrosValet]);
 
-    const nombres = Array.from(new Set(
-      horarios
-        .filter((h) => h.periodo === filtroPeriodo && h.centro === gestionarCentro)
-        .map((h) => h.empleado),
-    ));
+  const resumenCentrosGestion = useMemo(() => {
+    return centrosGestionados
+      .map((centro) => {
+        const rowsCentro = horarios.filter((h) => h.periodo === filtroPeriodo && h.centro === centro);
+        const configCentro = getCostosForCentro(centro);
+        const empleadosUnicos = Array.from(new Set(rowsCentro.map((r) => r.empleado)));
 
-    return nombres.map((nombreEmp) => {
-      const hRecord = horarios.find((h) => h.periodo === filtroPeriodo && h.empleado === nombreEmp && h.centro === gestionarCentro);
+        const totalFijo = empleadosUnicos.reduce((accFijo, empName) => {
+          let horasNormalesTrabajadas = 0;
 
-      const limiteNormal = Number.parseFloat(costosModal.Normal.horas) || 0;
-      const valorPorHoraNormal = Number.parseFloat(costosModal.Normal.valor) || 0;
+          rowsCentro
+            .filter((h) => h.empleado === empName)
+            .forEach((h) => {
+              Object.values(h.diasRegistro || {}).flat().forEach((dia) => {
+                if (dia.estadoDia === 'Normal' && dia.aprobado === true) {
+                  horasNormalesTrabajadas += calcHoras(dia.horaEntrada, dia.horaSalida);
+                }
+              });
+            });
 
-      let horasNormalesTrabajadas = 0;
-      if (hRecord?.diasRegistro) {
-        Object.values(hRecord.diasRegistro).flat().forEach((d) => {
-          if (d.estadoDia === 'Normal' && d.aprobado !== false) {
-            horasNormalesTrabajadas += calcHoras(d.horaEntrada, d.horaSalida);
-          }
-        });
-      }
+          const limiteNormal = Number.parseFloat(configCentro.Normal.horas) || 0;
+          const valorPorHoraNormal = Number.parseFloat(configCentro.Normal.valor) || 0;
+          const horasNormalesPagadas = limiteNormal > 0 ? Math.min(horasNormalesTrabajadas, limiteNormal) : horasNormalesTrabajadas;
 
-      const horasNormalesPagadas = limiteNormal > 0 ? Math.min(horasNormalesTrabajadas, limiteNormal) : horasNormalesTrabajadas;
-      const valorFijoCalculado = horasNormalesPagadas * valorPorHoraNormal;
+          return accFijo + (horasNormalesPagadas * valorPorHoraNormal);
+        }, 0);
 
-      return {
-        id: hRecord?.id || `${nombreEmp}-${gestionarCentro}`,
-        nombre: nombreEmp,
-        ci: hRecord?.ci || '',
-        centro: gestionarCentro,
-        valorFijo: valorFijoCalculado.toFixed(2),
-      };
-    });
-  }, [costosModal.Normal.horas, costosModal.Normal.valor, filtroPeriodo, gestionarCentro, horarios]);
+        const totalExtras = rowsCentro.reduce((accExtra, h) => {
+          let extra = 0;
+          Object.values(h.diasRegistro || {}).flat().forEach((dia) => {
+            if (dia.estadoDia !== 'Normal' && dia.estadoDia !== 'Libre' && dia.aprobado === true) {
+              const conf = configCentro[dia.estadoDia as keyof CostosConfig];
+              const tarifa = conf ? (Number.parseFloat(conf.valor) || 0) : 0;
+              if (dia.estadoDia === 'Domingo') {
+                extra += tarifa;
+              } else {
+                extra += calcHoras(dia.horaEntrada, dia.horaSalida) * tarifa;
+              }
+            }
+          });
+          return accExtra + extra;
+        }, 0);
 
-  const uniqueEmployees = useMemo(() => new Set(horarios.filter((h) => h.periodo === filtroPeriodo).map((h) => h.empleado)).size, [horarios, filtroPeriodo]);
+        return {
+          centro,
+          totalEmpleados: empleadosUnicos.length,
+          totalFijo,
+          totalExtras,
+        };
+      })
+      .filter((item) => Boolean(item.centro));
+  }, [centrosGestionados, costosPorCentro, filtroPeriodo, horarios]);
+
+  const resumenCentroActivo = useMemo(() => {
+    return resumenCentrosGestion.find((item) => item.centro === gestionarCentro) || null;
+  }, [gestionarCentro, resumenCentrosGestion]);
+
+  useEffect(() => {
+    if (gestionModalMode !== 'editar') return;
+    if (!gestionarCentro) return;
+    if (!centrosGestionados.includes(gestionarCentro)) {
+      setGestionarCentro('');
+    }
+  }, [centrosGestionados, gestionarCentro, gestionModalMode]);
+
+  useEffect(() => {
+    if (!showGestionarModal) return;
+    if (!gestionarCentro) {
+      setCostosModal(createDefaultCostosConfig());
+      return;
+    }
+
+    setCostosModal(getCostosForCentro(gestionarCentro));
+  }, [costosPorCentro, gestionarCentro, showGestionarModal]);
+
+  const uniqueEmployees = useMemo(() => new Set(filteredHorarios.map((h) => h.empleado)).size, [filteredHorarios]);
 
   const totalFijoCalc = useMemo(() => {
-    const empleadosEnPeriodo = Array.from(new Set(horarios.filter((h) => h.periodo === filtroPeriodo).map((h) => h.empleado)));
+    const empleadosFiltrados = Array.from(new Set(filteredHorarios.map((h) => h.empleado)));
 
-    return empleadosEnPeriodo.reduce((accTotal, empName) => {
+    return empleadosFiltrados.reduce((accTotal, empName) => {
       let horasNormalesTrabajadas = 0;
 
-      horarios
-        .filter((h) => h.periodo === filtroPeriodo && h.empleado === empName && (h.estado === 'procesado' || h.estado === 'pendiente'))
+      filteredHorarios
+        .filter((h) => h.empleado === empName)
         .forEach((h) => {
           Object.values(h.diasRegistro || {}).flat().forEach((dia) => {
-            if (dia.estadoDia === 'Normal' && dia.aprobado !== false) {
+            if (dia.estadoDia === 'Normal' && dia.aprobado === true) {
               horasNormalesTrabajadas += calcHoras(dia.horaEntrada, dia.horaSalida);
             }
           });
         });
 
-      const limiteNormal = Number.parseFloat(costosModal.Normal.horas) || 0;
-      const valorPorHoraNormal = Number.parseFloat(costosModal.Normal.valor) || 0;
+      const configEmpleado = getCostosForCentro(filteredHorarios.find((h) => h.empleado === empName)?.centro || '');
+      const limiteNormal = Number.parseFloat(configEmpleado.Normal.horas) || 0;
+      const valorPorHoraNormal = Number.parseFloat(configEmpleado.Normal.valor) || 0;
       const horasNormalesPagadas = limiteNormal > 0 ? Math.min(horasNormalesTrabajadas, limiteNormal) : horasNormalesTrabajadas;
       return accTotal + (horasNormalesPagadas * valorPorHoraNormal);
     }, 0);
-  }, [costosModal.Normal.horas, costosModal.Normal.valor, filtroPeriodo, horarios]);
+  }, [costosPorCentro, filteredHorarios]);
 
   const totalAdicionalesCalc = useMemo(() => {
-    return horarios
-      .filter((h) => h.periodo === filtroPeriodo && (h.estado === 'procesado' || h.estado === 'pendiente'))
-      .reduce((accTotal, h) => {
-        let extra = 0;
-        Object.values(h.diasRegistro || {}).flat().forEach((dia) => {
-          if (dia.estadoDia !== 'Normal' && dia.estadoDia !== 'Libre' && dia.aprobado !== false) {
-            const conf = costosModal[dia.estadoDia as keyof CostosConfig];
-            const tarifa = conf ? (Number.parseFloat(conf.valor) || 0) : 0;
-            if (dia.estadoDia === 'Domingo') {
-              extra += tarifa;
-            } else {
-              extra += calcHoras(dia.horaEntrada, dia.horaSalida) * tarifa;
-            }
+    return filteredHorarios.reduce((accTotal, h) => {
+      let extra = 0;
+      const configCentro = getCostosForCentro(h.centro);
+      Object.values(h.diasRegistro || {}).flat().forEach((dia) => {
+        if (dia.estadoDia !== 'Normal' && dia.estadoDia !== 'Libre' && dia.aprobado === true) {
+          const conf = configCentro[dia.estadoDia as keyof CostosConfig];
+          const tarifa = conf ? (Number.parseFloat(conf.valor) || 0) : 0;
+          if (dia.estadoDia === 'Domingo') {
+            extra += tarifa;
+          } else {
+            extra += calcHoras(dia.horaEntrada, dia.horaSalida) * tarifa;
           }
-        });
-        return accTotal + extra;
-      }, 0);
-  }, [costosModal, filtroPeriodo, horarios]);
+        }
+      });
+      return accTotal + extra;
+    }, 0);
+  }, [costosPorCentro, filteredHorarios]);
 
   return (
     <div className="space-y-6">
@@ -1066,14 +1367,25 @@ const ValetsFijosView = () => {
           </div>
         </div>
         <div className="flex items-center gap-3">
-          {activeSubTab === 'historial' ? (
-            <button className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-600 shadow-sm transition-colors hover:bg-slate-50">Historial</button>
-          ) : null}
           <button
-            onClick={() => setActiveSubTab(activeSubTab === 'gestionar' ? 'historial' : 'gestionar')}
-            className="rounded-lg bg-[#2563EB] px-5 py-2 text-sm font-bold text-white shadow-sm transition-all hover:bg-blue-600"
+            onClick={() => setActiveSubTab('gestionar')}
+            className={`rounded-lg px-5 py-2 text-sm font-bold shadow-sm transition-all ${
+              activeSubTab === 'gestionar'
+                ? 'bg-[#2563EB] text-white hover:bg-blue-600'
+                : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+            }`}
           >
             Gestionar valet
+          </button>
+          <button
+            onClick={() => setActiveSubTab('historial')}
+            className={`rounded-lg px-4 py-2 text-sm font-bold shadow-sm transition-all ${
+              activeSubTab === 'historial'
+                ? 'bg-[#2563EB] text-white hover:bg-blue-600'
+                : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+            }`}
+          >
+            Historial
           </button>
         </div>
       </div>
@@ -1085,21 +1397,6 @@ const ValetsFijosView = () => {
       {persistenciaError ? (
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-700">Persistencia de valets: {persistenciaError}</div>
       ) : null}
-
-      <div className="mb-2 grid grid-cols-1 gap-5 md:grid-cols-3">
-        <div className="flex items-center gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-blue-50 text-blue-500"><Users size={24} /></div>
-          <div><p className="mb-0.5 text-[10px] font-bold uppercase tracking-widest text-slate-400">Total Valets (Periodo)</p><p className="text-2xl font-black text-slate-800">{uniqueEmployees}</p></div>
-        </div>
-        <div className="flex items-center gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-emerald-50 text-emerald-500"><Banknote size={24} /></div>
-          <div><p className="mb-0.5 text-[10px] font-bold uppercase tracking-widest text-slate-400">Total Fijo A Pagar</p><p className="text-2xl font-black text-slate-800">${totalFijoCalc.toFixed(2)}</p></div>
-        </div>
-        <div className="flex items-center gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-orange-50 text-orange-500"><Clock size={24} /></div>
-          <div><p className="mb-0.5 text-[10px] font-bold uppercase tracking-widest text-slate-400">Total Extras / Domingos</p><p className="text-2xl font-black text-slate-800">${totalAdicionalesCalc.toFixed(2)}</p></div>
-        </div>
-      </div>
 
       {activeSubTab === 'historial' ? (
         <div className="space-y-5">
@@ -1125,7 +1422,7 @@ const ValetsFijosView = () => {
                 <label className="mb-1 block text-[10px] font-bold uppercase text-slate-400">BUSCAR</label>
                 <input
                   type="text"
-                  placeholder="nombre, ci"
+                  placeholder="nombre, ci, parqueadero"
                   value={filtroBusqueda}
                   onChange={(e) => setFiltroBusqueda(e.target.value)}
                   className="w-full rounded-lg border border-slate-200 bg-white py-2.5 pl-4 text-sm text-slate-700 shadow-sm outline-none transition-colors focus:border-[#0EA5E9]"
@@ -1160,6 +1457,21 @@ const ValetsFijosView = () => {
               >
                 <Plus size={16} className="stroke-[3px] text-orange-500" /> Anadir registro
               </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-5 md:grid-cols-3">
+            <div className="flex items-center gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-blue-50 text-blue-500"><Users size={24} /></div>
+              <div><p className="mb-0.5 text-[10px] font-bold uppercase tracking-widest text-slate-400">Total Valets (Filtrado)</p><p className="text-2xl font-black text-slate-800">{uniqueEmployees}</p></div>
+            </div>
+            <div className="flex items-center gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-emerald-50 text-emerald-500"><Banknote size={24} /></div>
+              <div><p className="mb-0.5 text-[10px] font-bold uppercase tracking-widest text-slate-400">Total Fijo A Pagar (Filtrado)</p><p className="text-2xl font-black text-slate-800">${totalFijoCalc.toFixed(2)}</p></div>
+            </div>
+            <div className="flex items-center gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-orange-50 text-orange-500"><Clock size={24} /></div>
+              <div><p className="mb-0.5 text-[10px] font-bold uppercase tracking-widest text-slate-400">Total Extras / Domingos (Filtrado)</p><p className="text-2xl font-black text-slate-800">${totalAdicionalesCalc.toFixed(2)}</p></div>
             </div>
           </div>
 
@@ -1228,169 +1540,181 @@ const ValetsFijosView = () => {
           </div>
         </div>
       ) : (
-        <div className="rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
-          <div className="mb-6">
-            <label className="mb-2 block text-[12px] font-bold uppercase tracking-wider text-slate-600">Seleccionar Centro de Costo</label>
-            <div className="relative max-w-md">
-              <select
-                className={`w-full cursor-pointer appearance-none rounded-xl border py-3 pl-4 pr-10 text-sm font-medium outline-none transition-all ${gestionarCentro ? 'border-blue-500 bg-blue-50/50 text-blue-800 shadow-sm' : 'border-slate-200 bg-white text-slate-700'}`}
-                value={gestionarCentro}
-                onChange={(e) => setGestionarCentro(e.target.value)}
-              >
-                <option value="" disabled>-- Elija un centro de costo --</option>
-                {centrosValet.map((v, i) => <option key={`${v}-${i}`} value={v}>{v}</option>)}
-              </select>
-              <ChevronDown className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+        <article className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+          <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-6 py-5">
+            <div className="flex items-center gap-3">
+              <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-100 text-slate-700">
+                <Building size={20} />
+              </div>
+              <div>
+                <h2 className="text-lg font-bold text-slate-800">Gestion de valets por centro</h2>
+                <p className="text-sm text-slate-500">Primero agrega un valet y luego aparecera en la seccion para editar configuracion.</p>
+              </div>
             </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                setGestionModalMode('agregar');
+                setGestionarCentro(centrosDisponiblesGestion[0] || '');
+                setShowGestionarModal(true);
+              }}
+              className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
+            >
+              <Plus size={16} />
+              Agregar valet
+            </button>
           </div>
 
-          {gestionarCentro ? (
-            <div className="grid grid-cols-1 gap-6 xl:grid-cols-12">
-              <div className="xl:col-span-4 flex min-h-[160px] flex-col justify-between rounded-2xl border border-slate-200 bg-slate-50 p-6">
-                <div>
-                  <h5 className="mb-2 text-[11px] font-bold uppercase tracking-widest text-slate-400"><MapPin size={12} className="-mt-0.5 mr-1 inline" />Centro activo</h5>
-                  <h3 className="mb-3 text-lg font-black leading-tight text-[#001F3F]">{gestionarCentro}</h3>
-                  <div className="flex w-fit items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-600"><Users size={16} className="text-blue-500" /><span className="font-bold">{empCentro.length}</span> Empleados</div>
-                </div>
-                <button onClick={() => setShowGestionarModal(true)} className="mt-6 flex w-full items-center justify-center gap-2 rounded-xl bg-[#001F3F] py-3 text-sm font-bold text-white shadow-sm transition-all hover:bg-blue-900"><Settings2 size={16} /> Gestion del Valet</button>
+          <div className="space-y-5 px-6 py-5">
+            {resumenCentrosGestion.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-6 py-10 text-center text-slate-500">
+                No hay valets agregados para editar configuracion.
               </div>
+            ) : (
+              <div className="space-y-4">
+                {resumenCentrosGestion.map((item, idx) => (
+                  <div key={`${item.centro}-${idx}`} className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <div className="font-semibold text-slate-800">{item.centro}</div>
+                        <div className="text-xs text-slate-500">{item.totalEmpleados} empleado(s) en el periodo {filtroPeriodo}</div>
+                      </div>
 
-              <div className="xl:col-span-8 flex flex-col gap-4">
-                <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-                  {empCentro.length > 0 ? (
-                    <table className="w-full text-left">
-                      <thead className="border-b border-slate-100 bg-slate-50">
-                        <tr>{['Empleado', 'Sueldo Fijo', 'Total Extras', 'Adicionales', 'Remover'].map((h) => <th key={h} className="px-6 py-4 text-center text-[10px] font-bold uppercase tracking-wider text-slate-400 first:text-left">{h}</th>)}</tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {empCentro.map((e) => {
-                          const extrasEmp = horarios
-                            .filter((h) => h.periodo === filtroPeriodo && h.empleado === e.nombre && (h.estado === 'procesado' || h.estado === 'pendiente'))
-                            .reduce((acc, h) => {
-                              let empExtra = 0;
-                              Object.values(h.diasRegistro || {}).flat().forEach((dia) => {
-                                if (dia.estadoDia !== 'Normal' && dia.estadoDia !== 'Libre' && dia.aprobado !== false) {
-                                  const conf = costosModal[dia.estadoDia as keyof CostosConfig];
-                                  const tarifa = conf ? (Number.parseFloat(conf.valor) || 0) : 0;
-                                  if (dia.estadoDia === 'Domingo') {
-                                    empExtra += tarifa;
-                                  } else {
-                                    empExtra += calcHoras(dia.horaEntrada, dia.horaSalida) * tarifa;
-                                  }
-                                }
-                              });
-                              return acc + empExtra;
-                            }, 0);
-
-                          return (
-                            <tr key={e.id} className="transition-colors hover:bg-slate-50">
-                              <td className="px-6 py-4 text-[12px] font-bold text-slate-700">{e.nombre}</td>
-                              <td className="px-6 py-4 text-center text-[13px] font-black text-slate-800">${e.valorFijo}</td>
-                              <td className="px-6 py-4 text-center text-[13px] font-black text-orange-600">${extrasEmp.toFixed(2)}</td>
-                              <td className="px-6 py-4 text-center">
-                                <button onClick={() => { setDetalleEmpleado(e); setShowDetallesModal(true); }} className="mx-auto block rounded-lg border border-blue-200 bg-white p-2 text-blue-600 transition-colors hover:bg-blue-50"><Eye size={16} /></button>
-                              </td>
-                              <td className="px-6 py-4 text-center">
-                                <button
-                                  onClick={async () => {
-                                    try {
-                                      if (e.ci) {
-                                        await dbApi.valets.empleados.delete(parseCentroCompuesto(e.centro).centroCostoId || '', e.ci);
-                                      }
-
-                                      const horariosDb = await dbApi.valets.horarios.list<{ registros?: ValetHorarioDbItem[] }>();
-                                      const registros = Array.isArray(horariosDb?.registros) ? horariosDb.registros : [];
-                                      const porEmpleado = registros.filter((item) => item.centroCostoId === parseCentroCompuesto(e.centro).centroCostoId && item.empleadoCedula === e.ci);
-                                      await Promise.all(porEmpleado.map(async (item) => {
-                                        if (item.id) await dbApi.valets.horarios.delete(item.id);
-                                      }));
-
-                                      setHorarios((prev) => prev.filter((h) => h.ci !== e.ci || h.codCC !== parseCentroCompuesto(e.centro).centroCostoId));
-                                    } catch (error) {
-                                      setPersistenciaError(error instanceof Error ? error.message : 'No se pudo eliminar el valet.');
-                                    }
-                                  }}
-                                  className="mx-auto block rounded-lg border border-red-200 bg-white p-2 text-red-500 transition-colors hover:bg-red-50"
-                                >
-                                  <Trash2 size={16} />
-                                </button>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  ) : (
-                    <div className="flex flex-col items-center justify-center p-12 text-slate-400"><Users size={32} className="mb-3 opacity-50" /><p className="text-sm font-medium">No hay empleados asignados a este centro</p></div>
-                  )}
-                </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">
+                          Fijo: ${item.totalFijo.toFixed(2)}
+                        </span>
+                        <span className="rounded-full bg-orange-50 px-3 py-1 text-xs font-medium text-orange-700">
+                          Extras: ${item.totalExtras.toFixed(2)}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setGestionModalMode('editar');
+                            setGestionarCentro(item.centro);
+                            setCostosModal(getCostosForCentro(item.centro));
+                            setShowGestionarModal(true);
+                          }}
+                          className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
+                        >
+                          <Settings2 size={14} />
+                          Editar
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
               </div>
-            </div>
-          ) : (
-            <div className="flex flex-col items-center rounded-2xl border border-slate-200 bg-slate-50 p-12 text-center text-slate-400">
-              <Users size={32} className="mb-3 opacity-50" />
-              <p className="text-sm font-medium">Selecciona un centro de costo para ver los detalles.</p>
-            </div>
-          )}
-        </div>
+            )}
+          </div>
+        </article>
       )}
 
       {showGestionarModal ? (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={() => setShowGestionarModal(false)} />
-          <div className="relative w-full max-w-[550px] overflow-hidden rounded-3xl bg-white shadow-2xl">
-            <div className="flex items-start justify-between border-b border-slate-100 bg-slate-50/50 px-6 py-6">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/50 px-4 py-6 backdrop-blur-sm">
+          <div className="flex max-h-[92vh] w-full max-w-4xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
+            <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-6 py-5">
               <div>
-                <h3 className="text-xl font-black text-[#001F3F]">Gestion del Valet</h3>
-                <p className="mt-1 text-[11px] font-bold uppercase tracking-wider text-slate-500">{gestionarCentro}</p>
+                <h3 className="text-lg font-bold text-slate-800">Configurar valet fijo</h3>
+                <p className="mt-1 text-sm text-slate-500">{gestionModalMode === 'agregar' ? 'Agrega un nuevo valet y configura sus tarifas.' : 'Edita configuracion del valet seleccionado.'}</p>
               </div>
-              <button onClick={() => setShowGestionarModal(false)} className="rounded-lg border border-slate-200 bg-white px-4 py-1.5 text-xs font-bold text-slate-600 shadow-sm transition-colors hover:bg-slate-100">Cerrar</button>
+              <button
+                type="button"
+                onClick={() => setShowGestionarModal(false)}
+                className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 text-slate-500 transition hover:bg-slate-50 hover:text-slate-700"
+                aria-label="Cerrar modal"
+              >
+                <X size={18} />
+              </button>
             </div>
 
-            <div className="p-6">
-              <p className="mb-5 text-[13px] leading-relaxed text-slate-600">Configuracion de costos de trabajo para este centro. Estos valores aplicaran automaticamente a los calculos de asistencia de los empleados. <span className="font-bold text-orange-600">Nota:</span> Las "Horas" en Normal actuan como limite mensual.</p>
-              <table className="w-full border-collapse text-left">
-                <thead>
-                  <tr className="border-b-2 border-slate-200">
-                    <th className="py-2.5 text-[11px] font-bold uppercase tracking-wider text-slate-400">Tipo</th>
-                    <th className="py-2.5 text-center text-[11px] font-bold uppercase tracking-wider text-slate-400">Horas Limite</th>
-                    <th className="py-2.5 text-center text-[11px] font-bold uppercase tracking-wider text-slate-400">Valor ($)</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {(['Normal', 'Adicional', 'Domingo', 'Domingo Adicional'] as Array<keyof CostosConfig>).map((tipo) => (
-                    <tr key={tipo}>
-                      <td className="py-3 text-[13px] font-bold text-slate-700">{tipo}</td>
-                      <td className="px-2 py-3">
-                        <input
-                          type="number"
-                          disabled={tipo !== 'Normal'}
-                          value={costosModal[tipo].horas}
-                          onChange={(e) => setCostosModal((prev) => ({ ...prev, [tipo]: { ...prev[tipo], horas: e.target.value } }))}
-                          className="w-full rounded-lg border border-slate-200 px-3 py-2 text-center text-sm font-medium outline-none transition-colors focus:border-blue-400 disabled:bg-slate-100 disabled:text-slate-400"
-                          placeholder={tipo !== 'Normal' ? 'N/A' : ''}
-                        />
-                      </td>
-                      <td className="px-2 py-3">
-                        <div className="relative">
-                          <span className="absolute left-3 top-1/2 -translate-y-1/2 font-bold text-slate-400">$</span>
+            <div className="min-h-0 flex-1 space-y-6 overflow-y-auto px-6 py-6">
+              <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-end">
+                <label className="space-y-2 text-sm font-medium text-slate-600">
+                  <span>Centro de costo valet</span>
+                  <select
+                    value={gestionarCentro}
+                    onChange={(e) => setGestionarCentro(e.target.value)}
+                    disabled={gestionModalMode === 'editar'}
+                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 outline-none transition focus:border-blue-400"
+                  >
+                    <option value="">Selecciona un centro</option>
+                    {gestionModalMode === 'agregar'
+                      ? centrosDisponiblesGestion.map((v, i) => <option key={`${v}-${i}`} value={v}>{v}</option>)
+                      : (gestionarCentro ? [<option key={gestionarCentro} value={gestionarCentro}>{gestionarCentro}</option>] : null)}
+                  </select>
+                </label>
+
+                <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                  <div className="font-semibold text-slate-700">Empleados del centro</div>
+                  <div className="mt-1 text-lg font-bold text-slate-800">{resumenCentroActivo?.totalEmpleados || 0}</div>
+                </div>
+              </div>
+
+              <div className="overflow-x-auto rounded-2xl border border-slate-100">
+                <table className="min-w-full text-left text-sm">
+                  <thead className="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-400">
+                    <tr>
+                      <th className="px-4 py-3">Tipo de jornada</th>
+                      <th className="px-4 py-3">Horas limite</th>
+                      <th className="px-4 py-3">Valor por hora / dia</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {(['Normal', 'Adicional', 'Domingo', 'Domingo Adicional'] as Array<keyof CostosConfig>).map((tipo) => (
+                      <tr key={tipo}>
+                        <td className="px-4 py-3 font-semibold text-slate-700">{tipo}</td>
+                        <td className="px-4 py-3">
+                          <input
+                            type="number"
+                            disabled={tipo !== 'Normal'}
+                            value={costosModal[tipo].horas}
+                            onChange={(e) => setCostosModal((prev) => ({ ...prev, [tipo]: { ...prev[tipo], horas: e.target.value } }))}
+                            className="w-36 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 outline-none transition focus:border-blue-400 disabled:bg-slate-100 disabled:text-slate-400"
+                            placeholder={tipo !== 'Normal' ? 'N/A' : '0'}
+                          />
+                        </td>
+                        <td className="px-4 py-3">
                           <input
                             type="number"
                             value={costosModal[tipo].valor}
                             onChange={(e) => setCostosModal((prev) => ({ ...prev, [tipo]: { ...prev[tipo], valor: e.target.value } }))}
-                            className="w-full rounded-lg border border-slate-200 py-2 pl-7 pr-3 text-center text-sm font-bold text-slate-800 outline-none transition-colors focus:border-blue-400"
+                            className="w-36 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 outline-none transition focus:border-blue-400"
                           />
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                {gestionModalMode === 'agregar'
+                  ? 'Solo se muestran centros no agregados. Al guardar se agregara al listado de edicion.'
+                  : 'En modo editar, el centro de costo se mantiene fijo.'}
+              </div>
             </div>
 
-            <div className="flex justify-end gap-3 border-t border-slate-100 bg-slate-50 px-6 py-5">
-              <button onClick={() => setShowGestionarModal(false)} className="rounded-xl border border-slate-200 bg-white px-5 py-2.5 text-sm font-bold text-slate-600 shadow-sm transition-colors hover:bg-slate-50">Cancelar</button>
-              <button onClick={() => setShowGestionarModal(false)} className="flex items-center gap-2 rounded-xl bg-[#001F3F] px-6 py-2.5 text-sm font-bold text-white shadow-md transition-all hover:bg-blue-900 active:scale-95"><Save size={16} /> Guardar Configuracion</button>
+            <div className="flex flex-wrap items-center justify-end gap-3 border-t border-slate-100 px-6 py-5">
+              <button
+                type="button"
+                onClick={() => setShowGestionarModal(false)}
+                className="inline-flex items-center justify-center rounded-2xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  void guardarGestionValet();
+                }}
+                disabled={!gestionarCentro}
+                className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-800 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-900"
+              >
+                <Save size={16} />
+                {gestionModalMode === 'agregar' ? 'Guardar valet' : 'Guardar configuracion'}
+              </button>
             </div>
           </div>
         </div>
@@ -1409,10 +1733,11 @@ const ValetsFijosView = () => {
                 : [];
 
               const totalAprobado = diasExtras
-                .filter((d) => d.aprobado !== false)
+                .filter((d) => d.aprobado === true)
                 .reduce((acc, d) => {
                   const h = calcHoras(d.horaEntrada, d.horaSalida);
-                  const conf = costosModal[d.estadoDia as keyof CostosConfig];
+                  const confCentro = getCostosForCentro(detalleEmpleado.centro);
+                  const conf = confCentro[d.estadoDia as keyof CostosConfig];
                   const tarifa = conf ? (Number.parseFloat(conf.valor) || 0) : 0;
                   if (d.estadoDia === 'Domingo') return acc + tarifa;
                   return acc + (h * tarifa);
@@ -1467,7 +1792,7 @@ const ValetsFijosView = () => {
                           {horasExtras.map((d, index) => {
                             const dayName = ['Dom', 'Lun', 'Mar', 'Mie', 'Jue', 'Vie', 'Sab'][new Date(`${d.fecha}T12:00:00`).getDay()];
                             const hCalc = calcHoras(d.horaEntrada, d.horaSalida);
-                            const valCalc = hCalc * (Number.parseFloat(costosModal[d.estadoDia as keyof CostosConfig]?.valor || '0') || 0);
+                            const valCalc = hCalc * (Number.parseFloat(getCostosForCentro(detalleEmpleado.centro)[d.estadoDia as keyof CostosConfig]?.valor || '0') || 0);
 
                             return (
                               <div key={`${d.fecha}-${index}`} className="flex items-center justify-between rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm transition-colors hover:border-blue-300">
@@ -1478,9 +1803,9 @@ const ValetsFijosView = () => {
                                   <span className="ml-2 text-[10px] font-bold uppercase text-slate-400">{d.estadoDia}</span>
                                 </div>
                                 <div className="flex items-center gap-4">
-                                  <span className={`text-[15px] font-black ${d.aprobado !== false ? 'text-[#001F3F]' : 'text-slate-300 line-through'}`}>${valCalc.toFixed(2)}</span>
-                                  <button onClick={() => toggleAprobacion(d.fecha, d.id)} className={`flex h-8 w-8 items-center justify-center rounded-lg border-2 transition-all ${d.aprobado !== false ? 'border-emerald-500 bg-emerald-50 shadow-sm' : 'border-slate-200 bg-slate-50'}`}>
-                                    {d.aprobado !== false ? <Check size={16} className="text-emerald-600" strokeWidth={3} /> : null}
+                                  <span className={`text-[15px] font-black ${d.aprobado === true ? 'text-[#001F3F]' : 'text-slate-300 line-through'}`}>${valCalc.toFixed(2)}</span>
+                                  <button onClick={() => toggleAprobacion(d.fecha, d.id)} className={`flex h-8 w-8 items-center justify-center rounded-lg border-2 transition-all ${d.aprobado === true ? 'border-emerald-500 bg-emerald-50 shadow-sm' : 'border-slate-200 bg-slate-50'}`}>
+                                    {d.aprobado === true ? <Check size={16} className="text-emerald-600" strokeWidth={3} /> : null}
                                   </button>
                                 </div>
                               </div>
@@ -1498,7 +1823,7 @@ const ValetsFijosView = () => {
                         <div className="space-y-2">
                           {domingosTrabajados.map((d, index) => {
                             const dayName = ['Dom', 'Lun', 'Mar', 'Mie', 'Jue', 'Vie', 'Sab'][new Date(`${d.fecha}T12:00:00`).getDay()];
-                            const valCalc = Number.parseFloat(costosModal[d.estadoDia as keyof CostosConfig]?.valor || '0') || 0;
+                            const valCalc = Number.parseFloat(getCostosForCentro(detalleEmpleado.centro)[d.estadoDia as keyof CostosConfig]?.valor || '0') || 0;
 
                             return (
                               <div key={`${d.fecha}-${index}`} className="flex items-center justify-between rounded-xl border border-orange-100 bg-orange-50/30 p-3.5 shadow-sm">
@@ -1508,9 +1833,9 @@ const ValetsFijosView = () => {
                                   <span className="rounded border border-orange-200 bg-white px-2 py-1 text-[12px] font-medium text-orange-800/70">{d.estadoDia}</span>
                                 </div>
                                 <div className="flex items-center gap-4">
-                                  <span className={`text-[15px] font-black ${d.aprobado !== false ? 'text-orange-600' : 'text-slate-300 line-through'}`}>${valCalc.toFixed(2)}</span>
-                                  <button onClick={() => toggleAprobacion(d.fecha, d.id)} className={`flex h-8 w-8 items-center justify-center rounded-lg border-2 transition-all ${d.aprobado !== false ? 'border-emerald-500 bg-emerald-50 shadow-sm' : 'border-slate-200 bg-white'}`}>
-                                    {d.aprobado !== false ? <Check size={16} className="text-emerald-600" strokeWidth={3} /> : null}
+                                  <span className={`text-[15px] font-black ${d.aprobado === true ? 'text-orange-600' : 'text-slate-300 line-through'}`}>${valCalc.toFixed(2)}</span>
+                                  <button onClick={() => toggleAprobacion(d.fecha, d.id)} className={`flex h-8 w-8 items-center justify-center rounded-lg border-2 transition-all ${d.aprobado === true ? 'border-emerald-500 bg-emerald-50 shadow-sm' : 'border-slate-200 bg-white'}`}>
+                                    {d.aprobado === true ? <Check size={16} className="text-emerald-600" strokeWidth={3} /> : null}
                                   </button>
                                 </div>
                               </div>
@@ -1536,7 +1861,7 @@ const ValetsFijosView = () => {
       {showSelEmpleadoModal ? (
         <SeleccionarEmpleadoModal
           periodo={filtroPeriodo}
-          centrosValet={centrosValet}
+          centrosValet={centrosGestionados}
           empleados={empleadosCatalogo}
           onClose={() => setShowSelEmpleadoModal(false)}
           onSeleccionar={async (emp) => {
@@ -1573,8 +1898,8 @@ const ValetsFijosView = () => {
           }}
           periodo={registroRow.periodo || filtroPeriodo}
           registroRow={registroRow}
-          costosConfig={costosModal}
-          centrosValet={centrosValet}
+          costosConfig={getCostosForCentro(registroRow.centro)}
+          centrosValet={centrosGestionados.length > 0 ? centrosGestionados : [registroRow.centro]}
           onClose={() => {
             setShowRegistroModal(false);
             setRegistroRow(null);

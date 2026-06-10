@@ -64,7 +64,6 @@ Scripts utiles en `backend/sql/`:
 - `create_humana_period_data.sql`
 - `create_descuentos_nomina_table.sql`
 - `create_humana_exentos_pago_seguro_table.sql`
-- `create_nomina_valets_adicionales_table.sql`
 - `reset_valets_fijos_tables.sql`
 
 El backend valida/crea estructura necesaria al iniciar para tablas de descuentos, exentos y valets.

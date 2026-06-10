@@ -318,6 +318,58 @@ const ensureValetFijoHorarioTable = async () => {
   `);
 };
 
+const ensureValetFijoCentroTable = async () => {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS valet_fijo_centro (
+      id BIGSERIAL PRIMARY KEY,
+      centro_costo_id TEXT NOT NULL,
+      centro_costo_nombre TEXT NOT NULL DEFAULT '',
+      activo BOOLEAN NOT NULL DEFAULT TRUE,
+      fecha_creacion TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      fecha_actualizacion TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT uq_valet_fijo_centro UNIQUE (centro_costo_id)
+    )
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_valet_fijo_centro_activo
+      ON valet_fijo_centro (activo)
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_valet_fijo_centro_nombre
+      ON valet_fijo_centro (centro_costo_nombre)
+  `);
+};
+
+const ensureValetFijoConfiguracionTable = async () => {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS valet_fijo_configuracion (
+      id BIGSERIAL PRIMARY KEY,
+      centro_costo_id TEXT NOT NULL,
+      horas_normal_limite NUMERIC(10,2) NOT NULL DEFAULT 40,
+      valor_normal NUMERIC(18,2) NOT NULL DEFAULT 3.50,
+      valor_adicional NUMERIC(18,2) NOT NULL DEFAULT 3.00,
+      valor_domingo NUMERIC(18,2) NOT NULL DEFAULT 10.00,
+      valor_domingo_adicional NUMERIC(18,2) NOT NULL DEFAULT 15.00,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      fecha_creacion TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      fecha_actualizacion TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT uq_valet_fijo_configuracion UNIQUE (centro_costo_id),
+      CONSTRAINT chk_valet_fijo_config_horas_normal CHECK (horas_normal_limite >= 0),
+      CONSTRAINT chk_valet_fijo_config_valor_normal CHECK (valor_normal >= 0),
+      CONSTRAINT chk_valet_fijo_config_valor_adicional CHECK (valor_adicional >= 0),
+      CONSTRAINT chk_valet_fijo_config_valor_domingo CHECK (valor_domingo >= 0),
+      CONSTRAINT chk_valet_fijo_config_valor_domingo_adicional CHECK (valor_domingo_adicional >= 0)
+    )
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_valet_fijo_configuracion_centro
+      ON valet_fijo_configuracion (centro_costo_id)
+  `);
+};
+
 const ensureDistribucionPlantillasTable = async () => {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS distribucion_plantilla (
@@ -502,6 +554,28 @@ const mapDbRowToValetFijoHorario = (row) => ({
   evidenciaMimeType: String(row.evidencia_mime_type || ''),
   evidenciaNombreArchivo: String(row.evidencia_nombre_archivo || ''),
   evidenciaBase64: row.evidencia_blob ? Buffer.from(row.evidencia_blob).toString('base64') : '',
+  fechaCreacion: row.fecha_creacion,
+  fechaActualizacion: row.fecha_actualizacion,
+});
+
+const mapDbRowToValetFijoCentro = (row) => ({
+  id: Number(row.id || 0),
+  centroCostoId: String(row.centro_costo_id || ''),
+  centroCostoNombre: String(row.centro_costo_nombre || ''),
+  activo: Boolean(row.activo),
+  fechaCreacion: row.fecha_creacion,
+  fechaActualizacion: row.fecha_actualizacion,
+});
+
+const mapDbRowToValetFijoConfiguracion = (row) => ({
+  id: Number(row.id || 0),
+  centroCostoId: String(row.centro_costo_id || ''),
+  horasNormalLimite: Number(row.horas_normal_limite || 0),
+  valorNormal: Number(row.valor_normal || 0),
+  valorAdicional: Number(row.valor_adicional || 0),
+  valorDomingo: Number(row.valor_domingo || 0),
+  valorDomingoAdicional: Number(row.valor_domingo_adicional || 0),
+  metadata: row.metadata && typeof row.metadata === 'object' ? row.metadata : {},
   fechaCreacion: row.fecha_creacion,
   fechaActualizacion: row.fecha_actualizacion,
 });
@@ -1547,6 +1621,244 @@ app.post('/api/descuentos/exentos-pago-seguro', async (req, res) => {
     console.error('[POST /api/descuentos/exentos-pago-seguro] Error:', error instanceof Error ? error.message : String(error));
     res.status(500).json({
       error: 'No se pudo guardar exento de pago seguro',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+app.get('/api/valets/centros', async (req, res) => {
+  const activoRaw = String(req.query.activo || '').trim().toLowerCase();
+
+  try {
+    await ensureValetFijoCentroTable();
+
+    const filtros = [];
+    const params = [];
+
+    if (activoRaw === 'true' || activoRaw === 'false') {
+      params.push(activoRaw === 'true');
+      filtros.push(`activo = $${params.length}`);
+    }
+
+    const whereSql = filtros.length > 0 ? `WHERE ${filtros.join(' AND ')}` : '';
+
+    const result = await pool.query(
+      `SELECT id, centro_costo_id, centro_costo_nombre, activo, fecha_creacion, fecha_actualizacion
+       FROM valet_fijo_centro
+       ${whereSql}
+       ORDER BY centro_costo_nombre ASC, centro_costo_id ASC`,
+      params,
+    );
+
+    res.status(200).json({
+      ok: true,
+      registros: result.rows.map(mapDbRowToValetFijoCentro),
+    });
+  } catch (error) {
+    console.error('[GET /api/valets/centros] Error:', error instanceof Error ? error.message : String(error));
+    res.status(500).json({
+      error: 'No se pudieron cargar centros de valet fijo',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+app.post('/api/valets/centros', async (req, res) => {
+  const centroCostoId = String(req.body?.centroCostoId || '').trim();
+  const centroCostoNombre = String(req.body?.centroCostoNombre || '').trim();
+  const activo = req.body?.activo === undefined ? true : Boolean(req.body?.activo);
+
+  if (!centroCostoId) {
+    res.status(400).json({ error: 'El campo centroCostoId es requerido' });
+    return;
+  }
+
+  try {
+    await ensureValetFijoCentroTable();
+
+    const result = await pool.query(
+      `INSERT INTO valet_fijo_centro (centro_costo_id, centro_costo_nombre, activo, fecha_actualizacion)
+       VALUES ($1, $2, $3, NOW())
+       ON CONFLICT (centro_costo_id)
+       DO UPDATE SET
+         centro_costo_nombre = EXCLUDED.centro_costo_nombre,
+         activo = EXCLUDED.activo,
+         fecha_actualizacion = NOW()
+       RETURNING id, centro_costo_id, centro_costo_nombre, activo, fecha_creacion, fecha_actualizacion`,
+      [centroCostoId, centroCostoNombre, activo],
+    );
+
+    res.status(201).json({
+      ok: true,
+      registro: mapDbRowToValetFijoCentro(result.rows[0]),
+    });
+  } catch (error) {
+    console.error('[POST /api/valets/centros] Error:', error instanceof Error ? error.message : String(error));
+    res.status(500).json({
+      error: 'No se pudo guardar centro de valet fijo',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+app.delete('/api/valets/centros', async (req, res) => {
+  const centroCostoId = String(req.query.centroCostoId || '').trim();
+
+  if (!centroCostoId) {
+    res.status(400).json({ error: 'El parametro centroCostoId es requerido' });
+    return;
+  }
+
+  try {
+    await ensureValetFijoCentroTable();
+
+    const result = await pool.query(
+      `DELETE FROM valet_fijo_centro
+       WHERE centro_costo_id = $1
+       RETURNING id, centro_costo_id, centro_costo_nombre, activo, fecha_creacion, fecha_actualizacion`,
+      [centroCostoId],
+    );
+
+    if (result.rowCount === 0) {
+      res.status(404).json({ error: 'No se encontro el centro de valet fijo' });
+      return;
+    }
+
+    res.status(200).json({
+      ok: true,
+      registro: mapDbRowToValetFijoCentro(result.rows[0]),
+    });
+  } catch (error) {
+    console.error('[DELETE /api/valets/centros] Error:', error instanceof Error ? error.message : String(error));
+    res.status(500).json({
+      error: 'No se pudo eliminar centro de valet fijo',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+app.get('/api/valets/configuracion', async (req, res) => {
+  const centroCostoId = String(req.query.centroCostoId || '').trim();
+
+  try {
+    await ensureValetFijoConfiguracionTable();
+
+    const filtros = [];
+    const params = [];
+
+    if (centroCostoId) {
+      params.push(centroCostoId);
+      filtros.push(`centro_costo_id = $${params.length}`);
+    }
+
+    const whereSql = filtros.length > 0 ? `WHERE ${filtros.join(' AND ')}` : '';
+
+    const result = await pool.query(
+      `SELECT id, centro_costo_id, horas_normal_limite, valor_normal, valor_adicional,
+              valor_domingo, valor_domingo_adicional, metadata, fecha_creacion, fecha_actualizacion
+       FROM valet_fijo_configuracion
+       ${whereSql}
+       ORDER BY centro_costo_id ASC`,
+      params,
+    );
+
+    res.status(200).json({
+      ok: true,
+      registros: result.rows.map(mapDbRowToValetFijoConfiguracion),
+    });
+  } catch (error) {
+    console.error('[GET /api/valets/configuracion] Error:', error instanceof Error ? error.message : String(error));
+    res.status(500).json({
+      error: 'No se pudo cargar configuracion de valets fijos',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+app.post('/api/valets/configuracion', async (req, res) => {
+  const centroCostoId = String(req.body?.centroCostoId || '').trim();
+  const horasNormalLimite = parseValor(req.body?.horasNormalLimite);
+  const valorNormal = parseValor(req.body?.valorNormal);
+  const valorAdicional = parseValor(req.body?.valorAdicional);
+  const valorDomingo = parseValor(req.body?.valorDomingo);
+  const valorDomingoAdicional = parseValor(req.body?.valorDomingoAdicional);
+  const metadata = req.body?.metadata && typeof req.body.metadata === 'object' ? req.body.metadata : {};
+
+  if (!centroCostoId) {
+    res.status(400).json({ error: 'El campo centroCostoId es requerido' });
+    return;
+  }
+
+  if (!Number.isFinite(horasNormalLimite) || horasNormalLimite < 0) {
+    res.status(400).json({ error: 'horasNormalLimite debe ser numerico y mayor o igual a 0' });
+    return;
+  }
+
+  if (!Number.isFinite(valorNormal) || valorNormal < 0) {
+    res.status(400).json({ error: 'valorNormal debe ser numerico y mayor o igual a 0' });
+    return;
+  }
+
+  if (!Number.isFinite(valorAdicional) || valorAdicional < 0) {
+    res.status(400).json({ error: 'valorAdicional debe ser numerico y mayor o igual a 0' });
+    return;
+  }
+
+  if (!Number.isFinite(valorDomingo) || valorDomingo < 0) {
+    res.status(400).json({ error: 'valorDomingo debe ser numerico y mayor o igual a 0' });
+    return;
+  }
+
+  if (!Number.isFinite(valorDomingoAdicional) || valorDomingoAdicional < 0) {
+    res.status(400).json({ error: 'valorDomingoAdicional debe ser numerico y mayor o igual a 0' });
+    return;
+  }
+
+  try {
+    await ensureValetFijoConfiguracionTable();
+
+    const result = await pool.query(
+      `INSERT INTO valet_fijo_configuracion (
+         centro_costo_id,
+         horas_normal_limite,
+         valor_normal,
+         valor_adicional,
+         valor_domingo,
+         valor_domingo_adicional,
+         metadata,
+         fecha_actualizacion
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, NOW())
+       ON CONFLICT (centro_costo_id)
+       DO UPDATE SET
+         horas_normal_limite = EXCLUDED.horas_normal_limite,
+         valor_normal = EXCLUDED.valor_normal,
+         valor_adicional = EXCLUDED.valor_adicional,
+         valor_domingo = EXCLUDED.valor_domingo,
+         valor_domingo_adicional = EXCLUDED.valor_domingo_adicional,
+         metadata = EXCLUDED.metadata,
+         fecha_actualizacion = NOW()
+       RETURNING id, centro_costo_id, horas_normal_limite, valor_normal, valor_adicional,
+                 valor_domingo, valor_domingo_adicional, metadata, fecha_creacion, fecha_actualizacion`,
+      [
+        centroCostoId,
+        horasNormalLimite,
+        valorNormal,
+        valorAdicional,
+        valorDomingo,
+        valorDomingoAdicional,
+        JSON.stringify(metadata),
+      ],
+    );
+
+    res.status(201).json({
+      ok: true,
+      registro: mapDbRowToValetFijoConfiguracion(result.rows[0]),
+    });
+  } catch (error) {
+    console.error('[POST /api/valets/configuracion] Error:', error instanceof Error ? error.message : String(error));
+    res.status(500).json({
+      error: 'No se pudo guardar configuracion de valets fijos',
       details: error instanceof Error ? error.message : 'Unknown error',
     });
   }
@@ -2908,6 +3220,8 @@ const startServer = async () => {
     await ensureExentosPagoSeguroTable();
     await ensureValetFijoEmpleadoTable();
     await ensureValetFijoHorarioTable();
+    await ensureValetFijoCentroTable();
+    await ensureValetFijoConfiguracionTable();
     await ensureDistribucionPlantillasTable();
     await ensureEmpleadoDistribucionPlantillaTable();
     await ensureAccesoriosTable();
