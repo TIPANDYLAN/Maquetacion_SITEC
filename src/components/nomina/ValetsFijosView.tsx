@@ -406,6 +406,7 @@ const RegistroAsistenciaModal = ({ empleadoSel, periodo, registroRow, costosConf
   const [filtroEstadoAdicional, setFiltroEstadoAdicional] = useState<'todos' | 'pendiente' | 'aprobado' | 'rechazado'>('todos');
   const [uploadStatus, setUploadStatus] = useState<'idle' | 'loading' | 'done'>('idle');
   const [uploadName, setUploadName] = useState('');
+  const [selectedRowKeys, setSelectedRowKeys] = useState<Set<string>>(new Set());
 
   const initRows = (): Record<string, DiaRegistro[]> => {
     const rows: Record<string, DiaRegistro[]> = {};
@@ -445,7 +446,9 @@ const RegistroAsistenciaModal = ({ empleadoSel, periodo, registroRow, costosConf
 
       if (field === 'estadoDia') {
         const nuevoEstado = val as EstadoDia;
-        if (nuevoEstado === 'Adicional' || nuevoEstado === 'Domingo Adicional') {
+        if (nuevoEstado === 'Libre') {
+          updated.aprobado = true;
+        } else {
           updated.aprobado = null;
         }
       }
@@ -533,6 +536,100 @@ const RegistroAsistenciaModal = ({ empleadoSel, periodo, registroRow, costosConf
     setUploadName('documento_soporte.png');
     setTimeout(() => setUploadStatus('done'), 1800);
   };
+
+  const getRowSelectionKey = (fecha: string, row: DiaRegistro): string => `${fecha}::${row.id}`;
+
+  const visibleRowsMeta = useMemo(() => {
+    return sem.dias.flatMap((d) => {
+      const dayRows = rows[d.fecha] || [];
+      return dayRows
+        .map((row, rowIndex) => ({ fecha: d.fecha, row, rowIndex }))
+        .filter(({ row }) => shouldShowRowByFilters(row) && row.estadoDia !== 'Libre');
+    });
+  }, [rows, sem.dias, filtroTipoDia, filtroEstadoAdicional]);
+
+  const visibleRowSelectionKeys = useMemo(() => {
+    return visibleRowsMeta.map(({ fecha, row }) => getRowSelectionKey(fecha, row));
+  }, [visibleRowsMeta]);
+
+  const allVisibleSelected = visibleRowSelectionKeys.length > 0
+    && visibleRowSelectionKeys.every((key) => selectedRowKeys.has(key));
+
+  const selectedVisibleRowsMeta = useMemo(() => {
+    return visibleRowsMeta.filter(({ fecha, row }) => selectedRowKeys.has(getRowSelectionKey(fecha, row)));
+  }, [selectedRowKeys, visibleRowsMeta]);
+
+  const toggleSelectVisible = (checked: boolean) => {
+    setSelectedRowKeys((prev) => {
+      const next = new Set(prev);
+      visibleRowSelectionKeys.forEach((key) => {
+        if (checked) {
+          next.add(key);
+        } else {
+          next.delete(key);
+        }
+      });
+      return next;
+    });
+  };
+
+  const toggleSelectRow = (fecha: string, row: DiaRegistro, checked: boolean) => {
+    const key = getRowSelectionKey(fecha, row);
+    setSelectedRowKeys((prev) => {
+      const next = new Set(prev);
+      if (checked) {
+        next.add(key);
+      } else {
+        next.delete(key);
+      }
+      return next;
+    });
+  };
+
+  const applyEstadoToSelected = (aprobar: boolean) => {
+    const keys = new Set(selectedVisibleRowsMeta.map(({ fecha, row }) => getRowSelectionKey(fecha, row)));
+    if (keys.size === 0) return;
+
+    setRows((prev) => {
+      const next = { ...prev };
+      visibleRowsMeta.forEach(({ fecha, row, rowIndex }) => {
+        const key = getRowSelectionKey(fecha, row);
+        if (!keys.has(key)) return;
+
+        const dayRows = [...(next[fecha] || [])];
+        const target = dayRows[rowIndex];
+        if (!target || target.estadoDia === 'Libre') return;
+        dayRows[rowIndex] = { ...target, aprobado: aprobar };
+        next[fecha] = dayRows;
+      });
+      return next;
+    });
+
+    setSelectedRowKeys(new Set());
+  };
+
+  useEffect(() => {
+    if (selectedRowKeys.size === 0) return;
+
+    const validKeys = new Set(visibleRowSelectionKeys);
+    setSelectedRowKeys((prev) => {
+      let changed = false;
+      const next = new Set<string>();
+      prev.forEach((key) => {
+        if (validKeys.has(key)) {
+          next.add(key);
+        } else {
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+  }, [selectedRowKeys.size, visibleRowSelectionKeys]);
+
+  const hasSelectedRows = selectedVisibleRowsMeta.length > 0;
+
+  const canApproveSelected = hasSelectedRows && selectedVisibleRowsMeta.some(({ row }) => row.aprobado !== true);
+  const canRejectSelected = hasSelectedRows && selectedVisibleRowsMeta.some(({ row }) => row.aprobado !== false);
 
   return (
     <div className="fixed inset-0 z-[110] flex items-start justify-center overflow-y-auto p-2 sm:p-4">
@@ -719,13 +816,26 @@ const RegistroAsistenciaModal = ({ empleadoSel, periodo, registroRow, costosConf
               <table className="w-full min-w-[1100px] text-left">
                 <thead className="sticky top-0 z-10 border-b border-slate-100 bg-white">
                   <tr>
+                    <th className="w-24 px-3 py-3 text-center text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                      <label className="group flex cursor-pointer items-center justify-center gap-2">
+                        <div className={`flex h-5 w-5 items-center justify-center rounded border transition-colors ${allVisibleSelected ? 'border-emerald-500 bg-emerald-500' : 'border-slate-300 bg-white group-hover:border-emerald-400'}`}>
+                          {allVisibleSelected ? <Check size={12} className="text-white" strokeWidth={3} /> : null}
+                        </div>
+                        <input
+                          type="checkbox"
+                          className="hidden"
+                          checked={allVisibleSelected}
+                          onChange={(e) => toggleSelectVisible(e.target.checked)}
+                          disabled={visibleRowsMeta.length === 0}
+                        />
+                      </label>
+                    </th>
                     <th className="w-32 px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-500">DIA</th>
                     <th className="w-48 px-3 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-500">PARQUEADERO TRABAJADO</th>
                     <th className="w-36 px-3 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-500">E. DIA</th>
                     <th className="w-24 px-3 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-500">INGRESO</th>
                     <th className="w-24 px-3 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-500">SALIDA</th>
                     <th className="w-24 px-3 py-3 text-center text-[11px] font-bold uppercase tracking-wider text-slate-500">ESTADO</th>
-                    <th className="w-24 px-3 py-3 text-center text-[11px] font-bold uppercase tracking-wider text-slate-500">APROBAR</th>
                     <th className="w-20 px-3 py-3 text-center text-[11px] font-bold uppercase tracking-wider text-slate-500">HORAS</th>
                     <th className="w-24 px-3 py-3 text-center text-[11px] font-bold uppercase tracking-wider text-slate-500">VALOR ($)</th>
                     <th className="w-16 px-3 py-3 text-center text-[11px] font-bold uppercase tracking-wider text-slate-500">RESPALDO</th>
@@ -746,6 +856,22 @@ const RegistroAsistenciaModal = ({ empleadoSel, periodo, registroRow, costosConf
 
                       return (
                         <tr key={`${i}-${rowIndex}`} className={esFinde ? 'bg-slate-50/60 transition-colors' : 'transition-colors hover:bg-blue-50/20'}>
+                          <td className="px-3 py-3 text-center">
+                            {r.estadoDia !== 'Libre' ? (
+                              <label className="group flex cursor-pointer items-center justify-center gap-2">
+                                <div className={`flex h-5 w-5 items-center justify-center rounded border transition-colors ${selectedRowKeys.has(getRowSelectionKey(d.fecha, r)) ? 'border-emerald-500 bg-emerald-500' : 'border-slate-300 bg-white group-hover:border-emerald-400'}`}>
+                                  {selectedRowKeys.has(getRowSelectionKey(d.fecha, r)) ? <Check size={12} className="text-white" strokeWidth={3} /> : null}
+                                </div>
+                                <input
+                                  type="checkbox"
+                                  className="hidden"
+                                  checked={selectedRowKeys.has(getRowSelectionKey(d.fecha, r))}
+                                  onChange={(e) => toggleSelectRow(d.fecha, r, e.target.checked)}
+                                />
+                              </label>
+                            ) : null}
+                          </td>
+
                           <td className="px-4 py-3">
                             {isFirst ? (
                               <div className={`text-[12px] font-medium leading-tight ${esFinde ? 'text-slate-400' : 'text-slate-700'}`}>
@@ -816,17 +942,6 @@ const RegistroAsistenciaModal = ({ empleadoSel, periodo, registroRow, costosConf
                             ) : '-'}
                           </td>
 
-                          <td className="px-3 py-3 text-center">
-                            {r.estadoDia !== 'Libre' ? (
-                              <label className="group flex cursor-pointer items-center justify-center gap-2">
-                                <div className={`flex h-5 w-5 items-center justify-center rounded border transition-colors ${r.aprobado === true ? 'border-emerald-500 bg-emerald-500' : 'border-slate-300 bg-white group-hover:border-emerald-400'}`}>
-                                  {r.aprobado === true ? <Check size={12} className="text-white" strokeWidth={3} /> : null}
-                                </div>
-                                <input type="checkbox" className="hidden" checked={r.aprobado === true} onChange={(e) => updateRow(d.fecha, rowIndex, 'aprobado', e.target.checked)} />
-                              </label>
-                            ) : null}
-                          </td>
-
                           <td className="px-3 py-3 text-center text-[11px] font-bold text-slate-600">{r.estadoDia !== 'Libre' ? horasCalculadas.toFixed(2) : '-'}</td>
                           <td className="px-3 py-3 text-center text-[11px] font-bold text-blue-600">{r.estadoDia !== 'Libre' ? `$${valorCalculado.toFixed(2)}` : '-'}</td>
 
@@ -866,6 +981,24 @@ const RegistroAsistenciaModal = ({ empleadoSel, periodo, registroRow, costosConf
                   })}
                 </tbody>
               </table>
+            </div>
+
+            <div className="shrink-0 flex justify-end gap-3 border-t border-slate-100 bg-white px-8 py-3">
+              <button
+                onClick={() => applyEstadoToSelected(true)}
+                disabled={!canApproveSelected}
+                className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-5 py-2 text-[12px] font-bold text-emerald-700 shadow-sm transition-colors hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Check size={13} />Aprobar seleccionados
+              </button>
+
+              <button
+                onClick={() => applyEstadoToSelected(false)}
+                disabled={!canRejectSelected}
+                className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-5 py-2 text-[12px] font-bold text-red-700 shadow-sm transition-colors hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <X size={13} />Rechazar seleccionados
+              </button>
             </div>
 
             <div className="shrink-0 flex items-center justify-between border-t border-slate-100 bg-white px-8 py-4">
