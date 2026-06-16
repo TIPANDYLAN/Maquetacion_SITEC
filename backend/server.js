@@ -2661,6 +2661,7 @@ const ensureAccesoriosTable = async () => {
       solicitud_id VARCHAR(50) NOT NULL REFERENCES solicitudes_accesorios(id) ON DELETE CASCADE,
       tipo VARCHAR(50) NOT NULL CHECK (tipo IN ('orden', 'acta')),
       nombre_archivo VARCHAR(255) NOT NULL,
+      ruta_archivo TEXT,
       accesorio VARCHAR(50) CHECK (accesorio IN ('botas', 'auriculares')),
       empleado_cedula VARCHAR(20),
       numero_orden VARCHAR(100),
@@ -2678,6 +2679,11 @@ const ensureAccesoriosTable = async () => {
   await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_archivos_accesorios_tipo
       ON archivos_accesorios (tipo)
+  `);
+
+  await pool.query(`
+    ALTER TABLE archivos_accesorios
+    ADD COLUMN IF NOT EXISTS ruta_archivo TEXT
   `);
 };
 
@@ -3086,6 +3092,7 @@ app.post('/api/accesorios/archivos', async (req, res) => {
   const solicitudId = String(req.body?.solicitudId || '').trim();
   const tipo = String(req.body?.tipo || '').trim();
   const nombreArchivo = String(req.body?.nombreArchivo || '').trim();
+  const rutaArchivo = String(req.body?.rutaArchivo || '').trim();
   const accesorio = String(req.body?.accesorio || '').trim();
   const empleadoCedula = String(req.body?.empleadoCedula || '').trim();
   const numeroOrden = String(req.body?.numeroOrden || '').trim();
@@ -3096,18 +3103,24 @@ app.post('/api/accesorios/archivos', async (req, res) => {
     return;
   }
 
+  if (tipo === 'orden' && !rutaArchivo) {
+    res.status(400).json({ error: 'Para ordenes de compra se requiere rutaArchivo (Supabase)' });
+    return;
+  }
+
   try {
     await ensureAccesoriosTable();
 
     const result = await pool.query(
       `INSERT INTO archivos_accesorios
-       (solicitud_id, tipo, nombre_archivo, accesorio, empleado_cedula, numero_orden, total_valor)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
-       RETURNING id, solicitud_id, tipo, nombre_archivo, accesorio, empleado_cedula, numero_orden, total_valor, fecha_carga`,
+       (solicitud_id, tipo, nombre_archivo, ruta_archivo, accesorio, empleado_cedula, numero_orden, total_valor)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       RETURNING id, solicitud_id, tipo, nombre_archivo, ruta_archivo, accesorio, empleado_cedula, numero_orden, total_valor, fecha_carga`,
       [
         solicitudId,
         tipo,
         nombreArchivo,
+        rutaArchivo || null,
         accesorio || null,
         empleadoCedula || null,
         numeroOrden || null,
@@ -3179,6 +3192,7 @@ app.get('/api/accesorios/archivos/:solicitudId', async (req, res) => {
          solicitud_id,
          tipo,
          nombre_archivo,
+         ruta_archivo,
          accesorio,
          empleado_cedula,
          numero_orden,

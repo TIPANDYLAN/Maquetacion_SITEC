@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { CheckCircle, ChevronDown, ChevronRight, Download, Eye, FileText, Upload, X } from 'lucide-react';
 import { dbApiFetch, DB_API_CATALOG } from '../../services/dbApi';
+import { extraerOrdenCompraDesdeImagenN8n } from '../../services/n8nApi';
+import { uploadToSupabaseStorage } from '../../services/supaBase';
 import type {
   AccesorioTipo,
   FilaEmpleado,
@@ -30,11 +32,14 @@ interface ArchivoRegistrado {
   solicitudId: string;
   tipo: 'orden' | 'acta';
   nombreArchivo: string;
+  rutaArchivo?: string;
   accesorio?: AccesorioTipo;
   empleadoCedula?: string;
   numeroOrden?: string;
   totalValor?: number;
 }
+
+const SUPABASE_BUCKET = 'OC test';
 
 interface FilaSeleccionadaContext {
   solicitudId: string;
@@ -62,6 +67,31 @@ const extraerCedulaDesdeNombreActa = (nombre: string): string => {
   const raw = String(nombre || '').trim();
   const match = raw.match(/^Acta_([^_]+)_/i);
   return match ? String(match[1] || '').trim() : '';
+};
+
+const sanitizeToken = (value: string): string => {
+  return String(value || '').trim().replace(/[^a-zA-Z0-9_-]/g, '_');
+};
+
+const uploadOrdenImageToSupabase = async (params: {
+  solicitudId: string;
+  accesorio: AccesorioTipo;
+  file: File;
+}): Promise<string> => {
+  const extension = params.file.type === 'image/png' ? 'png' : 'jpg';
+  const objectPath = `ordenes/${sanitizeToken(params.solicitudId)}/${sanitizeToken(params.accesorio)}_${Date.now()}.${extension}`;
+
+  const publicUrl = String(await uploadToSupabaseStorage({
+    bucket: SUPABASE_BUCKET,
+    objectPath,
+    file: params.file,
+    upsert: true,
+  }) || '').trim();
+  if (!publicUrl) {
+    throw new Error('No se pudo obtener la URL publica del archivo en Supabase.');
+  }
+
+  return publicUrl;
 };
 
 const construirResumenOrden = (
@@ -142,6 +172,7 @@ const OrdenCompraView = ({ solicitudes, ordenesCompra, onUpdateEstado, onOrdenCo
           solicitudId: String(item.solicitud_id ?? item.solicitudId ?? ''),
           tipo: String(item.tipo ?? '') as ArchivoRegistrado['tipo'],
           nombreArchivo: String(item.nombre_archivo ?? item.nombreArchivo ?? ''),
+          rutaArchivo: String(item.ruta_archivo ?? item.rutaArchivo ?? '').trim() || undefined,
           accesorio: item.accesorio ? String(item.accesorio) as AccesorioTipo : undefined,
           empleadoCedula: item.empleado_cedula ? String(item.empleado_cedula) : item.empleadoCedula ? String(item.empleadoCedula) : undefined,
           numeroOrden: item.numero_orden ? String(item.numero_orden) : item.numeroOrden ? String(item.numeroOrden) : undefined,
@@ -239,10 +270,40 @@ const OrdenCompraView = ({ solicitudes, ordenesCompra, onUpdateEstado, onOrdenCo
     ).size;
   };
 
+  const getDetalleOrdenVisual = (
+    solicitudId: string,
+    accesorio: AccesorioTipo,
+    ordenActual?: OrdenCompraResumen,
+  ): { archivoOrdenNombre?: string; numeroOrden: string; totalValor: number } | null => {
+    const detalleOrden = ordenActual?.ordenesPorAccesorio?.[accesorio];
+    if (detalleOrden) {
+      return {
+        archivoOrdenNombre: detalleOrden.archivoOrdenNombre,
+        numeroOrden: String(detalleOrden.numeroOrden || '').trim(),
+        totalValor: Number(detalleOrden.totalValor || 0),
+      };
+    }
+
+    const registro = [...archivosRegistrados]
+      .reverse()
+      .find((item) => item.solicitudId === solicitudId && item.tipo === 'orden' && item.accesorio === accesorio);
+
+    if (!registro) {
+      return null;
+    }
+
+    return {
+      archivoOrdenNombre: registro.nombreArchivo,
+      numeroOrden: String(registro.numeroOrden || '').trim(),
+      totalValor: Number(registro.totalValor || 0),
+    };
+  };
+
   const registrarArchivoEnBD = async (payload: {
     solicitudId: string;
     tipo: 'orden' | 'acta';
     nombreArchivo: string;
+    rutaArchivo?: string;
     accesorio?: AccesorioTipo;
     empleadoCedula?: string;
     numeroOrden?: string;
@@ -256,6 +317,7 @@ const OrdenCompraView = ({ solicitudes, ordenesCompra, onUpdateEstado, onOrdenCo
           solicitudId: payload.solicitudId,
           tipo: payload.tipo,
           nombreArchivo: payload.nombreArchivo,
+          rutaArchivo: payload.rutaArchivo,
           accesorio: payload.accesorio,
           empleadoCedula: payload.empleadoCedula,
           numeroOrden: payload.numeroOrden,
@@ -269,6 +331,7 @@ const OrdenCompraView = ({ solicitudes, ordenesCompra, onUpdateEstado, onOrdenCo
           solicitudId: String(registro.solicitud_id ?? payload.solicitudId ?? ''),
           tipo: String(registro.tipo ?? payload.tipo ?? '') as ArchivoRegistrado['tipo'],
           nombreArchivo: String(registro.nombre_archivo ?? payload.nombreArchivo ?? ''),
+          rutaArchivo: String(registro.ruta_archivo ?? registro.rutaArchivo ?? '').trim() || undefined,
           accesorio: registro.accesorio ? String(registro.accesorio) as AccesorioTipo : payload.accesorio,
           empleadoCedula: registro.empleado_cedula
             ? String(registro.empleado_cedula)
@@ -298,22 +361,56 @@ const OrdenCompraView = ({ solicitudes, ordenesCompra, onUpdateEstado, onOrdenCo
     }
   };
 
-  const descargarArchivo = (solicitudId: string, tipo: 'orden', accesorio: AccesorioTipo) => {
+  const descargarArchivo = async (solicitudId: string, tipo: 'orden', accesorio: AccesorioTipo) => {
     const archivo = getArchivoSolicitud(solicitudId, tipo, accesorio);
+    const registro = [...archivosRegistrados]
+      .reverse()
+      .find((item) => item.solicitudId === solicitudId && item.tipo === tipo && item.accesorio === accesorio);
 
-    if (!archivo?.file) {
-      window.alert('No hay archivo disponible para descargar en esta sesion.');
+    const nombreDescarga = archivo?.nombre || registro?.nombreArchivo || 'archivo';
+
+    if (!archivo?.file && !registro?.rutaArchivo) {
+      window.alert('No hay archivo disponible para descargar.');
       return;
     }
 
-    const url = URL.createObjectURL(archivo.file);
+    let downloadUrl = '';
     const link = document.createElement('a');
-    link.href = url;
-    link.download = archivo.nombre;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    try {
+      if (archivo?.file) {
+        downloadUrl = URL.createObjectURL(archivo.file);
+      } else {
+        const ruta = String(registro?.rutaArchivo || '').trim();
+        const sourceUrl = /^https?:\/\//i.test(ruta)
+          ? ruta
+          : `/${ruta.replace(/^\//, '')}`;
+
+        const response = await fetch(sourceUrl);
+        if (!response.ok) {
+          throw new Error(`No se pudo descargar el archivo (${response.status}).`);
+        }
+
+        const blob = await response.blob();
+        downloadUrl = URL.createObjectURL(blob);
+      }
+
+      link.href = downloadUrl;
+      link.download = nombreDescarga;
+      link.style.display = 'none';
+      document.body.appendChild(link);
+      link.click();
+    } catch (error) {
+      console.error('Error descargando archivo:', error);
+      window.alert(error instanceof Error ? error.message : 'No se pudo descargar el archivo.');
+    } finally {
+      if (link.parentNode) {
+        document.body.removeChild(link);
+      }
+
+      if (downloadUrl) {
+        URL.revokeObjectURL(downloadUrl);
+      }
+    }
   };
 
   const descargarActaFirmada = (solicitudId: string, empleadoCedula: string) => {
@@ -347,7 +444,7 @@ const OrdenCompraView = ({ solicitudes, ordenesCompra, onUpdateEstado, onOrdenCo
   ) => {
     const input = document.createElement('input');
     input.type = 'file';
-    input.accept = '.pdf,.doc,.docx';
+    input.accept = tipo === 'orden' ? 'image/jpeg,image/png' : '.pdf,.doc,.docx';
 
     input.onchange = (event) => {
       void (async () => {
@@ -368,6 +465,11 @@ const OrdenCompraView = ({ solicitudes, ordenesCompra, onUpdateEstado, onOrdenCo
           return;
         }
 
+        if (tipo === 'orden' && !['image/jpeg', 'image/png'].includes(String(file.type || '').toLowerCase())) {
+          window.alert('Las ordenes de compra solo se pueden subir como imagen JPG o PNG.');
+          return;
+        }
+
         if (tipo === 'orden' && existeArchivoRegistrado(solicitudId, 'orden', accesorio!)) {
           return;
         }
@@ -375,26 +477,24 @@ const OrdenCompraView = ({ solicitudes, ordenesCompra, onUpdateEstado, onOrdenCo
         let numeroOrden = ordenActual?.ordenesPorAccesorio?.[accesorio!]?.numeroOrden || '';
         let totalValor = ordenActual?.ordenesPorAccesorio?.[accesorio!]?.totalValor || 0;
 
-        if (tipo === 'orden') {
-          const etiqueta = getAccesorioLabel(accesorio!);
-          const numeroIngresado = window.prompt(`Ingrese el numero de orden de compra para ${etiqueta.toLowerCase()}`);
-          if (!numeroIngresado || !numeroIngresado.trim()) return;
-          numeroOrden = numeroIngresado.trim();
+        let rutaArchivoSupabase: string | undefined;
+        if (tipo === 'orden' && accesorio) {
+          rutaArchivoSupabase = await uploadOrdenImageToSupabase({
+            solicitudId,
+            accesorio,
+            file,
+          });
 
-          const totalIngresado = window.prompt(`Ingrese el total de la orden para ${etiqueta.toLowerCase()}`);
-          if (!totalIngresado || !totalIngresado.trim()) return;
-
-          totalValor = Number(totalIngresado.replace(',', '.'));
-          if (Number.isNaN(totalValor) || totalValor <= 0) {
-            window.alert('El total debe ser un numero mayor a 0.');
-            return;
-          }
+          const datosExtraidos = await extraerOrdenCompraDesdeImagenN8n(rutaArchivoSupabase);
+          numeroOrden = datosExtraidos.numeroOrden;
+          totalValor = datosExtraidos.totalFactura;
         }
 
         const guardadoEnBD = await registrarArchivoEnBD({
           solicitudId,
           tipo,
           nombreArchivo: file.name,
+          rutaArchivo: rutaArchivoSupabase,
           accesorio,
           empleadoCedula: empleadoCedulaActa || undefined,
           numeroOrden: tipo === 'acta' ? undefined : numeroOrden,
@@ -640,17 +740,31 @@ const OrdenCompraView = ({ solicitudes, ordenesCompra, onUpdateEstado, onOrdenCo
                     <div className="flex flex-wrap gap-2">
                       {tiposSolicitud.map((accesorio) => {
                         const ordenSubida = existeArchivoRegistrado(solicitud.id, 'orden', accesorio);
+                        const detalleOrdenVisual = getDetalleOrdenVisual(solicitud.id, accesorio, orden);
                         if (!ordenSubida) return null;
 
                         return (
-                          <button
-                            key={`${solicitud.id}-descargar-orden-${accesorio}`}
-                            onClick={() => descargarArchivo(solicitud.id, 'orden', accesorio)}
-                            className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-semibold transition"
-                          >
-                            <Download size={16} />
-                            Descargar Orden de {getAccesorioLabel(accesorio)}
-                          </button>
+                          <div key={`${solicitud.id}-descargar-orden-${accesorio}`} className="border border-slate-200 rounded-xl p-3 bg-white">
+                            {detalleOrdenVisual && (
+                              <div className="text-xs text-slate-600 mb-2">
+                                <p>
+                                  <span className="font-semibold text-slate-700">Orden:</span>{' '}
+                                  {detalleOrdenVisual.numeroOrden || 'N/A'}
+                                </p>
+                                <p>
+                                  <span className="font-semibold text-slate-700">Total:</span>{' '}
+                                  ${Number(detalleOrdenVisual.totalValor || 0).toFixed(2)}
+                                </p>
+                              </div>
+                            )}
+                            <button
+                              onClick={() => descargarArchivo(solicitud.id, 'orden', accesorio)}
+                              className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-semibold transition"
+                            >
+                              <Download size={16} />
+                              Descargar Orden de {getAccesorioLabel(accesorio)}
+                            </button>
+                          </div>
                         );
                       })}
                     </div>
@@ -665,7 +779,7 @@ const OrdenCompraView = ({ solicitudes, ordenesCompra, onUpdateEstado, onOrdenCo
 
                     <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
                       {tiposSolicitud.map((accesorio) => {
-                        const detalle = orden?.ordenesPorAccesorio?.[accesorio];
+                        const detalle = getDetalleOrdenVisual(solicitud.id, accesorio, orden);
 
                         return (
                           <div key={`${solicitud.id}-orden-${accesorio}`} className="border border-slate-200 rounded-2xl overflow-hidden bg-white">
@@ -684,7 +798,7 @@ const OrdenCompraView = ({ solicitudes, ordenesCompra, onUpdateEstado, onOrdenCo
                               {detalle?.archivoOrdenNombre ? (
                                 <div className="rounded-xl border border-blue-100 bg-blue-50 px-3 py-3 text-xs text-blue-800 space-y-1">
                                   <p><span className="font-semibold">Archivo:</span> {detalle.archivoOrdenNombre}</p>
-                                  <p><span className="font-semibold">Orden:</span> {detalle.numeroOrden}</p>
+                                  <p><span className="font-semibold">Orden:</span> {detalle.numeroOrden || 'N/A'}</p>
                                   <p><span className="font-semibold">Total:</span> ${Number(detalle.totalValor || 0).toFixed(2)}</p>
                                 </div>
                               ) : (
