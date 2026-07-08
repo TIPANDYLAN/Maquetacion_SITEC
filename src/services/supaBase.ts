@@ -1,5 +1,5 @@
-const supabaseUrl = 'https://wsmukmfjkxrvyodztugq.supabase.co';
-const supabaseKey = 'sb_publishable_6oCsD5W2zdS_vypS2LWafg_Z8Bygs9_';
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://xaglgjnqbwyissbbukff.supabase.co';
+const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_z4WLplTN-tI1WAGdxTn79g_BFHaT1As';
 
 export interface SupabaseUploadInput {
   bucket: string;

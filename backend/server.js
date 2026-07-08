@@ -1,5 +1,8 @@
 import express from 'express';
-import { checkPostgresConnection, checkSqlServerConnection, getSqlServerPool, isSqlServerEnabled, pool } from './db.js';
+import * as dotenv from 'dotenv';
+import { checkPostgresConnection, checkSqlServerConnection, getSqlServerPool, isSqlServerEnabled, pool, getDatabaseConnectionInfo } from './db.js';
+
+dotenv.config({ override: true });
 
 const app = express();
 const PORT = Number(process.env.BACKEND_PORT || 4000);
@@ -3220,6 +3223,9 @@ app.get('/api/accesorios/archivos/:solicitudId', async (req, res) => {
 
 const startServer = async () => {
   try {
+    const connInfo = getDatabaseConnectionInfo();
+    console.log(`DB connection host: ${connInfo.host} (${connInfo.usingPooler ? 'pooler' : 'direct'})`);
+
     await checkPostgresConnection();
 
     if (isSqlServerEnabled()) {

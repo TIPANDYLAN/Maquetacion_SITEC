@@ -2,17 +2,76 @@ import pg from 'pg';
 import sql from 'mssql';
 import * as dotenv from 'dotenv';
 
-dotenv.config();
+dotenv.config({ override: true });
 
 const { Pool } = pg;
 
-export const pool = new Pool({
-  host: process.env.PGHOST || 'localhost',
-  port: Number(process.env.PGPORT || 5432),
-  database: process.env.PGDATABASE || 'postgres',
-  user: process.env.PGUSER || 'postgres',
-  password: process.env.PGPASSWORD || 'postgres',
-});
+const rawConnectionString = process.env.SUPABASE_DB_CONNECTION_STRING || process.env.DATABASE_URL || process.env.PG_CONNECTION_STRING || 'postgres://postgres.xaglgjnqbwyissbbukff:Krapabru87227275@aws-1-us-east-2.pooler.supabase.com:5432/postgres';
+const poolerHost = process.env.SUPABASE_POOLER_HOST || 'aws-1-us-east-2.pooler.supabase.com';
+
+function normalizeConnectionString(connectionString) {
+  if (!connectionString) {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(connectionString);
+    const isSupabasePooler = parsed.hostname.includes('.pooler.supabase.com') || parsed.hostname === poolerHost;
+
+    if (poolerHost) {
+      parsed.hostname = poolerHost;
+    }
+
+    if (!parsed.searchParams.has('sslmode')) {
+      parsed.searchParams.set('sslmode', isSupabasePooler ? 'disable' : 'require');
+    } else if (isSupabasePooler) {
+      parsed.searchParams.set('sslmode', 'disable');
+    }
+
+    return parsed.toString();
+  } catch {
+    return connectionString;
+  }
+}
+
+const connectionString = normalizeConnectionString(rawConnectionString);
+const useSupabaseSsl = Boolean(connectionString) && (
+  String(process.env.SUPABASE_SSL || '').toLowerCase() === 'true' ||
+  String(process.env.PGSSLMODE || '').toLowerCase() === 'require' ||
+  connectionString.includes('sslmode=require')
+) && !connectionString.includes('.pooler.supabase.com');
+
+export const pool = new Pool(
+  connectionString
+    ? {
+        connectionString,
+        ssl: useSupabaseSsl ? { rejectUnauthorized: false } : undefined,
+      }
+    : {
+        host: process.env.PGHOST || 'localhost',
+        port: Number(process.env.PGPORT || 5432),
+        database: process.env.PGDATABASE || 'postgres',
+        user: process.env.PGUSER || 'postgres',
+        password: process.env.PGPASSWORD || 'postgres',
+      }
+);
+
+export const getDatabaseConnectionInfo = () => {
+  try {
+    const url = new URL(connectionString || '');
+    return {
+      connectionString: connectionString || null,
+      host: url.hostname,
+      usingPooler: url.hostname.includes('.pooler.supabase.com'),
+    };
+  } catch {
+    return {
+      connectionString: connectionString || null,
+      host: process.env.PGHOST || 'localhost',
+      usingPooler: false,
+    };
+  }
+};
 
 const SQLSERVER_ENABLED = String(process.env.SQLSERVER_ENABLED || 'false').toLowerCase() === 'true';
 

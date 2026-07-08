@@ -9,7 +9,8 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "start:backend": "node backend/server.js"
+    "start:backend": "node backend/server.js",
+    "migrate:supabase": "node backend/supabase-migrate.mjs"
   },
   "dependencies": {
     "dotenv": "^17.3.1",

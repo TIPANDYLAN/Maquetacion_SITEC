@@ -17,6 +17,9 @@ Servicio API para:
 ## Variables de entorno
 
 - `BACKEND_PORT` (opcional, default: `4000`)
+- `SUPABASE_DB_CONNECTION_STRING` (opcional, preferido para Supabase). Puede ser la cadena de conexión directa o el connection string de session pooler desde el dashboard.
+- `SUPABASE_POOLER_HOST` (opcional). Si quieres forzar un host de pooler específico, pon aquí el host `aws-[REGION].pooler.supabase.com`.
+- `SUPABASE_SSL` (opcional, default: `false`). Si usas Supabase, el backend forzará `sslmode=require` cuando se detecte `.supabase.co` o `.pooler.supabase.com`.
 - `PGHOST` (default: `localhost`)
 - `PGPORT` (default: `5432`)
 - `PGDATABASE` (default: `postgres`)
