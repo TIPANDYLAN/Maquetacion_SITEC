@@ -42,7 +42,6 @@ CREATE TABLE IF NOT EXISTS archivos_accesorios (
   solicitud_id VARCHAR(50) NOT NULL REFERENCES solicitudes_accesorios(id) ON DELETE CASCADE,
   tipo VARCHAR(50) NOT NULL CHECK (tipo IN ('orden', 'acta')),
   nombre_archivo VARCHAR(255) NOT NULL,
-  ruta_archivo TEXT,
   accesorio VARCHAR(50) CHECK (accesorio IN ('botas', 'auriculares')),
   empleado_cedula VARCHAR(20),
   numero_orden VARCHAR(100),

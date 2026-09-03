@@ -7,20 +7,7 @@ export const N8N_API_CATALOG = {
   detalleEmpleadoCentroCostos: '/api/n8n/webhook/centrocostos/empleados',
   familiaresEmpleados: '/api/n8n/webhook/detalle/familiares/nomina',
   empleadosDistribucion: '/api/n8n/webhook/empleados/distribucion',
-  descuentosVariosSitec: '/api/n8n/webhook/descuentos/varios/sitec',
 } as const;
-
-interface N8nOrdenCompraPayload {
-  documento_valido?: unknown;
-  orden_compra_numero?: unknown;
-  base_iva?: unknown;
-}
-
-export interface N8nOrdenCompraExtract {
-  documentoValido: boolean;
-  numeroOrden: string;
-  totalFactura: number;
-}
 export interface EmpleadoDistribucionApiItem {
   COD_MFEMP: number|string;
   DOCI_MFEMP: string;
@@ -230,37 +217,4 @@ export const n8nPostDirect = async <T = unknown>(input: N8nDirectPostInput): Pro
   }
 
   return await parseJsonResponse<T>(response, {} as T);
-};
-
-export const extraerOrdenCompraDesdeImagenN8n = async (imageUrl: string): Promise<N8nOrdenCompraExtract> => {
-  const payloadRaw = await n8nPostDirect<N8nOrdenCompraPayload | N8nOrdenCompraPayload[]>({
-    url: N8N_API_CATALOG.descuentosVariosSitec,
-    payload: {
-      url: imageUrl,
-    },
-  });
-
-  const payload = Array.isArray(payloadRaw) ? (payloadRaw[0] || {}) : payloadRaw;
-  const documentoValido = Boolean(payload.documento_valido);
-  const numeroOrden = String(payload.orden_compra_numero ?? '').trim();
-  const totalFacturaRaw = String(payload.base_iva ?? '').replace(',', '.').trim();
-  const totalFactura = Number(totalFacturaRaw);
-
-  if (!documentoValido) {
-    throw new Error('El documento cargado no es valido segun n8n (documento_valido=false).');
-  }
-
-  if (!numeroOrden) {
-    throw new Error('n8n no devolvio orden_compra_numero.');
-  }
-
-  if (!Number.isFinite(totalFactura) || totalFactura <= 0) {
-    throw new Error('n8n no devolvio un base_iva valido para el total de la factura.');
-  }
-
-  return {
-    documentoValido,
-    numeroOrden,
-    totalFactura,
-  };
 };
